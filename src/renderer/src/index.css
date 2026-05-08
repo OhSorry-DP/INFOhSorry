@@ -120,6 +120,48 @@ body {
   color: #aaa;
 }
 
+/* ----- ereter ★ 데이터 상태 띠 ----- */
+.ereter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 6px 20px;
+  background: #f4f7fb;
+  border-bottom: 1px solid #d6e1ee;
+  font-size: 11.5px;
+  color: #555;
+}
+.ereter-bar.stale {
+  background: #fff8e6;
+  border-bottom-color: #f0e0a8;
+}
+.ereter-bar .ereter-label {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.ereter-bar .ereter-stale-tag {
+  color: #b07f00;
+  font-weight: 600;
+}
+.ereter-bar button {
+  padding: 4px 10px;
+  font-size: 11px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ereter-bar button:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+.ereter-bar button:disabled {
+  cursor: wait;
+  color: #aaa;
+}
+
 /* ----- Reflux 로그 (디버깅용 collapsible) ----- */
 .reflux-log {
   margin: 0;

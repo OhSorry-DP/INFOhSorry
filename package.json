@@ -14,7 +14,8 @@
     "typecheck": "npm run typecheck:node && npm run typecheck:web"
   },
   "dependencies": {
-    "koffi": "^2.16.0"
+    "koffi": "^2.16.0",
+    "node-html-parser": "^7.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

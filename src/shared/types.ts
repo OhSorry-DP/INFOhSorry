@@ -122,3 +122,35 @@ export interface RefluxStartResult {
   error?: string;
   state: RefluxState;
 }
+
+// ereter.net 추출 데이터 (ohSorry 의 ereter-data.json 과 동일 형식)
+export interface EreterChart {
+  title: string;
+  diff: string;
+  level: number;
+  ec: number | null;
+  hc: number | null;
+  exh: number | null;
+  ec_n: number | null;
+  hc_n: number | null;
+  exh_n: number | null;
+}
+
+export interface EreterData {
+  extractedAt: string;
+  source: string;
+  count: number;
+  charts: EreterChart[];
+}
+
+export interface EreterGetResult {
+  ok: boolean;
+  error?: string;
+  data?: EreterData;
+}
+
+export interface EreterCacheStatus {
+  mtime: number | null;
+  isStale: boolean;
+  exists: boolean;
+}

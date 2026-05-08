@@ -4,6 +4,8 @@ import type {
   TsvReadResult,
   RefluxState,
   RefluxStartResult,
+  EreterGetResult,
+  EreterCacheStatus,
 } from '../shared/types';
 
 const api = {
@@ -25,6 +27,13 @@ const api = {
         ipcRenderer.off('reflux:state', listener);
       };
     },
+  },
+
+  // ereter.net 데이터 (perlevel ★ 값) 캐시 + 24h TTL
+  ereter: {
+    get: (force = false): Promise<EreterGetResult> => ipcRenderer.invoke('ereter:get', force),
+    status: (): Promise<EreterCacheStatus> => ipcRenderer.invoke('ereter:status'),
+    dataPath: (): Promise<string> => ipcRenderer.invoke('ereter:dataPath'),
   },
 
   // 진단용 (현재 미사용, 나중에 INFINITAS 실행 감지에 활용)

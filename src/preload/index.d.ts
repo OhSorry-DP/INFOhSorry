@@ -4,6 +4,8 @@ import type {
   TsvReadResult,
   RefluxState,
   RefluxStartResult,
+  EreterGetResult,
+  EreterCacheStatus,
 } from '../shared/types';
 
 declare global {
@@ -18,6 +20,11 @@ declare global {
         getTsvPath: () => Promise<string>;
         openDir: () => Promise<string>;
         onState: (cb: (s: RefluxState) => void) => () => void;
+      };
+      ereter: {
+        get: (force?: boolean) => Promise<EreterGetResult>;
+        status: () => Promise<EreterCacheStatus>;
+        dataPath: () => Promise<string>;
       };
       probe: (exeName: string) => Promise<ProbeResult>;
     };

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { RefluxState, SongRow } from '../../shared/types';
+import type { EreterCacheStatus, RefluxState, SongRow } from '../../shared/types';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import ChartTable from './ChartTable';
 import Dp12Table from './Dp12Table';
@@ -39,6 +39,10 @@ export default function App() {
   const lastLoadedMtime = useRef<number>(0);
   const [tsvMtime, setTsvMtime] = useState<number>(0);
 
+  // ereter ★ 데이터 캐시 상태 + 갱신 진행 표시
+  const [ereterStatus, setEreterStatus] = useState<EreterCacheStatus | null>(null);
+  const [ereterBusy, setEreterBusy] = useState(false);
+
   // 마운트 시:
   //   1. Reflux state 구독 시작
   //   2. 현재 tsvPath / 현재 state 한 번 가져오기
@@ -62,6 +66,33 @@ export default function App() {
     })();
     return off;
   }, []);
+
+  // 마운트 시 ereter 캐시 상태 확인 — 24h 지났거나 데이터 없으면 자동 갱신
+  useEffect(() => {
+    void (async () => {
+      const status = await window.infohsorry.ereter.status();
+      setEreterStatus(status);
+      if (status.isStale || !status.exists) {
+        // 백그라운드 자동 갱신 (force=false 이지만 stale 이라 fetch 됨)
+        await refreshEreter(false);
+      }
+    })();
+  }, []);
+
+  // ereter 갱신 — force=true 면 24h 안 지났어도 강제 갱신
+  async function refreshEreter(force: boolean): Promise<void> {
+    setEreterBusy(true);
+    try {
+      const r = await window.infohsorry.ereter.get(force);
+      if (!r.ok) setError(r.error || 'ereter 갱신 실패');
+      const updated = await window.infohsorry.ereter.status();
+      setEreterStatus(updated);
+    } catch (e) {
+      setError(`ereter: ${(e as Error).message}`);
+    } finally {
+      setEreterBusy(false);
+    }
+  }
 
   // Reflux 가 새 dump 를 신호하면 (stage='ready' + lastTsvMtime 갱신) 자동 reload
   useEffect(() => {
@@ -176,6 +207,8 @@ export default function App() {
         </div>
       </header>
 
+      <EreterBar status={ereterStatus} busy={ereterBusy} onRefresh={() => refreshEreter(true)} />
+
       <ProgressBar state={refluxState} />
 
       <RefluxLog state={refluxState} />
@@ -228,6 +261,42 @@ export default function App() {
           </main>
         </>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// ereter ★ 데이터 캐시 상태 + 강제 갱신 버튼
+// ============================================================
+function EreterBar({
+  status,
+  busy,
+  onRefresh,
+}: {
+  status: EreterCacheStatus | null;
+  busy: boolean;
+  onRefresh: () => void;
+}): JSX.Element {
+  let label: string;
+  if (busy) {
+    label = 'ereter ★ 데이터 받는 중...';
+  } else if (!status || !status.exists) {
+    label = 'ereter ★ 데이터 없음';
+  } else if (status.mtime != null) {
+    label = `ereter ★ 데이터 · 갱신 ${formatRelativeTime(status.mtime)}`;
+  } else {
+    label = 'ereter ★ 데이터 상태 불명';
+  }
+  const stale = !!status?.isStale && !busy;
+  return (
+    <div className={`ereter-bar${stale ? ' stale' : ''}`}>
+      <span className="ereter-label">
+        {label}
+        {stale && status?.exists && <span className="ereter-stale-tag"> · 24시간 경과</span>}
+      </span>
+      <button onClick={onRefresh} disabled={busy} title="ereter.net 에서 지금 다시 받기">
+        {busy ? '...' : '지금 갱신'}
+      </button>
     </div>
   );
 }

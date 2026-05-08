@@ -3,6 +3,11 @@ import { join } from 'path';
 import { readTsv } from './tsv';
 import { findInfinitas, closeHandle } from './memory';
 import { RefluxManager } from './reflux';
+import {
+  getEreterData,
+  getCacheStatus as getEreterCacheStatus,
+  getDataPath as getEreterDataPath,
+} from './ereter';
 
 let mainWindow: BrowserWindow | null = null;
 const refluxManager = new RefluxManager();
@@ -39,6 +44,19 @@ app.whenReady().then(() => {
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+  // 백그라운드에서 ereter 데이터 자동 갱신 (24h TTL).
+  // 캐시가 stale 이면 fetch, 신선하면 skip. 실패해도 앱 동작에 영향 X (silent).
+  void (async () => {
+    const status = getEreterCacheStatus();
+    if (status.isStale) {
+      try {
+        await getEreterData(false);
+        console.log('[ereter] 자동 갱신 완료');
+      } catch (e) {
+        console.warn('[ereter] 자동 갱신 실패:', (e as Error).message);
+      }
+    }
+  })();
 });
 
 app.on('window-all-closed', () => {
@@ -85,6 +103,19 @@ ipcMain.handle('reflux:openDir', async () => {
   await shell.openPath(dir);
   return dir;
 });
+
+// ----- IPC: ereter 데이터 (캐시 우선, 24h TTL) -----
+ipcMain.handle('ereter:get', async (_evt, force: boolean = false) => {
+  try {
+    const data = await getEreterData(force);
+    return { ok: true, data };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
+ipcMain.handle('ereter:status', async () => getEreterCacheStatus());
+ipcMain.handle('ereter:dataPath', async () => getEreterDataPath());
 
 // ----- IPC: TSV 파일 읽기 (Reflux 의 tracker.tsv 또는 사용자가 고른 파일) -----
 ipcMain.handle('tsv:pick', async () => {
