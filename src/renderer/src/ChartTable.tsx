@@ -6,7 +6,7 @@ import { useMemo, useState } from 'react';
 import type { ChartSlot, SongChart, SongRow } from '../../shared/types';
 import { DP_SLOTS, SP_SLOTS, extractCharts } from '../../shared/types';
 import { lampNum } from '../../shared/match';
-import { lampStyle, letterColor } from './lampStyle';
+import { lampStyle } from './lampStyle';
 
 interface Props {
   rows: SongRow[];
@@ -25,19 +25,7 @@ const SLOT_COLOR: Record<ChartSlot, string> = {
   DPL: '#d678c8',
 };
 
-// DJ Level 랭킹 (높을수록 위)
-const LETTER_RANK: Record<string, number> = {
-  AAA: 7,
-  AA: 6,
-  A: 5,
-  B: 4,
-  C: 3,
-  D: 2,
-  E: 1,
-  F: 0,
-};
-
-type SortKey = 'lamp' | 'level' | 'title' | 'notes' | 'letter' | 'ex' | 'miss';
+type SortKey = 'lamp' | 'level' | 'title' | 'notes' | 'rate' | 'ex' | 'miss';
 type SortDir = 'asc' | 'desc';
 
 // id 는 React key 용 (lamp 컬럼이 두 군데라 unique 식별 필요)
@@ -47,9 +35,16 @@ const COLUMNS: { id: string; key: SortKey | null; label: string; numeric?: boole
   { id: 'title', key: 'title', label: '곡명' },
   { id: 'notes', key: 'notes', label: 'NOTES', numeric: true },
   { id: 'lamp-text', key: 'lamp', label: 'LAMP' },
-  { id: 'letter', key: 'letter', label: 'DJ Level' },
+  { id: 'rate', key: 'rate', label: 'RATE' },
   { id: 'ex', key: 'ex', label: 'EX Score', numeric: true },
   { id: 'miss', key: 'miss', label: 'MISS', numeric: true },
+];
+
+// DJ Level 커트라인 (EX score / max EX 비율) — 막대 위 세로줄 위치
+const RATE_CUTS = [
+  { name: 'A', pct: 6 / 9 },
+  { name: 'AA', pct: 7 / 9 },
+  { name: 'AAA', pct: 8 / 9 },
 ];
 
 export default function ChartTable({ rows, style }: Props) {
@@ -91,9 +86,12 @@ export default function ChartTable({ rows, style }: Props) {
         case 'notes':
           v = a.noteCount - b.noteCount;
           break;
-        case 'letter':
-          v = (LETTER_RANK[a.letter] ?? -1) - (LETTER_RANK[b.letter] ?? -1);
+        case 'rate': {
+          const ra = a.noteCount > 0 ? a.exScore / (a.noteCount * 2) : 0;
+          const rb = b.noteCount > 0 ? b.exScore / (b.noteCount * 2) : 0;
+          v = ra - rb;
           break;
+        }
         case 'ex':
           v = a.exScore - b.exScore;
           break;
@@ -179,11 +177,28 @@ function ChartRow({ c }: { c: SongChart }) {
           <span style={{ color: ls.color, fontWeight: 700 }}>{ls.label}</span>
         )}
       </div>
-      <div className="ct-cell ct-letter">
-        {played && c.letter ? (
-          <span style={{ color: letterColor(c.letter), fontWeight: 700 }}>{c.letter}</span>
+      <div className="ct-cell ct-rate-bar">
+        {played && c.noteCount > 0 ? (
+          (() => {
+            const rate = c.exScore / (c.noteCount * 2);
+            const pct = Math.max(0, Math.min(1, rate)) * 100;
+            return (
+              <>
+                <div className="rate-fill" style={{ width: `${pct}%` }} />
+                {RATE_CUTS.map((cut) => (
+                  <div
+                    key={cut.name}
+                    className="rate-cut"
+                    style={{ left: `${cut.pct * 100}%` }}
+                    title={`${cut.name} 커트라인 (${(cut.pct * 100).toFixed(2)}%)`}
+                  />
+                ))}
+                <span className="rate-text">{(rate * 100).toFixed(2)}%</span>
+              </>
+            );
+          })()
         ) : (
-          <span className="ct-empty">-</span>
+          <span className="ct-empty rate-empty">-</span>
         )}
       </div>
       <div className="ct-cell num">{played && c.exScore > 0 ? c.exScore.toLocaleString() : '-'}</div>

@@ -445,6 +445,42 @@ body {
   font-size: 12.5px;
   letter-spacing: 0.3px;
 }
+
+/* RATE 막대 셀 */
+.ct-cell.ct-rate-bar {
+  padding: 0 !important;
+  position: relative;
+  background: #f0f2f5;
+  overflow: hidden;
+}
+.ct-cell.ct-rate-bar .rate-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  background: linear-gradient(to right, #c44444, #e58484);
+}
+.ct-cell.ct-rate-bar .rate-cut {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: #888;
+  z-index: 1;
+}
+.ct-cell.ct-rate-bar .rate-text {
+  position: relative;
+  z-index: 2;
+  padding-left: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #212529;
+  text-shadow: 0 0 2px rgba(255, 255, 255, 0.7);
+  font-variant-numeric: tabular-nums;
+}
+.ct-cell.ct-rate-bar .rate-empty {
+  padding-left: 8px;
+}
 .ct-empty {
   color: #ccc;
 }
