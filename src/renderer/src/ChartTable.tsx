@@ -31,12 +31,12 @@ type SortDir = 'asc' | 'desc';
 // id 는 React key 용 (lamp 컬럼이 두 군데라 unique 식별 필요)
 const COLUMNS: { id: string; key: SortKey | null; label: string; numeric?: boolean }[] = [
   { id: 'lamp-color', key: 'lamp', label: '' },
-  { id: 'level', key: 'level', label: 'Lv' },
+  { id: 'level', key: 'level', label: 'LV' },
   { id: 'title', key: 'title', label: '곡명' },
   { id: 'notes', key: 'notes', label: 'NOTES', numeric: true },
   { id: 'lamp-text', key: 'lamp', label: 'LAMP' },
   { id: 'rate', key: 'rate', label: 'RATE' },
-  { id: 'ex', key: 'ex', label: '스코어', numeric: true },
+  { id: 'ex', key: 'ex', label: 'SCORE', numeric: true },
   { id: 'miss', key: 'miss', label: 'MISS', numeric: true },
 ];
 
