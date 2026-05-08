@@ -278,28 +278,15 @@ export class RefluxManager extends EventEmitter {
     if (this.child) return;
     this.setState({ stage: 'starting', spawned: false });
 
-    // PowerShell Start-Process -WindowStyle Hidden 으로 띄움.
-    //   - Reflux 가 콘솔 attach 받음 (Console.Clear 동작)
-    //   - 콘솔창은 hidden — 작업표시줄에도 안 보임
-    //
-    // SystemRoot 절대경로로 ENOENT 방지. powershell.exe 자체도 windowsHide:true 로 invisible.
-    const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
-    const psPath = `${winDir}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
-
-    const child = spawn(
-      psPath,
-      [
-        '-NoProfile',
-        '-WindowStyle',
-        'Hidden',
-        '-Command',
-        `Start-Process -FilePath '${exePath()}' -WorkingDirectory '${workDir()}' -WindowStyle Hidden`,
-      ],
-      {
-        windowsHide: true,
-        stdio: 'ignore',
-      },
-    );
+    // 디버그용: cmd /K 로 콘솔창 보이게 띄움 — Reflux 종료해도 콘솔창 안 닫힘.
+    // 콘솔창의 메시지 (hook 진행 / 에러 등) 사용자가 직접 확인 가능.
+    const cmdExe = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
+    const cmdLine = `start "" /D "${workDir()}" "${cmdExe}" /K "${exePath()}"`;
+    const child = spawn(cmdLine, [], {
+      shell: true,
+      windowsHide: true,
+      stdio: 'ignore',
+    });
     this.child = child;
     // cmd 가 곧 종료 → spawned=true 는 사용자가 뭔가 떠 있다는 신호. Reflux 는 별도로 살아있음.
     this.setState({ spawned: true, stage: 'hooking' });
