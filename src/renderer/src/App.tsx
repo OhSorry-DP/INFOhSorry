@@ -1,80 +1,136 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import type { SongRow } from '../../shared/types';
+import ChartTable from './ChartTable';
 
-// 기본 PoC: INFINITAS 프로세스 핸들 잡기까지 검증
-// 실제 메모리 읽기 (ex score, 곡 ID 등) 는 다음 단계에서 추가
-const DEFAULT_EXE = 'bm2dx.exe';
+const STORAGE_KEY = 'infohsorry_tsv_path';
+
+type Tab = 'sp' | 'dp';
 
 export default function App() {
-  const [exeName, setExeName] = useState(DEFAULT_EXE);
-  const [result, setResult] = useState<string>('"탐색" 버튼을 누르면 메모리 핸들을 시도합니다.');
+  const [tsvPath, setTsvPath] = useState<string | null>(null);
+  const [rows, setRows] = useState<SongRow[]>([]);
+  const [tab, setTab] = useState<Tab>('sp');
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const onProbe = async () => {
+  // 마운트 시 마지막으로 사용한 TSV 경로 복원
+  useEffect(() => {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) {
+      setTsvPath(saved);
+      void loadTsv(saved);
+    }
+  }, []);
+
+  async function loadTsv(path: string) {
     setLoading(true);
-    setResult('탐색 중...');
+    setError(null);
     try {
-      const r = await window.infohsorry.probe(exeName);
-      if (r.ok) {
-        setResult(
-          `OK\npid=${r.pid}\nmodName=${r.modName}\nmodBaseAddr=${r.modBaseAddr}\nmodBaseSize=${r.modBaseSize?.toLocaleString()}`,
-        );
+      const r = await window.infohsorry.readTsv(path);
+      if (!r.ok) {
+        setError(r.error || '읽기 실패');
+        setRows([]);
       } else {
-        setResult(`실패: ${r.error}`);
+        setRows(r.rows || []);
       }
     } catch (e) {
-      setResult(`예외: ${(e as Error).message}`);
+      setError((e as Error).message);
+      setRows([]);
     } finally {
       setLoading(false);
     }
-  };
+  }
+
+  async function pickAndLoad() {
+    const picked = await window.infohsorry.pickTsv();
+    if (!picked) return;
+    localStorage.setItem(STORAGE_KEY, picked);
+    setTsvPath(picked);
+    await loadTsv(picked);
+  }
+
+  // 통계: 각 탭에서 unlock 된 곡 수 / 플레이한 곡 수
+  const stats = useMemo(() => {
+    const slots = tab === 'sp' ? ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'] : ['DPN', 'DPH', 'DPA', 'DPL'];
+    let unlocked = 0;
+    let played = 0;
+    let total = 0;
+    for (const r of rows) {
+      for (const s of slots) {
+        const cell = r.charts[s as keyof typeof r.charts];
+        if (!cell) continue;
+        total++;
+        if (cell.unlocked) unlocked++;
+        if (cell.unlocked && cell.lamp && cell.lamp !== 'NP') played++;
+      }
+    }
+    return { total, unlocked, played };
+  }, [rows, tab]);
 
   return (
-    <div style={{ fontFamily: 'sans-serif', padding: 24, color: '#222' }}>
-      <h1 style={{ margin: '0 0 4px' }}>INFOhSorry</h1>
-      <p style={{ color: '#666', marginTop: 0 }}>IIDX INFINITAS 메모리 캡처 PoC</p>
+    <div className="app">
+      <header className="app-header">
+        <div className="title">
+          <h1>INFOhSorry</h1>
+          <span className="subtitle">IIDX INFINITAS · Reflux TSV viewer</span>
+        </div>
+        <div className="actions">
+          <button onClick={pickAndLoad} disabled={loading}>
+            {tsvPath ? 'TSV 다시 선택' : 'TSV 파일 선택'}
+          </button>
+          {tsvPath && (
+            <button onClick={() => loadTsv(tsvPath)} disabled={loading} title="새로고침">
+              ↻
+            </button>
+          )}
+        </div>
+      </header>
 
-      <div style={{ marginTop: 16 }}>
-        <label style={{ display: 'block', fontSize: 12, color: '#555', marginBottom: 4 }}>
-          실행 파일 이름
-        </label>
-        <input
-          type="text"
-          value={exeName}
-          onChange={(e) => setExeName(e.target.value)}
-          style={{
-            width: 280,
-            padding: '6px 8px',
-            border: '1px solid #ccc',
-            borderRadius: 4,
-            fontSize: 13,
-          }}
-        />
-        <button
-          onClick={onProbe}
-          disabled={loading || !exeName}
-          style={{
-            marginLeft: 8,
-            padding: '6px 14px',
-            fontSize: 13,
-            cursor: loading ? 'wait' : 'pointer',
-          }}
-        >
-          탐색
-        </button>
-      </div>
+      {tsvPath && (
+        <div className="path-bar" title={tsvPath}>
+          {tsvPath}
+        </div>
+      )}
 
-      <pre
-        style={{
-          marginTop: 16,
-          padding: 12,
-          background: '#f4f4f6',
-          borderRadius: 4,
-          fontSize: 12,
-          whiteSpace: 'pre-wrap',
-        }}
-      >
-        {result}
-      </pre>
+      {error && <div className="error">에러: {error}</div>}
+
+      {!tsvPath && !loading && !error && (
+        <div className="empty-state">
+          <p>Reflux 가 출력한 TSV 파일을 선택하세요.</p>
+          <p className="hint">
+            Reflux 폴더의 <code>tracker_data.tsv</code> 같은 파일이 일반적입니다 (Reflux config 에서
+            정한 이름).
+          </p>
+        </div>
+      )}
+
+      {tsvPath && !loading && rows.length > 0 && (
+        <>
+          <nav className="tabs">
+            <button className={tab === 'sp' ? 'tab active' : 'tab'} onClick={() => setTab('sp')}>
+              SINGLE PLAY
+            </button>
+            <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
+              DOUBLE PLAY
+            </button>
+            <span className="tab-stats">
+              {rows.length}곡 · {stats.unlocked}/{stats.total} unlock · {stats.played} played
+            </span>
+          </nav>
+
+          <main className="content">
+            <ChartTable rows={rows} style={tab} />
+          </main>
+        </>
+      )}
+
+      {tsvPath && !loading && rows.length === 0 && !error && (
+        <div className="empty-state">
+          <p>파싱된 곡이 0 개입니다. TSV 형식이 다른지 확인해주세요.</p>
+        </div>
+      )}
+
+      {loading && <div className="loading">불러오는 중...</div>}
     </div>
   );
 }

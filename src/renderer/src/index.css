@@ -1,5 +1,242 @@
+/* ============================================================
+ * INFOhSorry — Reflux TSV viewer
+ * ============================================================ */
+
+* {
+  box-sizing: border-box;
+}
 body {
   margin: 0;
   font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
   background: #fafbfc;
+  color: #212529;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+/* ----- 앱 전체 레이아웃 ----- */
+.app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+.app-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 20px;
+  background: #fff;
+  border-bottom: 1px solid #e0e3e7;
+}
+.app-header .title {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.app-header h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+.app-header .subtitle {
+  color: #888;
+  font-size: 11px;
+}
+.app-header .actions {
+  display: flex;
+  gap: 6px;
+}
+.app-header .actions button {
+  padding: 6px 12px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.app-header .actions button:hover:not(:disabled) {
+  background: #f0f0f0;
+}
+.app-header .actions button:disabled {
+  cursor: wait;
+  color: #aaa;
+}
+
+.path-bar {
+  padding: 6px 20px;
+  font-size: 11px;
+  color: #888;
+  background: #f4f5f7;
+  border-bottom: 1px solid #e8eaed;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.error {
+  padding: 12px 20px;
+  background: #f8eaea;
+  color: #8b3a3a;
+  border-bottom: 1px solid #e0c0c0;
+}
+.empty-state {
+  padding: 40px 20px;
+  text-align: center;
+  color: #666;
+}
+.empty-state .hint {
+  color: #aaa;
+  font-size: 12px;
+  margin-top: 8px;
+}
+.empty-state code {
+  background: #f0f0f0;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+}
+.loading {
+  padding: 40px 20px;
+  text-align: center;
+  color: #888;
+}
+
+/* ----- 탭 ----- */
+.tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 20px;
+  background: #fff;
+  border-bottom: 1px solid #e0e3e7;
+}
+.tab {
+  padding: 12px 18px;
+  border: none;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  color: #888;
+  cursor: pointer;
+  border-bottom: 3px solid transparent;
+  font-family: inherit;
+  letter-spacing: 0.5px;
+}
+.tab:hover {
+  color: #555;
+}
+.tab.active {
+  color: #212529;
+  border-bottom-color: #1971c2;
+}
+.tab-stats {
+  margin-left: auto;
+  color: #888;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ----- 콘텐츠 영역 ----- */
+.content {
+  flex: 1;
+  padding: 12px 20px;
+  overflow: auto;
+}
+
+/* ----- 차트 테이블 ----- */
+.chart-table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 4px 4px;
+}
+.chart-table .thead {
+  display: table-row;
+  position: sticky;
+  top: 0;
+  background: #fafbfc;
+  z-index: 1;
+}
+.chart-table .th {
+  display: table-cell;
+  padding: 8px 6px;
+  font-size: 10.5px;
+  font-weight: 700;
+  color: #555;
+  background: #fff;
+  border-radius: 3px;
+  text-align: center;
+  letter-spacing: 0.3px;
+}
+.chart-table .th.title-col {
+  text-align: left;
+  padding-left: 8px;
+}
+.chart-table .tbody {
+  display: table-row-group;
+}
+.chart-table .tr {
+  display: table-row;
+}
+.chart-table .title-col {
+  display: table-cell;
+  padding: 6px 8px;
+  font-weight: 500;
+  vertical-align: middle;
+  background: #fff;
+  border-radius: 3px;
+  width: 28%;
+  max-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cell {
+  display: table-cell;
+  padding: 5px 6px;
+  background: #fff;
+  border-radius: 3px;
+  vertical-align: middle;
+  min-height: 36px;
+  font-variant-numeric: tabular-nums;
+}
+.cell.empty {
+  color: #ddd;
+  text-align: center;
+}
+.cell.locked {
+  color: #aaa;
+  text-align: center;
+  font-size: 11px;
+  background: #f5f5f5;
+}
+.cell .lamp {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  line-height: 1.2;
+}
+.cell .score {
+  margin-top: 2px;
+  font-size: 12px;
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.cell .letter {
+  font-weight: 700;
+  font-size: 11px;
+}
+.cell .ex {
+  color: #333;
+  font-weight: 500;
+}
+.cell .miss {
+  margin-top: 1px;
+  font-size: 10px;
+  color: #888;
 }
