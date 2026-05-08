@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { RefluxState, SongRow } from '../../shared/types';
+import { DP_SLOTS, extractCharts } from '../../shared/types';
 import ChartTable from './ChartTable';
+import Dp12Table from './Dp12Table';
 
-type Tab = 'sp' | 'dp';
+type Tab = 'sp' | 'dp' | 'dp12';
 
 // "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
 function formatRelativeTime(epochMs: number): string {
@@ -105,8 +107,9 @@ export default function App() {
     await loadTsv(picked);
   }
 
-  // 통계
+  // SP/DP 탭의 통계
   const stats = useMemo(() => {
+    if (tab === 'dp12') return { total: 0, unlocked: 0, played: 0 };
     const slots = tab === 'sp' ? ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'] : ['DPN', 'DPH', 'DPA', 'DPL'];
     let unlocked = 0;
     let played = 0;
@@ -122,6 +125,33 @@ export default function App() {
     }
     return { total, unlocked, played };
   }, [rows, tab]);
+
+  // DP ☆12 차트만 추출 (별값 추정 모델 input 의 prep)
+  const dp12Charts = useMemo(
+    () => extractCharts(rows, { slots: DP_SLOTS, level: 12 }),
+    [rows],
+  );
+
+  // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
+  const dp12Stats = useMemo(() => {
+    let total = 0,
+      attempted = 0,
+      cleared = 0,
+      hard = 0,
+      exhard = 0,
+      fc = 0;
+    for (const c of dp12Charts) {
+      if (!c.unlocked) continue;
+      total++;
+      if (c.lamp === 'NP') continue;
+      attempted++;
+      if (['Easy', 'Clear', 'Hard', 'ExHard', 'FullCombo'].includes(c.lamp)) cleared++;
+      if (['Hard', 'ExHard', 'FullCombo'].includes(c.lamp)) hard++;
+      if (['ExHard', 'FullCombo'].includes(c.lamp)) exhard++;
+      if (c.lamp === 'FullCombo') fc++;
+    }
+    return { total, attempted, cleared, hard, exhard, fc };
+  }, [dp12Charts]);
 
   return (
     <div className="app">
@@ -170,8 +200,16 @@ export default function App() {
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
               DOUBLE PLAY
             </button>
+            <button
+              className={tab === 'dp12' ? 'tab active' : 'tab'}
+              onClick={() => setTab('dp12')}
+            >
+              DP ☆12 분석
+            </button>
             <span className="tab-stats">
-              {rows.length}곡 · {stats.unlocked}/{stats.total} unlock · {stats.played} played
+              {tab === 'dp12'
+                ? `${dp12Stats.total}곡 · 시도 ${dp12Stats.attempted} · 클리어 ${dp12Stats.cleared} · HC ${dp12Stats.hard} · EXH ${dp12Stats.exhard} · FC ${dp12Stats.fc}`
+                : `${rows.length}곡 · ${stats.unlocked}/${stats.total} unlock · ${stats.played} played`}
               {tsvMtime > 0 && (
                 <span className="updated-at" title={new Date(tsvMtime).toLocaleString()}>
                   {' '}
@@ -182,7 +220,11 @@ export default function App() {
           </nav>
 
           <main className="content">
-            <ChartTable rows={rows} style={tab} />
+            {tab === 'dp12' ? (
+              <Dp12Table charts={dp12Charts} />
+            ) : (
+              <ChartTable rows={rows} style={tab} />
+            )}
           </main>
         </>
       )}

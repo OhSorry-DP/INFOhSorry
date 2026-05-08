@@ -43,7 +43,8 @@ function parseRow(idx: Map<string, number>, fields: string[]): SongRow | null {
     if (unlockedStr === '') continue; // 컬럼 자체가 없으면 (구버전 TSV?) skip
     charts[slot] = {
       unlocked: parseBool(unlockedStr),
-      rating: get(`${slot} Rating`),
+      // Reflux 의 'Rating' 컬럼은 사실 게임 내 LEVEL (정수 1~12)
+      level: parseInt0(get(`${slot} Rating`)),
       lamp: get(`${slot} Lamp`) as Lamp,
       letter: get(`${slot} Letter`),
       exScore: parseInt0(get(`${slot} EX Score`)),

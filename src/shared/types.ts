@@ -15,7 +15,7 @@ export type Lamp =
 
 export interface ChartCell {
   unlocked: boolean;
-  rating: string;
+  level: number; // Reflux 의 'Rating' 컬럼 = 게임 내 LEVEL (1~12 정수)
   lamp: Lamp;
   letter: string; // DJ Level (AAA/AA/A/B/C/D/E/F)
   exScore: number;
@@ -33,8 +33,51 @@ export interface SongRow {
   charts: Partial<Record<ChartSlot, ChartCell>>;
 }
 
+// 곡 row 를 펼쳐서 차트 단위 1행으로 변환한 형태 (ohSorry 모델 input 호환)
+export interface SongChart {
+  title: string;
+  slot: ChartSlot;
+  level: number;
+  unlocked: boolean;
+  lamp: Lamp;
+  letter: string;
+  exScore: number;
+  missCount: number;
+  noteCount: number;
+  djPoints: number;
+}
+
 export const SP_SLOTS: ChartSlot[] = ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'];
 export const DP_SLOTS: ChartSlot[] = ['DPN', 'DPH', 'DPA', 'DPL'];
+
+// 곡 row 들에서 (DP slot ∩ level === target) 인 차트만 추출.
+// 별값 추정 / 추천곡 모델의 input 이 되는 chart 단위 평탄화.
+export function extractCharts(
+  rows: SongRow[],
+  opts: { slots: ChartSlot[]; level: number },
+): SongChart[] {
+  const out: SongChart[] = [];
+  for (const r of rows) {
+    for (const slot of opts.slots) {
+      const c = r.charts[slot];
+      if (!c) continue;
+      if (c.level !== opts.level) continue;
+      out.push({
+        title: r.title,
+        slot,
+        level: c.level,
+        unlocked: c.unlocked,
+        lamp: c.lamp,
+        letter: c.letter,
+        exScore: c.exScore,
+        missCount: c.missCount,
+        noteCount: c.noteCount,
+        djPoints: c.djPoints,
+      });
+    }
+  }
+  return out;
+}
 
 // IPC 응답
 export interface ProbeResult {

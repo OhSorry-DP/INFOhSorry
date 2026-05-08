@@ -332,3 +332,62 @@ body {
   font-size: 10px;
   color: #888;
 }
+
+/* ----- DP ☆12 차트 단위 표 ----- */
+.dp12-table {
+  display: grid;
+  grid-template-columns: 1fr 100px 56px 80px 56px 70px 60px 100px;
+  gap: 1px;
+  background: #e8eaed;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.dp12-thead,
+.dp12-tr {
+  display: contents;
+}
+.dp12-thead > div {
+  padding: 8px 8px;
+  background: #f4f5f7;
+  font-size: 11px;
+  font-weight: 700;
+  color: #555;
+  letter-spacing: 0.3px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.dp12-tr > div {
+  padding: 6px 8px;
+  background: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+}
+.dp12-tr .title {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dp12-tr .slot {
+  font-weight: 700;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+.dp12-tr .num {
+  justify-content: flex-end;
+}
+.dp12-tr .letter {
+  font-weight: 700;
+}
+.dp12-tr .lamp {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  border-radius: 3px;
+  padding: 2px 6px;
+  margin: 2px;
+  justify-content: center;
+}
