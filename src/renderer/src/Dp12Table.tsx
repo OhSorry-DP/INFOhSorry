@@ -80,7 +80,6 @@ export default function Dp12Table({ charts }: Props) {
   return (
     <div>
       <div className="dp12-sort">
-        <span className="dp12-sort-label">난이도 안 정렬</span>
         <button
           className={`dp12-sort-btn${sortBy === 'title' ? ' active' : ''}`}
           onClick={() => setSortBy('title')}

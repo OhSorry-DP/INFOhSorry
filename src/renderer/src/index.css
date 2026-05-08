@@ -803,37 +803,28 @@ body {
   text-align: right;
 }
 
-/* ----- DP ☆12 격자 정렬 토글 ----- */
+/* ----- DP ☆12 격자 정렬 토글 — 박스 X, 텍스트 only, 선택 시 볼드 ----- */
 .dp12-sort {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 14px;
   margin-bottom: 8px;
-  font-size: 12px;
-}
-.dp12-sort-label {
-  color: #666;
-  font-size: 11.5px;
-  margin-right: 2px;
 }
 .dp12-sort-btn {
-  padding: 4px 12px;
-  border: 1px solid #ccc;
-  background: #fff;
-  border-radius: 3px;
+  padding: 0;
+  border: none;
+  background: none;
   cursor: pointer;
   font-family: inherit;
-  font-size: 12px;
-  color: #555;
+  font-size: 13px;
+  color: #888;
 }
 .dp12-sort-btn:hover:not(.active) {
-  background: #f4f5f7;
+  color: #555;
 }
 .dp12-sort-btn.active {
-  background: #1971c2;
-  border-color: #1971c2;
-  color: #fff;
-  font-weight: 600;
+  color: #212529;
+  font-weight: 700;
 }
 
 /* ----- DP ☆12 격자 (level 그룹) ----- */
