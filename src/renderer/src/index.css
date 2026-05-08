@@ -345,12 +345,17 @@ body {
   justify-content: flex-end;
 }
 .ct-lamp {
-  /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준 */
+  /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준
+     cell padding 제거: 박스가 cell 가득 채우게, 음영 영역 없음 */
   margin: 4px 3px;
   border-radius: 2px;
-  padding: 0;
+  padding: 0 !important;
   min-height: 22px;
   cursor: help;
+}
+/* 잠긴 차트의 lamp cell 도 흰색 유지 (전체 row 의 #fafafa 음영이 lamp 까지 가지 않게) */
+.ct-tr.locked > .ct-cell.ct-lamp {
+  background: #fff;
 }
 
 /* lamp 색상 매핑 (사용자 spec)
