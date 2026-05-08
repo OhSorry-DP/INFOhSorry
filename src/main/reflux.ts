@@ -278,22 +278,28 @@ export class RefluxManager extends EventEmitter {
     if (this.child) return;
     this.setState({ stage: 'starting', spawned: false });
 
-    // ComSpec 은 Windows 가 항상 정의하는 cmd.exe 절대경로. PATH 의존 회피 (ENOENT 방지).
-    const cmdExe = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
-
-    // 명령: start "" /MIN /D <cwd> "<Reflux.exe>"
-    //   - start: 새 콘솔창 부여 (Console.Clear 동작에 필요)
-    //   - /MIN: 최소화 상태로 시작 (작업표시줄엔 보이되 화면 차지 X)
-    //   - 디버깅용 cmd /K 는 제거 (이제 Reflux 가 정상 동작하므로)
+    // PowerShell Start-Process -WindowStyle Hidden 으로 띄움.
+    //   - Reflux 가 콘솔 attach 받음 (Console.Clear 동작)
+    //   - 콘솔창은 hidden — 작업표시줄에도 안 보임
     //
-    // shell:true + 단일 문자열로 escape 처리 위임 (array 로는 start 의 quoting 까다로움)
-    const cmdLine = `start "" /MIN /D "${workDir()}" "${exePath()}"`;
+    // SystemRoot 절대경로로 ENOENT 방지. powershell.exe 자체도 windowsHide:true 로 invisible.
+    const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+    const psPath = `${winDir}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`;
 
-    const child = spawn(cmdLine, [], {
-      shell: true,
-      windowsHide: true, // 우리 spawn 한 cmd 는 안 보이게 (start 가 띄우는 새 콘솔만 보임)
-      stdio: 'ignore',
-    });
+    const child = spawn(
+      psPath,
+      [
+        '-NoProfile',
+        '-WindowStyle',
+        'Hidden',
+        '-Command',
+        `Start-Process -FilePath '${exePath()}' -WorkingDirectory '${workDir()}' -WindowStyle Hidden`,
+      ],
+      {
+        windowsHide: true,
+        stdio: 'ignore',
+      },
+    );
     this.child = child;
     // cmd 가 곧 종료 → spawned=true 는 사용자가 뭔가 떠 있다는 신호. Reflux 는 별도로 살아있음.
     this.setState({ spawned: true, stage: 'hooking' });
