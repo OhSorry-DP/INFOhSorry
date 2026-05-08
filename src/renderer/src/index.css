@@ -834,28 +834,36 @@ body {
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
 }
 .dp12-song {
-  padding: 7px 10px;
+  /* 위아래 padding 0 — lamp-box 가 row 가득 차게. min-height 로 row 높이. */
+  padding: 0;
   font-size: 12.5px;
   cursor: help;
+  border-bottom: 1px solid #e0e3e7;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  min-height: 30px;
+}
+.dp12-song-text {
+  flex: 1;
+  min-width: 0;
+  padding: 0 10px 0 0;
+  display: flex;
+  align-items: center;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  border-bottom: 1px solid #e0e3e7;
-  display: flex;
-  align-items: center;
-  gap: 7px;
 }
 .dp12-level {
   border-bottom: 1px solid #e0e3e7;
 }
 
-/* 곡명 왼쪽 작은 lamp 색박스 (ChartTable 의 .ct-lamp-X 와 동일 색) */
+/* 곡명 왼쪽 lamp 색박스 — row 상하 가득 차게 (border-radius 0) */
 .lamp-box {
   flex-shrink: 0;
   display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 2px;
+  width: 6px;
+  align-self: stretch;
 }
 .lamp-box.lamp-NP  { background: #c5c8cc; }
 .lamp-box.lamp-AC  { background: #9966cc; }
