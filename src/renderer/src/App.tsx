@@ -293,7 +293,10 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="title">
-          <h1>INF오소리</h1>
+          <h1>
+            IIDX INFINITAS Play Data Viewer
+            <span className="by-author"> - by오소리</span>
+          </h1>
         </div>
         <div className="actions">
           <button className="btn-primary" onClick={startReflux} disabled={busy}>
