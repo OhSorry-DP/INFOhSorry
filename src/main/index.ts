@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import { join } from 'path';
 import { readTsv } from './tsv';
 import { findInfinitas, closeHandle } from './memory';
@@ -78,6 +78,13 @@ ipcMain.handle('reflux:stop', async () => {
 
 // Reflux 가 만든 tracker.tsv 의 절대 경로 (UI 에서 표시용)
 ipcMain.handle('reflux:tsvPath', async () => RefluxManager.tsvFilePath);
+
+// Reflux 작업 폴더를 OS 의 파일 탐색기로 열기
+ipcMain.handle('reflux:openDir', async () => {
+  const dir = RefluxManager.workDirectory;
+  await shell.openPath(dir);
+  return dir;
+});
 
 // ----- IPC: TSV 파일 읽기 (Reflux 의 tracker.tsv 또는 사용자가 고른 파일) -----
 ipcMain.handle('tsv:pick', async () => {

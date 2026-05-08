@@ -137,6 +137,12 @@ export default function App() {
           <button onClick={pickAndLoad} disabled={busy} title="다른 TSV 파일 직접 선택">
             TSV 직접 선택
           </button>
+          <button
+            onClick={() => void window.infohsorry.reflux.openDir()}
+            title="Reflux 작업 폴더를 탐색기로 열기"
+          >
+            폴더 열기
+          </button>
         </div>
       </header>
 

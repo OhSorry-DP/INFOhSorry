@@ -16,6 +16,7 @@ declare global {
         stop: () => Promise<{ ok: boolean }>;
         getState: () => Promise<RefluxState>;
         getTsvPath: () => Promise<string>;
+        openDir: () => Promise<string>;
         onState: (cb: (s: RefluxState) => void) => () => void;
       };
       probe: (exeName: string) => Promise<ProbeResult>;

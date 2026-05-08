@@ -17,6 +17,7 @@ const api = {
     stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('reflux:stop'),
     getState: (): Promise<RefluxState> => ipcRenderer.invoke('reflux:state'),
     getTsvPath: (): Promise<string> => ipcRenderer.invoke('reflux:tsvPath'),
+    openDir: (): Promise<string> => ipcRenderer.invoke('reflux:openDir'),
     onState: (cb: (s: RefluxState) => void): (() => void) => {
       const listener = (_evt: unknown, state: RefluxState): void => cb(state);
       ipcRenderer.on('reflux:state', listener);
