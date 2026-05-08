@@ -207,6 +207,7 @@ function ChartRow({ c }: { c: SongChart }) {
                 <span className="rate-text">
                   <span
                     className="rate-letter"
+                    data-letter={c.letter || ''}
                     style={c.letter ? { color: LETTER_COLOR[c.letter] } : undefined}
                   >
                     {c.letter || '-'}
