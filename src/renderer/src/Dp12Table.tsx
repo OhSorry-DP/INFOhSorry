@@ -49,6 +49,8 @@ export default function Dp12Table({ charts }: Props) {
     [charts],
   );
 
+  // grid 가 .dp12-table 의 직계 자식만 셀로 잡으므로 thead / tr 는 display:contents 로
+  // 자식을 직접 grid 셀로 펼침. tbody wrapper 는 두면 grid 흐름이 끊겨서 생략.
   return (
     <div className="dp12-table">
       <div className="dp12-thead">
@@ -61,33 +63,31 @@ export default function Dp12Table({ charts }: Props) {
         <div className="num">BP%</div>
         <div>LAMP</div>
       </div>
-      <div className="dp12-tbody">
-        {sorted.map((c, i) => {
-          const ls = lampStyle(c.lamp);
-          const slotColor = SLOT_COLOR[c.slot] || '#888';
-          const bp = c.noteCount > 0 ? (c.missCount / c.noteCount) * 100 : null;
-          return (
-            <div key={`${c.title}|${c.slot}|${i}`} className="dp12-tr">
-              <div className="title">{c.title}</div>
-              <div className="slot" style={{ color: slotColor }}>
-                {SLOT_LABEL[c.slot]}
-              </div>
-              <div className="num letter" style={{ color: letterColor(c.letter) }}>
-                {c.letter || '-'}
-              </div>
-              <div className="num">{c.exScore > 0 ? c.exScore.toLocaleString() : '-'}</div>
-              <div className="num">
-                {c.missCount === 0 && c.lamp === 'NP' ? '-' : c.missCount}
-              </div>
-              <div className="num">{c.noteCount > 0 ? c.noteCount : '-'}</div>
-              <div className="num">{bp != null ? bp.toFixed(2) : '-'}</div>
-              <div className="lamp" style={{ color: ls.color, background: ls.bg }}>
-                {ls.label}
-              </div>
+      {sorted.map((c, i) => {
+        const ls = lampStyle(c.lamp);
+        const slotColor = SLOT_COLOR[c.slot] || '#888';
+        const bp = c.noteCount > 0 ? (c.missCount / c.noteCount) * 100 : null;
+        return (
+          <div key={`${c.title}|${c.slot}|${i}`} className="dp12-tr">
+            <div className="title">{c.title}</div>
+            <div className="slot" style={{ color: slotColor }}>
+              {SLOT_LABEL[c.slot]}
             </div>
-          );
-        })}
-      </div>
+            <div className="num letter" style={{ color: letterColor(c.letter) }}>
+              {c.letter || '-'}
+            </div>
+            <div className="num">{c.exScore > 0 ? c.exScore.toLocaleString() : '-'}</div>
+            <div className="num">
+              {c.missCount === 0 && c.lamp === 'NP' ? '-' : c.missCount}
+            </div>
+            <div className="num">{c.noteCount > 0 ? c.noteCount : '-'}</div>
+            <div className="num">{bp != null ? bp.toFixed(2) : '-'}</div>
+            <div className="lamp" style={{ color: ls.color, background: ls.bg }}>
+              {ls.label}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
