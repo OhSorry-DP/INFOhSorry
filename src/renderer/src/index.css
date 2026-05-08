@@ -283,7 +283,7 @@ body {
 /* ----- 차트 단위 표 (SP / DP 탭, 한 row = 한 난이도) ----- */
 .ct-table {
   display: grid;
-  grid-template-columns: 110px 60px 1fr 80px 80px 80px 60px;
+  grid-template-columns: 56px 60px 1fr 80px 80px 80px 60px;
   gap: 1px;
   background: #e8eaed;
   border-radius: 4px;
@@ -342,12 +342,12 @@ body {
   justify-content: flex-end;
 }
 .ct-lamp {
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.3px;
+  /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준 */
+  margin: 4px;
   border-radius: 3px;
-  margin: 2px;
-  justify-content: center;
+  padding: 0;
+  min-height: 18px;
+  cursor: help; /* hover 시 title 로 텍스트 보임 */
 }
 .ct-level {
   font-size: 12px;

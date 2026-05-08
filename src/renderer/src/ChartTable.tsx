@@ -166,10 +166,16 @@ function ChartRow({ c }: { c: SongChart }) {
     <div className={`ct-tr${locked ? ' locked' : ''}`}>
       <div
         className="ct-cell ct-lamp"
-        style={played ? { color: ls.color, background: ls.bg } : undefined}
-      >
-        {locked ? '잠김' : ls.label}
-      </div>
+        title={locked ? '잠김' : ls.label}
+        style={
+          locked
+            ? undefined
+            : c.lamp === 'NP'
+            ? undefined
+            : { background: ls.color }
+        }
+      />
+
       <div className="ct-cell ct-level">
         <span style={{ color: slotColor, fontWeight: 700 }}>
           {slotShort} {c.level || '-'}
