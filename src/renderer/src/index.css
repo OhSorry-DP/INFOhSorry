@@ -286,7 +286,7 @@ body {
 .ct-table {
   /* 헤더 / 바디 두 grid 로 분리 — display:contents 와 sticky 가 충돌 안 하게.
      컬럼 너비는 CSS var 로 통일. */
-  --ct-cols: 13px 36px 1fr 80px 100px 200px 80px 60px;
+  --ct-cols: 13px 36px 1fr 80px 100px 150px 80px 60px;
   border-radius: 4px;
   /* overflow: hidden 제거 — header sticky 가 동작하려면 grid 가 overflow context 가 아니어야 함 */
 }
@@ -444,6 +444,7 @@ body {
 .ct-lamp-text {
   font-size: 12.5px;
   letter-spacing: 0.3px;
+  justify-content: center;
 }
 
 /* RATE 막대 셀 */
