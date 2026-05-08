@@ -918,7 +918,8 @@ body {
 .lamp-box.lamp-EX  { background: #dcaf45; }
 /* DP12 격자: 깜빡임 대신 정적 그라데이션 */
 .lamp-box.lamp-F {
-  background: linear-gradient(to bottom, #5e2222, #c5c8cc);
+  background: #5e2222;
+  opacity: 0.65;
 }
 .lamp-box.lamp-FC {
   background: linear-gradient(to bottom, #5cb8ea, #ffffff, #dcaf45);
