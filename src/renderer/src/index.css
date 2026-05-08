@@ -488,12 +488,12 @@ body {
 }
 .ct-cell.ct-rate-bar .rate-letter {
   font-weight: 700;
-  /* 기본: 중간 회색 (D/E/F 등) */
+  /* 기본: 연한 회색 (D/E/F 등) */
   text-shadow:
-    -1px -1px 0 #666,
-    1px -1px 0 #666,
-    -1px 1px 0 #666,
-    1px 1px 0 #666;
+    -1px -1px 0 #b8bbbf,
+    1px -1px 0 #b8bbbf,
+    -1px 1px 0 #b8bbbf,
+    1px 1px 0 #b8bbbf;
 }
 /* letter 색에 가까운 톤다운 회색 — 색상 헤치지 않게 */
 .ct-cell.ct-rate-bar .rate-letter[data-letter='AAA'],
