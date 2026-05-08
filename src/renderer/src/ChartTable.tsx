@@ -28,7 +28,17 @@ const SLOT_COLOR: Record<ChartSlot, string> = {
 type SortKey = 'lamp' | 'level' | 'title' | 'notes' | 'rate' | 'ex' | 'miss';
 type SortDir = 'asc' | 'desc';
 
-const ALL_LAMPS: string[] = ['NP', 'F', 'AC', 'EC', 'NC', 'HC', 'EX', 'FC'];
+// 필터 버튼 — Reflux enum 값 + EAMUSE 공식 표기
+const ALL_LAMPS: { value: string; label: string }[] = [
+  { value: 'NP', label: 'NO PLAY' },
+  { value: 'F', label: 'FAILED' },
+  { value: 'AC', label: 'ASSIST' },
+  { value: 'EC', label: 'EASY' },
+  { value: 'NC', label: 'CLEAR' },
+  { value: 'HC', label: 'HARD' },
+  { value: 'EX', label: 'EX HARD' },
+  { value: 'FC', label: 'FULL COMBO' },
+];
 const ALL_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 // id 는 React key 용 (lamp 컬럼이 두 군데라 unique 식별 필요)
@@ -217,13 +227,13 @@ export default function ChartTable({ rows, style }: Props) {
         </div>
         <div className="ct-filter-row">
           <span className="ct-filter-label">LAMP</span>
-          {ALL_LAMPS.map((lamp) => (
+          {ALL_LAMPS.map(({ value, label }) => (
             <button
-              key={lamp}
-              className={`ct-filter-btn${activeLamps.has(lamp) ? ' active' : ''}`}
-              onClick={() => toggleLamp(lamp)}
+              key={value}
+              className={`ct-filter-btn${activeLamps.has(value) ? ' active' : ''}`}
+              onClick={() => toggleLamp(value)}
             >
-              {lamp}
+              {label}
             </button>
           ))}
         </div>
