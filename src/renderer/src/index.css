@@ -346,12 +346,16 @@ body {
 }
 .ct-lamp {
   /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준
-     cell padding 제거: 박스가 cell 가득 채우게, 음영 영역 없음 */
-  margin: 4px 3px;
-  border-radius: 2px;
+     cell 전체를 채워 grid gap (회색 음영) 이 보이지 않게 */
+  margin: 0;
+  border-radius: 0;
   padding: 0 !important;
   min-height: 22px;
   cursor: help;
+}
+/* 첫 컬럼 헤더 (lamp 색박스) — 헤더 회색 background 가 음영처럼 보여서 흰색으로 */
+.ct-thead .ct-th:first-child {
+  background: #fff;
 }
 /* 잠긴 차트의 lamp cell 도 흰색 유지 (전체 row 의 #fafafa 음영이 lamp 까지 가지 않게) */
 .ct-tr.locked > .ct-cell.ct-lamp {
