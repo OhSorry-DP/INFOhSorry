@@ -67,7 +67,8 @@ export default function ChartTable({ rows, style }: Props) {
         <div>LEVEL</div>
         <div>곡명</div>
         <div className="num">NOTES</div>
-        <div>DJ · EX · RATE</div>
+        <div>DJ · RATE</div>
+        <div className="num">EX</div>
         <div className="num">MISS</div>
       </div>
       {sorted.map((c, i) => (
@@ -111,13 +112,13 @@ function ChartRow({ c }: { c: SongChart }) {
             <span className="ct-letter" style={{ color: letterColor(c.letter) }}>
               {c.letter || '-'}
             </span>
-            <span className="ct-ex">{c.exScore > 0 ? c.exScore.toLocaleString() : '-'}</span>
             <span className="ct-rate">{rate != null ? `${rate.toFixed(2)}%` : '-'}</span>
           </>
         ) : (
           <span className="ct-empty">-</span>
         )}
       </div>
+      <div className="ct-cell num">{played && c.exScore > 0 ? c.exScore.toLocaleString() : '-'}</div>
       <div className="ct-cell num">
         {played && c.missCount >= 0 ? c.missCount.toLocaleString() : '-'}
       </div>
