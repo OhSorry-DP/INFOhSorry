@@ -194,7 +194,10 @@ function ChartRow({ c }: { c: SongChart }) {
                     title={`${cut.name} 커트라인 (${(cut.pct * 100).toFixed(2)}%)`}
                   />
                 ))}
-                <span className="rate-text">{(rate * 100).toFixed(2)}%</span>
+                <span className="rate-text">
+                  <span className="rate-letter">{c.letter || '-'}</span>
+                  <span className="rate-pct">({(rate * 100).toFixed(2)}%)</span>
+                </span>
               </>
             );
           })()
