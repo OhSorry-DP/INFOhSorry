@@ -72,7 +72,7 @@ const LETTER_COLOR: Record<string, string> = {
 
 export default function ChartTable({ rows, style }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
-  const [sortDir, setSortDir] = useState<SortDir>('asc');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
 
   // 필터 state
   const [search, setSearch] = useState('');
@@ -185,17 +185,16 @@ export default function ChartTable({ rows, style }: Props) {
 
   function clickSort(key: SortKey | null): void {
     if (key == null) return;
+    // 첫 클릭 desc → 같은 컬럼 클릭 시 asc → 한 번 더 클릭 시 unsorted (default 정렬) 순환
     if (sortKey === key) {
-      if (sortDir === 'asc') setSortDir('desc');
+      if (sortDir === 'desc') setSortDir('asc');
       else {
         setSortKey(null);
-        setSortDir('asc');
+        setSortDir('desc');
       }
     } else {
       setSortKey(key);
-      // LAMP 는 강한 lamp 먼저 (FC > EX > ... > NP) 가 자연스러움 → 첫 클릭 desc
-      // 그 외 (LV/곡명/NOTES/RATE/EX/MISS) 는 asc 가 자연
-      setSortDir(key === 'lamp' ? 'desc' : 'asc');
+      setSortDir('desc');
     }
   }
 
