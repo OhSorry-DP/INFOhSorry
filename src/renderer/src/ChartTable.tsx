@@ -155,7 +155,6 @@ export default function ChartTable({ rows, style }: Props) {
           break;
         case 'level':
           v = a.level - b.level;
-          if (v === 0) v = (slotIdx.get(a.slot) ?? 99) - (slotIdx.get(b.slot) ?? 99);
           break;
         case 'title':
           v = a.title.localeCompare(b.title);
@@ -174,8 +173,15 @@ export default function ChartTable({ rows, style }: Props) {
           break;
       }
       if (v !== 0) return v * dir;
-      // tiebreak: lamp 정렬일 때 같은 lamp 안에서는 rate 높은 게 위 (sortDir 영향 X)
-      if (sortKey === 'lamp') {
+      // tiebreak (sortDir 영향 X):
+      //   - lamp 정렬: 같은 lamp → rate 높은 게 위
+      //   - level 정렬: 같은 level → lamp 강한 게 위 → 그 다음 rate 높은 게 위
+      if (sortKey === 'level') {
+        const ld = lampNum(b.lamp) - lampNum(a.lamp);
+        if (ld !== 0) return ld;
+        const rd = rateOf(b) - rateOf(a);
+        if (rd !== 0) return rd;
+      } else if (sortKey === 'lamp') {
         const rd = rateOf(b) - rateOf(a);
         if (rd !== 0) return rd;
       }
