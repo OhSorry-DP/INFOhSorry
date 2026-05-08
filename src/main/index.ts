@@ -2,8 +2,10 @@ import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { join } from 'path';
 import { readTsv } from './tsv';
 import { findInfinitas, closeHandle } from './memory';
+import { RefluxManager } from './reflux';
 
 let mainWindow: BrowserWindow | null = null;
+const refluxManager = new RefluxManager();
 
 function createWindow(): void {
   mainWindow = new BrowserWindow({
@@ -23,6 +25,13 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
+
+  // Reflux manager 의 state 변경 → 모든 BrowserWindow 로 push
+  refluxManager.on('state', (state) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('reflux:state', state);
+    }
+  });
 }
 
 app.whenReady().then(() => {
@@ -36,8 +45,41 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
-// ----- IPC: TSV 파일 선택 다이얼로그 -----
-// 사용자가 Reflux 출력 TSV 의 경로를 선택. 취소 시 null 반환.
+// 종료 전 Reflux child 정리
+app.on('before-quit', async (e) => {
+  if (refluxManager.getState().spawned) {
+    e.preventDefault(); // 정리 끝까지 대기
+    try {
+      await refluxManager.stop();
+    } catch {
+      /* ignore */
+    }
+    app.exit(0);
+  }
+});
+
+// ----- IPC: Reflux 설치 + spawn -----
+// idempotent: 이미 설치/실행 중이면 그대로 둠
+ipcMain.handle('reflux:start', async () => {
+  try {
+    await refluxManager.startAll();
+    return { ok: true, state: refluxManager.getState() };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message, state: refluxManager.getState() };
+  }
+});
+
+ipcMain.handle('reflux:state', async () => refluxManager.getState());
+
+ipcMain.handle('reflux:stop', async () => {
+  await refluxManager.stop();
+  return { ok: true };
+});
+
+// Reflux 가 만든 tracker.tsv 의 절대 경로 (UI 에서 표시용)
+ipcMain.handle('reflux:tsvPath', async () => RefluxManager.tsvFilePath);
+
+// ----- IPC: TSV 파일 읽기 (Reflux 의 tracker.tsv 또는 사용자가 고른 파일) -----
 ipcMain.handle('tsv:pick', async () => {
   if (!mainWindow) return null;
   const r = await dialog.showOpenDialog(mainWindow, {
@@ -52,7 +94,6 @@ ipcMain.handle('tsv:pick', async () => {
   return r.filePaths[0];
 });
 
-// ----- IPC: TSV 파일 읽기 + 파싱 -----
 ipcMain.handle('tsv:read', async (_evt, path: string) => {
   try {
     const { rows, headerCols } = await readTsv(path);
@@ -62,7 +103,7 @@ ipcMain.handle('tsv:read', async (_evt, path: string) => {
   }
 });
 
-// ----- IPC: INFINITAS 프로세스 탐색 (PoC, 나중에 게임 실행 감지에 활용) -----
+// ----- IPC: INFINITAS 프로세스 탐색 (PoC, 게임 실행 감지에 활용 가능) -----
 ipcMain.handle('memory:probe', async (_evt, exeName: string) => {
   try {
     const found = findInfinitas(exeName);

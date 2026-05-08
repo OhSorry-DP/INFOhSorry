@@ -52,3 +52,28 @@ export interface TsvReadResult {
   rows?: SongRow[];
   headerColCount?: number;
 }
+
+// Reflux manager state
+export type RefluxStage =
+  | 'idle'
+  | 'downloading'
+  | 'starting'
+  | 'hooking'
+  | 'hooked'
+  | 'ready'
+  | 'error';
+
+export interface RefluxState {
+  stage: RefluxStage;
+  installed: boolean;
+  spawned: boolean;
+  download?: { bytes: number; total: number };
+  lastTsvMtime?: number;
+  error?: string;
+}
+
+export interface RefluxStartResult {
+  ok: boolean;
+  error?: string;
+  state: RefluxState;
+}

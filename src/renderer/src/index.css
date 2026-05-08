@@ -62,6 +62,63 @@ body {
   cursor: wait;
   color: #aaa;
 }
+.app-header .actions .btn-primary {
+  background: #1971c2;
+  color: #fff;
+  border-color: #1971c2;
+  font-weight: 600;
+}
+.app-header .actions .btn-primary:hover:not(:disabled) {
+  background: #155a9c;
+}
+
+/* ----- Reflux 진행 상태 (단계 표시) ----- */
+.progress {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 10px 20px;
+  background: #f4f7fb;
+  border-bottom: 1px solid #d6e1ee;
+  font-size: 12px;
+  flex-wrap: wrap;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #999;
+}
+.step-mark {
+  width: 18px;
+  text-align: center;
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-weight: 700;
+}
+.step-done {
+  color: #52a447;
+}
+.step-active {
+  color: #1971c2;
+  font-weight: 600;
+}
+.step-pending {
+  color: #ccc;
+}
+.dl-progress {
+  margin-left: auto;
+  color: #1971c2;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+.hint-line {
+  margin-left: auto;
+  color: #1971c2;
+  font-size: 11px;
+}
+.updated-at {
+  color: #aaa;
+}
 
 .path-bar {
   padding: 6px 20px;
