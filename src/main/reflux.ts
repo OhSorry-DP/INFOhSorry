@@ -240,7 +240,9 @@ export class RefluxManager extends EventEmitter {
 
     const child = spawn(exePath(), [], {
       cwd: workDir(),
-      windowsHide: true, // 콘솔 창 숨김
+      // Reflux 가 hook 후 Console.Clear() 를 호출 → 콘솔이 attach 되어 있어야 IOException 안 남
+      // 부득이 windowsHide:false. stdio 가 pipe 라 콘솔창 자체는 거의 비어있게 보임
+      windowsHide: false,
       stdio: ['ignore', 'pipe', 'pipe'],
     });
     this.child = child;
