@@ -44,18 +44,18 @@ export interface SongChart {
 export const SP_SLOTS: ChartSlot[] = ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'];
 export const DP_SLOTS: ChartSlot[] = ['DPN', 'DPH', 'DPA', 'DPL'];
 
-// 곡 row 들에서 (DP slot ∩ level === target) 인 차트만 추출.
+// 곡 row 들에서 (slot ∈ slots) 인 차트만 추출. level 지정하면 그 레벨만.
 // 별값 추정 / 추천곡 모델의 input 이 되는 chart 단위 평탄화.
 export function extractCharts(
   rows: SongRow[],
-  opts: { slots: ChartSlot[]; level: number },
+  opts: { slots: ChartSlot[]; level?: number },
 ): SongChart[] {
   const out: SongChart[] = [];
   for (const r of rows) {
     for (const slot of opts.slots) {
       const c = r.charts[slot];
       if (!c) continue;
-      if (c.level !== opts.level) continue;
+      if (opts.level !== undefined && c.level !== opts.level) continue;
       out.push({
         title: r.title,
         slot,

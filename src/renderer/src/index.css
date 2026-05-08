@@ -280,7 +280,90 @@ body {
   overflow: auto;
 }
 
-/* ----- 차트 테이블 ----- */
+/* ----- 차트 단위 표 (SP / DP 탭, 한 row = 한 난이도) ----- */
+.ct-table {
+  display: grid;
+  grid-template-columns: 110px 60px 1fr 80px 220px 60px;
+  gap: 1px;
+  background: #e8eaed;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.ct-thead {
+  display: contents;
+}
+.ct-thead > div {
+  padding: 8px 10px;
+  background: #f4f5f7;
+  font-size: 11px;
+  font-weight: 700;
+  color: #555;
+  letter-spacing: 0.3px;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.ct-thead > div.num {
+  text-align: right;
+}
+.ct-tr {
+  display: contents;
+}
+.ct-tr > .ct-cell {
+  padding: 5px 10px;
+  background: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  display: flex;
+  align-items: center;
+}
+.ct-tr.locked > .ct-cell {
+  color: #aaa;
+  background: #fafafa;
+}
+.ct-tr > .ct-cell.num {
+  justify-content: flex-end;
+}
+.ct-lamp {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  border-radius: 3px;
+  margin: 2px;
+  justify-content: center;
+}
+.ct-level {
+  font-size: 12px;
+}
+.ct-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ct-dj {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.ct-letter {
+  font-weight: 700;
+  width: 24px;
+  display: inline-block;
+}
+.ct-ex {
+  color: #333;
+  width: 60px;
+  text-align: right;
+}
+.ct-rate {
+  color: #666;
+  font-size: 11px;
+}
+.ct-empty {
+  color: #ccc;
+}
+
+/* ----- 차트 테이블 (구) ----- */
 .chart-table {
   display: table;
   width: 100%;
