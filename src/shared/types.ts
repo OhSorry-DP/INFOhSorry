@@ -51,6 +51,7 @@ export interface TsvReadResult {
   error?: string;
   rows?: SongRow[];
   headerColCount?: number;
+  mtime?: number; // 파일의 마지막 수정 시각 (epoch ms)
 }
 
 // Reflux manager state

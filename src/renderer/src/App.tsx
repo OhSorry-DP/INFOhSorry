@@ -4,6 +4,23 @@ import ChartTable from './ChartTable';
 
 type Tab = 'sp' | 'dp';
 
+// "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
+function formatRelativeTime(epochMs: number): string {
+  const diffSec = Math.max(0, (Date.now() - epochMs) / 1000);
+  if (diffSec < 60) return '방금 전';
+  if (diffSec < 60 * 60) return `${Math.floor(diffSec / 60)}분 전`;
+  if (diffSec < 60 * 60 * 24) return `${Math.floor(diffSec / 3600)}시간 전`;
+  const d = new Date(epochMs);
+  const now = new Date();
+  const yMd = (x: Date): string =>
+    `${x.getFullYear()}-${String(x.getMonth() + 1).padStart(2, '0')}-${String(x.getDate()).padStart(2, '0')}`;
+  const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  // 어제면 "어제 HH:MM", 그 외 "YYYY-MM-DD HH:MM"
+  const yesterday = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1);
+  if (yMd(d) === yMd(yesterday)) return `어제 ${hm}`;
+  return `${yMd(d)} ${hm}`;
+}
+
 export default function App() {
   const [refluxState, setRefluxState] = useState<RefluxState>({
     stage: 'idle',
@@ -16,18 +33,35 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // 마지막으로 reload 한 mtime — 같은 mtime 으로 중복 reload 방지
+  // 디스크에서 마지막으로 읽은 tracker.tsv 의 mtime — 같은 mtime 으로 중복 reload 방지
   const lastLoadedMtime = useRef<number>(0);
+  const [tsvMtime, setTsvMtime] = useState<number>(0);
 
-  // 마운트 시: 현재 Reflux 상태 + tracker.tsv 경로 동기화
+  // 마운트 시:
+  //   1. Reflux state 구독 시작
+  //   2. 현재 tsvPath / 현재 state 한 번 가져오기
+  //   3. 디스크에 tracker.tsv 가 이미 있으면 → 즉시 읽어서 표시 (이전 세션 데이터 복원)
   useEffect(() => {
-    void window.infohsorry.reflux.getTsvPath().then(setTsvPath);
-    void window.infohsorry.reflux.getState().then(setRefluxState);
     const off = window.infohsorry.reflux.onState((s) => setRefluxState(s));
+    void (async () => {
+      const path = await window.infohsorry.reflux.getTsvPath();
+      setTsvPath(path);
+      const state = await window.infohsorry.reflux.getState();
+      setRefluxState(state);
+      // 자동 복원 — 파일 없으면 ok:false 반환되니 그냥 ignore
+      const r = await window.infohsorry.readTsv(path);
+      if (r.ok && r.rows && r.rows.length > 0) {
+        setRows(r.rows);
+        if (r.mtime) {
+          lastLoadedMtime.current = r.mtime;
+          setTsvMtime(r.mtime);
+        }
+      }
+    })();
     return off;
   }, []);
 
-  // tracker.tsv 가 갱신될 때마다 자동 reload
+  // Reflux 가 새 dump 를 신호하면 (stage='ready' + lastTsvMtime 갱신) 자동 reload
   useEffect(() => {
     const m = refluxState.lastTsvMtime ?? 0;
     if (refluxState.stage === 'ready' && m && m !== lastLoadedMtime.current && tsvPath) {
@@ -44,6 +78,7 @@ export default function App() {
         setError(r.error || '읽기 실패');
       } else {
         setRows(r.rows || []);
+        if (r.mtime) setTsvMtime(r.mtime);
       }
     } catch (e) {
       setError((e as Error).message);
@@ -129,10 +164,10 @@ export default function App() {
             </button>
             <span className="tab-stats">
               {rows.length}곡 · {stats.unlocked}/{stats.total} unlock · {stats.played} played
-              {refluxState.lastTsvMtime && (
-                <span className="updated-at">
+              {tsvMtime > 0 && (
+                <span className="updated-at" title={new Date(tsvMtime).toLocaleString()}>
                   {' '}
-                  · 갱신 {new Date(refluxState.lastTsvMtime).toLocaleTimeString()}
+                  · 갱신 {formatRelativeTime(tsvMtime)}
                 </span>
               )}
             </span>

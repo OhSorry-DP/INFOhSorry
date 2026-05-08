@@ -96,8 +96,8 @@ ipcMain.handle('tsv:pick', async () => {
 
 ipcMain.handle('tsv:read', async (_evt, path: string) => {
   try {
-    const { rows, headerCols } = await readTsv(path);
-    return { ok: true, rows, headerColCount: headerCols.length };
+    const { rows, headerCols, mtime } = await readTsv(path);
+    return { ok: true, rows, headerColCount: headerCols.length, mtime };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }

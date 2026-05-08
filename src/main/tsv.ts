@@ -52,10 +52,12 @@ function parseRow(idx: Map<string, number>, fields: string[]): SongRow | null {
   return { title, type: get('Type'), label: get('Label'), charts };
 }
 
-export async function readTsv(path: string): Promise<{ rows: SongRow[]; headerCols: string[] }> {
-  const text = await fs.readFile(path, 'utf-8');
+export async function readTsv(
+  path: string,
+): Promise<{ rows: SongRow[]; headerCols: string[]; mtime: number }> {
+  const [text, st] = await Promise.all([fs.readFile(path, 'utf-8'), fs.stat(path)]);
   const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
-  if (lines.length < 1) return { rows: [], headerCols: [] };
+  if (lines.length < 1) return { rows: [], headerCols: [], mtime: st.mtimeMs };
   const idx = buildHeaderIndex(lines[0]);
   const rows: SongRow[] = [];
   for (let i = 1; i < lines.length; i++) {
@@ -63,5 +65,5 @@ export async function readTsv(path: string): Promise<{ rows: SongRow[]; headerCo
     const row = parseRow(idx, fields);
     if (row) rows.push(row);
   }
-  return { rows, headerCols: Array.from(idx.keys()) };
+  return { rows, headerCols: Array.from(idx.keys()), mtime: st.mtimeMs };
 }
