@@ -303,6 +303,24 @@ body {
   flex-direction: column;
   gap: 6px;
   padding: 8px 0;
+  /* 스크롤 시 헤더와 함께 고정 */
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: #fff;
+}
+.ct-filter-toggle {
+  padding: 4px 10px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: #555;
+}
+.ct-filter-toggle:hover {
+  background: #f4f5f7;
 }
 .ct-filter-row {
   display: flex;
@@ -389,11 +407,11 @@ body {
 .ct-thead {
   display: grid;
   grid-template-columns: var(--ct-cols);
-  /* 세로 줄 X — column-gap 0, row-gap 만 (헤더 row 1개라 사실상 안 보이지만 통일) */
   gap: 0;
   background: #fff;
   position: sticky;
-  top: 0;
+  /* 필터 영역 (sticky) 만큼 아래에 고정 — JS 가 측정한 높이를 CSS var 로 전달 */
+  top: var(--filters-h, 0);
   z-index: 3;
   border-bottom: 2px solid #555;
 }
