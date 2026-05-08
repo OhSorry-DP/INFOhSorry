@@ -122,7 +122,7 @@ body {
   color: #aaa;
 }
 
-/* ----- ereter ★ 데이터 상태 띠 ----- */
+/* ----- ereter ★ 데이터 상태 띠 — 화면 최하단 footer ----- */
 .ereter-bar {
   display: flex;
   align-items: center;
@@ -130,9 +130,10 @@ body {
   gap: 12px;
   padding: 6px 20px;
   background: #f4f7fb;
-  border-bottom: 1px solid #d6e1ee;
+  border-top: 1px solid #d6e1ee;
   font-size: 11.5px;
   color: #555;
+  flex-shrink: 0;
 }
 .ereter-bar.stale {
   background: #fff8e6;

@@ -293,8 +293,7 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <div className="title">
-          <h1>INFOhSorry</h1>
-          <span className="subtitle">IIDX INFINITAS · Reflux 통합 뷰어</span>
+          <h1>INF오소리</h1>
         </div>
         <div className="actions">
           <button className="btn-primary" onClick={startReflux} disabled={busy}>
@@ -311,8 +310,6 @@ export default function App() {
           </button>
         </div>
       </header>
-
-      <EreterBar status={ereterStatus} busy={ereterBusy} onRefresh={() => refreshEreter(true)} />
 
       <ProgressBar state={refluxState} />
 
@@ -386,6 +383,8 @@ export default function App() {
           </main>
         </>
       )}
+
+      <EreterBar status={ereterStatus} busy={ereterBusy} onRefresh={() => refreshEreter(true)} />
     </div>
   );
 }
