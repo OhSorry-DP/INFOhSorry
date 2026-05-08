@@ -17,6 +17,8 @@ function createWindow(): void {
     width: 1280,
     height: 800,
     title: 'INFOhSorry',
+    // 앱 아이콘 (작업 표시줄 / 창 좌상단). __dirname=out/main, 프로젝트 루트로 ../../
+    icon: join(__dirname, '../../ohsorry.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
