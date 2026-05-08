@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, dialog, shell } from 'electron';
 import { join } from 'path';
 import { readTsv } from './tsv';
 import { findInfinitas, closeHandle } from './memory';
@@ -42,6 +42,8 @@ function createWindow(): void {
 }
 
 app.whenReady().then(() => {
+  // 기본 메뉴바 (File/Edit/View 등) 완전 제거
+  Menu.setApplicationMenu(null);
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
