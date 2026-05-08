@@ -1,6 +1,6 @@
 {
   "name": "infohsorry",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "IIDX INFINITAS 플레이 데이터 분석 (베타)",
   "productName": "INF오소리",
   "main": "./out/main/index.js",
