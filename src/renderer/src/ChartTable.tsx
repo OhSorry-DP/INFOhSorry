@@ -47,6 +47,16 @@ const RATE_CUTS = [
   { name: 'AAA', pct: 8 / 9 },
 ];
 
+// rate 텍스트의 letter 색상
+const LETTER_COLOR: Record<string, string> = {
+  AAA: '#dcaf45',
+  AA: '#dcaf45',
+  A: '#dcaf45',
+  B: '#5cb8ea',
+  C: '#52a447',
+  // D / E / F: default (검정)
+};
+
 export default function ChartTable({ rows, style }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
@@ -195,7 +205,12 @@ function ChartRow({ c }: { c: SongChart }) {
                   />
                 ))}
                 <span className="rate-text">
-                  <span className="rate-letter">{c.letter || '-'}</span>
+                  <span
+                    className="rate-letter"
+                    style={c.letter ? { color: LETTER_COLOR[c.letter] } : undefined}
+                  >
+                    {c.letter || '-'}
+                  </span>
                   <span className="rate-pct">({(rate * 100).toFixed(2)}%)</span>
                 </span>
               </>
