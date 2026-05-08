@@ -197,6 +197,8 @@ export default function App() {
       for (const slot of DP_SLOTS) {
         const c = r.charts[slot];
         if (!c) continue;
+        // INFINITAS LEVEL 12 만 대상 — LEVEL 1~11 차트는 ereter 매칭 시도조차 X
+        if (c.level !== 12) continue;
         const e = idx.get(norm(r.title) + '|' + slotToDiff(slot));
         if (!e) {
           if (c.unlocked && c.lamp !== 'NP') {
