@@ -368,12 +368,14 @@ body {
 }
 .ct-lamp {
   /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준
-     cell 전체를 채워 grid gap 이 보이지 않게. row 높이는 다른 cell 이 결정. */
-  margin: 0;
+     row gap 영역 (1px 위/아래) 까지 색박스가 침범 — 가로줄 보이지 않음. */
+  margin: -1px 0;
   border-radius: 0;
   padding: 0 !important;
   min-height: 0;
   cursor: help;
+  position: relative;
+  z-index: 1;
 }
 /* 잠긴 차트의 lamp 색상박스: NP 와 동일한 회색 */
 .ct-tr.locked > .ct-cell.ct-lamp {
