@@ -65,7 +65,7 @@ export default function Dp12Table({ charts }: Props) {
     <div className="dp12-grid">
       {groups.map(([level, list]) => (
         <div key={level} className="dp12-group">
-          <div className="dp12-level">{level === -1 ? '미분류' : `★${level.toFixed(1)}`}</div>
+          <div className="dp12-level">{level === -1 ? '미분류' : level.toFixed(1)}</div>
           <div className="dp12-songs">
             {list.map((c, i) => (
               <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} />
