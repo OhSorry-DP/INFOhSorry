@@ -282,16 +282,27 @@ body {
 
 /* ----- 차트 단위 표 (SP / DP 탭, 한 row = 한 난이도) ----- */
 .ct-table {
-  display: grid;
-  /* LAMP(색박스) / LEVEL / 곡명 / NOTES / LAMP(글자) / DJ Level / EX Score / MISS */
-  grid-template-columns: 13px 36px 1fr 80px 100px 80px 80px 60px;
-  gap: 1px;
-  background: #e8eaed;
+  /* 헤더 / 바디 두 grid 로 분리 — display:contents 와 sticky 가 충돌 안 하게.
+     컬럼 너비는 CSS var 로 통일. */
+  --ct-cols: 13px 36px 1fr 80px 100px 80px 80px 60px;
   border-radius: 4px;
   /* overflow: hidden 제거 — header sticky 가 동작하려면 grid 가 overflow context 가 아니어야 함 */
 }
 .ct-thead {
-  display: contents;
+  display: grid;
+  grid-template-columns: var(--ct-cols);
+  gap: 1px;
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  border-bottom: 2px solid #d0d4d8;
+}
+.ct-tbody {
+  display: grid;
+  grid-template-columns: var(--ct-cols);
+  gap: 1px;
+  background: #e8eaed;
 }
 .ct-th {
   padding: 10px 8px;
@@ -300,18 +311,14 @@ body {
   font-weight: 700;
   color: #555;
   letter-spacing: 0.3px;
-  position: sticky;
-  top: 0;
-  z-index: 2;
   cursor: pointer;
   user-select: none;
   display: flex;
   align-items: center;
-  justify-content: center; /* 헤더는 모두 가운데 정렬 */
+  justify-content: center;
   gap: 4px;
   white-space: nowrap;
   overflow: hidden;
-  border-bottom: 2px solid #d0d4d8;
 }
 .ct-th:hover {
   background: #f4f5f7;

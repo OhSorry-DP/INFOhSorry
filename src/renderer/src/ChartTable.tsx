@@ -138,9 +138,11 @@ export default function ChartTable({ rows, style }: Props) {
           );
         })}
       </div>
-      {sorted.map((c, i) => (
-        <ChartRow key={`${c.title}|${c.slot}|${i}`} c={c} />
-      ))}
+      <div className="ct-tbody">
+        {sorted.map((c, i) => (
+          <ChartRow key={`${c.title}|${c.slot}|${i}`} c={c} />
+        ))}
+      </div>
     </div>
   );
 }
