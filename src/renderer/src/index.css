@@ -384,7 +384,7 @@ body {
   animation: lampBlinkF 1.4s linear infinite;
 }
 @keyframes lampBlinkF {
-  0%, 100% { background: #8b3a3a; }
+  0%, 100% { background: #5e2222; }
   50%      { background: #c5c8cc; }
 }
 /* Full Combo: 하늘 → 흰 → 금 → 하늘 깜빡임 */
