@@ -215,14 +215,13 @@ export default function ChartTable({ rows, style }: Props) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          <label className="ct-checkbox">
-            <input
-              type="checkbox"
-              checked={hideLocked}
-              onChange={(e) => setHideLocked(e.target.checked)}
-            />
-            잠긴 차트 숨기기
-          </label>
+          <button
+            className="ct-filter-toggle"
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? '필터 펼치기' : '필터 접기'}
+          >
+            {collapsed ? '필터 ▼' : '필터 ▲'}
+          </button>
           <span className="ct-filter-count">
             {charts.length} / {allCharts.length}
           </span>
@@ -231,13 +230,6 @@ export default function ChartTable({ rows, style }: Props) {
               필터 초기화
             </button>
           )}
-          <button
-            className="ct-filter-toggle"
-            onClick={() => setCollapsed((v) => !v)}
-            title={collapsed ? '필터 펼치기' : '필터 접기'}
-          >
-            {collapsed ? '필터 ▼' : '필터 ▲'}
-          </button>
         </div>
         {!collapsed && (
           <>
@@ -264,6 +256,14 @@ export default function ChartTable({ rows, style }: Props) {
                   {lv}
                 </button>
               ))}
+              <label className="ct-checkbox ct-hide-locked">
+                <input
+                  type="checkbox"
+                  checked={hideLocked}
+                  onChange={(e) => setHideLocked(e.target.checked)}
+                />
+                잠긴 차트 숨기기
+              </label>
             </div>
           </>
         )}
