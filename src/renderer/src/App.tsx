@@ -333,16 +333,16 @@ export default function App() {
         <>
           <nav className="tabs">
             <button className={tab === 'sp' ? 'tab active' : 'tab'} onClick={() => setTab('sp')}>
-              SINGLE PLAY
+              SP
             </button>
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
-              DOUBLE PLAY
+              DP
             </button>
             <button
               className={tab === 'dp12' ? 'tab active' : 'tab'}
               onClick={() => setTab('dp12')}
             >
-              DP ☆12 분석
+              DP RECOMMEND
             </button>
             <span className="tab-stats">
               {tab === 'dp12'
