@@ -211,7 +211,7 @@ export default function ChartTable({ rows, style }: Props) {
           <input
             type="text"
             className="ct-search"
-            placeholder="곡명 검색"
+            placeholder="Search"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
@@ -262,7 +262,7 @@ export default function ChartTable({ rows, style }: Props) {
                   checked={hideLocked}
                   onChange={(e) => setHideLocked(e.target.checked)}
                 />
-                잠긴 차트 숨기기
+                Hide Locked
               </label>
             </div>
           </>
