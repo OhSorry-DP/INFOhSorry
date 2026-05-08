@@ -104,6 +104,24 @@ ipcMain.handle('reflux:openDir', async () => {
   return dir;
 });
 
+// ----- IPC: 이미지 저장 (캡처) -----
+ipcMain.handle('image:save', async (_evt, dataUrl: string, defaultName?: string) => {
+  if (!mainWindow) return { ok: false, error: 'no window' };
+  try {
+    const r = await dialog.showSaveDialog(mainWindow, {
+      title: '캡처 저장',
+      defaultPath: defaultName || `dp12-${Date.now()}.png`,
+      filters: [{ name: 'PNG', extensions: ['png'] }],
+    });
+    if (r.canceled || !r.filePath) return { ok: false, error: 'canceled' };
+    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
+    await (await import('fs')).promises.writeFile(r.filePath, Buffer.from(base64, 'base64'));
+    return { ok: true, path: r.filePath };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+});
+
 // ----- IPC: ereter 데이터 (캐시 우선, 24h TTL) -----
 ipcMain.handle('ereter:get', async (_evt, force: boolean = false) => {
   try {

@@ -11,7 +11,8 @@
 // 각 곡 cell: 차트 slot 별 옅은 배경 색 (DPN/DPH/DPA/DPL)
 //             LEGGENDARIA 는 † + 마젠타 글자
 //             hover title 에 lamp / EX / rate / miss / notes 표시
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import html2canvas from 'html2canvas';
 import type { ChartSlot, SongChart } from '../../shared/types';
 import { lampNum } from '../../shared/match';
 
@@ -42,6 +43,29 @@ type SortBy = 'title' | 'lamp';
 
 export default function Dp12Table({ charts }: Props) {
   const [sortBy, setSortBy] = useState<SortBy>('title');
+  const [capturing, setCapturing] = useState(false);
+  const gridRef = useRef<HTMLDivElement>(null);
+
+  async function captureGrid(): Promise<void> {
+    if (!gridRef.current) return;
+    setCapturing(true);
+    try {
+      const canvas = await html2canvas(gridRef.current, {
+        backgroundColor: '#ffffff',
+        scale: window.devicePixelRatio || 1,
+        useCORS: true,
+        logging: false,
+      });
+      const dataUrl = canvas.toDataURL('image/png');
+      const ts = new Date()
+        .toISOString()
+        .replace(/[:T.]/g, '-')
+        .replace('Z', '');
+      await window.infohsorry.saveImage(dataUrl, `dp12-${ts}.png`);
+    } finally {
+      setCapturing(false);
+    }
+  }
 
   // ereter 매칭된 곡 — ★ 레벨로 그룹. 매칭 안 된 곡은 '미분류' 그룹 (★11.6 아래)
   // 그룹 정렬: 큰 ★ → 작은 ★ → 미분류 (가장 아래)
@@ -93,8 +117,16 @@ export default function Dp12Table({ charts }: Props) {
         >
           램프 순
         </button>
+        <button
+          className="dp12-capture-btn"
+          onClick={captureGrid}
+          disabled={capturing}
+          title="격자 영역을 PNG 이미지로 저장"
+        >
+          {capturing ? '캡처 중...' : '캡처'}
+        </button>
       </div>
-      <div className="dp12-grid">
+      <div className="dp12-grid" ref={gridRef}>
           {groups.map(([level, list]) => (
           <div key={level} className="dp12-group">
             <div className="dp12-level">{level === -1 ? '미분류' : level.toFixed(1)}</div>

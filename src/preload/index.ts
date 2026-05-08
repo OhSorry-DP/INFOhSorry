@@ -36,6 +36,13 @@ const api = {
     dataPath: (): Promise<string> => ipcRenderer.invoke('ereter:dataPath'),
   },
 
+  // 캡처 이미지 저장 (사용자 save dialog → PNG 파일)
+  saveImage: (
+    dataUrl: string,
+    defaultName?: string,
+  ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('image:save', dataUrl, defaultName),
+
   // 진단용 (현재 미사용, 나중에 INFINITAS 실행 감지에 활용)
   probe: (exeName: string): Promise<ProbeResult> => ipcRenderer.invoke('memory:probe', exeName),
 };

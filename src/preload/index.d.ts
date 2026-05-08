@@ -26,6 +26,10 @@ declare global {
         status: () => Promise<EreterCacheStatus>;
         dataPath: () => Promise<string>;
       };
+      saveImage: (
+        dataUrl: string,
+        defaultName?: string,
+      ) => Promise<{ ok: boolean; path?: string; error?: string }>;
       probe: (exeName: string) => Promise<ProbeResult>;
     };
   }
