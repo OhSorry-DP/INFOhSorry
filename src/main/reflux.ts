@@ -200,6 +200,7 @@ export class RefluxManager extends EventEmitter {
         this.setState({ installed: true });
       }
       await this.ensureConfig();
+      await this.ensureOffsets();
       await this.spawnReflux();
       this.watchTsv();
     } catch (e) {
@@ -230,6 +231,32 @@ export class RefluxManager extends EventEmitter {
     if (!existsSync(configPath())) {
       await fsp.mkdir(workDir(), { recursive: true });
       await fsp.writeFile(configPath(), DEFAULT_CONFIG, 'utf-8');
+    }
+  }
+
+  // Reflux 가 시작 직후 LoadOffsets() 에서 읽는 파일들. 자동 update (Update.updateFiles=true) 가
+  // 동작하기 전에 먼저 필요해서, 우리가 GitHub raw 에서 미리 받아 둬야 첫 실행이 죽지 않음.
+  // Reflux 가 자기 update 로 새로 받으면 그게 덮어쓰니 덮어쓰기 OK.
+  private async ensureOffsets(): Promise<void> {
+    const RAW_BASE = 'https://raw.githubusercontent.com/olji/Reflux/master/Reflux';
+    // 핵심 파일들 — 없으면 Reflux 가 죽는 것들 + 보조 파일
+    const files = [
+      'offsets.txt',
+      'customtypes.txt',
+      'encodingfixes.txt',
+      'beginners.txt',
+    ];
+    await fsp.mkdir(workDir(), { recursive: true });
+    for (const name of files) {
+      const dest = join(workDir(), name);
+      if (existsSync(dest)) continue;
+      try {
+        await downloadFile(`${RAW_BASE}/${name}`, dest, () => {});
+      } catch (e) {
+        // 파일 못 받으면 일단 빈 파일이라도 만들어 둠 (Reflux 가 파일 없으면 죽으므로)
+        await fsp.writeFile(dest, '', 'utf-8');
+        console.warn(`[reflux] ${name} 다운로드 실패, 빈 파일 생성:`, (e as Error).message);
+      }
     }
   }
 
