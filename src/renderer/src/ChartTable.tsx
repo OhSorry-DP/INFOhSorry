@@ -2,7 +2,7 @@
 //
 // 컬럼: LAMP / LEVEL / 곡명 / NOTES / DJ Level / EX Score / MISS
 // 헤더 클릭 → asc → desc → unsorted (default 정렬) cycle
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ChartSlot, SongChart, SongRow } from '../../shared/types';
 import { DP_SLOTS, SP_SLOTS, extractCharts } from '../../shared/types';
 import { lampNum } from '../../shared/match';
@@ -79,6 +79,20 @@ export default function ChartTable({ rows, style }: Props) {
   const [activeLevels, setActiveLevels] = useState<Set<number>>(new Set());
   const [activeLamps, setActiveLamps] = useState<Set<string>>(new Set());
   const [hideLocked, setHideLocked] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+
+  // 필터 영역도 sticky → thead 의 top 을 필터 높이만큼 내림
+  const filtersRef = useRef<HTMLDivElement>(null);
+  const [filtersHeight, setFiltersHeight] = useState(0);
+  useEffect(() => {
+    const el = filtersRef.current;
+    if (!el) return;
+    const update = (): void => setFiltersHeight(el.getBoundingClientRect().height);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const allCharts = useMemo(
     () => extractCharts(rows, { slots: style === 'sp' ? SP_SLOTS : DP_SLOTS }),
@@ -187,7 +201,7 @@ export default function ChartTable({ rows, style }: Props) {
 
   return (
     <div className="ct-wrap">
-      <div className="ct-filters">
+      <div className="ct-filters" ref={filtersRef}>
         <div className="ct-filter-row">
           <input
             type="text"
@@ -212,33 +226,47 @@ export default function ChartTable({ rows, style }: Props) {
               필터 초기화
             </button>
           )}
+          <button
+            className="ct-filter-toggle"
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? '필터 펼치기' : '필터 접기'}
+          >
+            {collapsed ? '필터 ▼' : '필터 ▲'}
+          </button>
         </div>
-        <div className="ct-filter-row">
-          <span className="ct-filter-label">LAMP</span>
-          {ALL_LAMPS.map(({ value, label }) => (
-            <button
-              key={value}
-              className={`ct-filter-btn${activeLamps.has(value) ? ' active' : ''}`}
-              onClick={() => toggleLamp(value)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="ct-filter-row">
-          <span className="ct-filter-label">LV</span>
-          {ALL_LEVELS.map((lv) => (
-            <button
-              key={lv}
-              className={`ct-filter-btn${activeLevels.has(lv) ? ' active' : ''}`}
-              onClick={() => toggleLevel(lv)}
-            >
-              {lv}
-            </button>
-          ))}
-        </div>
+        {!collapsed && (
+          <>
+            <div className="ct-filter-row">
+              <span className="ct-filter-label">LAMP</span>
+              {ALL_LAMPS.map(({ value, label }) => (
+                <button
+                  key={value}
+                  className={`ct-filter-btn${activeLamps.has(value) ? ' active' : ''}`}
+                  onClick={() => toggleLamp(value)}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div className="ct-filter-row">
+              <span className="ct-filter-label">LV</span>
+              {ALL_LEVELS.map((lv) => (
+                <button
+                  key={lv}
+                  className={`ct-filter-btn${activeLevels.has(lv) ? ' active' : ''}`}
+                  onClick={() => toggleLevel(lv)}
+                >
+                  {lv}
+                </button>
+              ))}
+            </div>
+          </>
+        )}
       </div>
-      <div className="ct-table">
+      <div
+        className="ct-table"
+        style={{ ['--filters-h' as string]: `${filtersHeight}px` }}
+      >
         <div className="ct-thead">
         {COLUMNS.map((col) => {
           const active = sortKey === col.key;

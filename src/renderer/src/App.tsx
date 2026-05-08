@@ -368,6 +368,9 @@ export default function App() {
                   matchedNonNp={dp12Match?.charts.filter((c) => c.lampNum > 0).length ?? 0}
                   ereterReady={!!ereterData}
                   unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
+                  ereterStatus={ereterStatus}
+                  ereterBusy={ereterBusy}
+                  onRefreshEreter={() => refreshEreter(true)}
                 />
                 {dp12StarResult && (recsEC.length > 0 || recsHC.length > 0 || recsEXH.length > 0) && (
                   <Recommendations
@@ -386,8 +389,6 @@ export default function App() {
           </main>
         </>
       )}
-
-      <EreterBar status={ereterStatus} busy={ereterBusy} onRefresh={() => refreshEreter(true)} />
     </div>
   );
 }
@@ -489,6 +490,9 @@ function StarPanel({
   matchedNonNp,
   ereterReady,
   unmatchedSamples,
+  ereterStatus,
+  ereterBusy,
+  onRefreshEreter,
 }: {
   result: ReturnType<typeof estimateStar>;
   matched: number;
@@ -497,6 +501,9 @@ function StarPanel({
   matchedNonNp: number;
   ereterReady: boolean;
   unmatchedSamples: string[];
+  ereterStatus: EreterCacheStatus | null;
+  ereterBusy: boolean;
+  onRefreshEreter: () => void;
 }): JSX.Element {
   if (!ereterReady) {
     return (
@@ -570,6 +577,13 @@ function StarPanel({
             </li>
           )}
         </ul>
+        <div className="star-ereter">
+          <EreterBar
+            status={ereterStatus}
+            busy={ereterBusy}
+            onRefresh={onRefreshEreter}
+          />
+        </div>
       </details>
     </div>
   );
