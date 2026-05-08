@@ -353,28 +353,30 @@ body {
   cursor: help;
 }
 
-/* lamp 색상 매핑 (사용자 spec) */
-.ct-lamp-NP {
+/* lamp 색상 매핑 (사용자 spec)
+   .ct-cell prefix 로 specificity 를 .ct-tr > .ct-cell 와 동급으로 맞춤
+   (그래야 default 흰 배경을 덮을 수 있음) */
+.ct-cell.ct-lamp-NP {
   background: #999;
 }
-.ct-lamp-AC {
+.ct-cell.ct-lamp-AC {
   background: #9966cc;
 }
-.ct-lamp-EC {
+.ct-cell.ct-lamp-EC {
   background: #52a447; /* 연두 */
 }
-.ct-lamp-NC {
+.ct-cell.ct-lamp-NC {
   background: #5cb8ea; /* 하늘 */
 }
-.ct-lamp-HC {
+.ct-cell.ct-lamp-HC {
   background: #ffffff;
   border: 1px solid #c8c8c8; /* 흰색은 테두리 없으면 안 보임 */
 }
-.ct-lamp-EX {
+.ct-cell.ct-lamp-EX {
   background: #dcaf45; /* 금 */
 }
 /* Failed: 어두운 적색 ↔ 회색 깜빡임 */
-.ct-lamp-F {
+.ct-cell.ct-lamp-F {
   animation: lampBlinkF 1.4s linear infinite;
 }
 @keyframes lampBlinkF {
@@ -382,7 +384,7 @@ body {
   50%      { background: #999; }
 }
 /* Full Combo: 하늘 → 흰 → 금 → 하늘 깜빡임 */
-.ct-lamp-FC {
+.ct-cell.ct-lamp-FC {
   animation: lampBlinkFC 2.1s linear infinite;
 }
 @keyframes lampBlinkFC {
@@ -391,7 +393,7 @@ body {
   66%      { background: #dcaf45; }
 }
 /* Perfect FC: FC 와 같은 깜빡임이되 더 빠르게 */
-.ct-lamp-PFC {
+.ct-cell.ct-lamp-PFC {
   animation: lampBlinkFC 1.4s linear infinite;
 }
 .ct-level {
