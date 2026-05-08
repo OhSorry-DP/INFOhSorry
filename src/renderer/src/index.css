@@ -283,7 +283,7 @@ body {
 /* ----- 차트 단위 표 (SP / DP 탭, 한 row = 한 난이도) ----- */
 .ct-table {
   display: grid;
-  grid-template-columns: 110px 60px 1fr 80px 130px 80px 60px;
+  grid-template-columns: 110px 60px 1fr 80px 80px 80px 60px;
   gap: 1px;
   background: #e8eaed;
   border-radius: 4px;
@@ -292,7 +292,7 @@ body {
 .ct-thead {
   display: contents;
 }
-.ct-thead > div {
+.ct-th {
   padding: 8px 10px;
   background: #f4f5f7;
   font-size: 11px;
@@ -302,9 +302,26 @@ body {
   position: sticky;
   top: 0;
   z-index: 1;
+  cursor: pointer;
+  user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
 }
-.ct-thead > div.num {
-  text-align: right;
+.ct-th:hover {
+  background: #ebedf0;
+  color: #333;
+}
+.ct-th.num {
+  justify-content: flex-end;
+}
+.ct-th.active {
+  color: #1971c2;
+  background: #e8f0fa;
+}
+.ct-arrow {
+  font-size: 9px;
+  color: #1971c2;
 }
 .ct-tr {
   display: contents;
@@ -347,13 +364,6 @@ body {
 }
 .ct-letter {
   font-weight: 700;
-  width: 24px;
-  display: inline-block;
-}
-.ct-rate {
-  color: #666;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
 }
 .ct-empty {
   color: #ccc;
