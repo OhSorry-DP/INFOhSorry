@@ -169,10 +169,10 @@ function ChartRow({ c }: { c: SongChart }) {
       <div
         className="ct-cell ct-title"
         title={c.title}
-        // LEGGENDARIA 차트는 곡명도 연한 마젠타 색
+        // LEGGENDARIA 차트는 곡명 앞에 † + 마젠타 색
         style={c.slot === 'SPL' || c.slot === 'DPL' ? { color: slotColor } : undefined}
       >
-        {c.title}
+        {(c.slot === 'SPL' || c.slot === 'DPL' ? '† ' : '') + c.title}
       </div>
       <div className="ct-cell num">{c.noteCount > 0 ? c.noteCount.toLocaleString() : '-'}</div>
       <div className="ct-cell ct-letter">
