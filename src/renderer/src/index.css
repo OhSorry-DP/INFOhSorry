@@ -489,7 +489,7 @@ body {
 .ct-cell.ct-rate-bar .rate-letter {
   font-weight: 700;
   /* 기본 (D/E/F): 연한 회색 글씨 + 더 연한 회색 테두리. AAA~C 는 inline style 로 색 덮음. */
-  color: #767b80;
+  color: #5a5e63;
   text-shadow:
     -1px -1px 0 #d4d7db,
     1px -1px 0 #d4d7db,
