@@ -871,7 +871,7 @@ body {
 .lamp-box.lamp-AC  { background: #9966cc; }
 .lamp-box.lamp-EC  { background: #7bc16a; }
 .lamp-box.lamp-NC  { background: #5cb8ea; }
-.lamp-box.lamp-HC  { background: #ffffff; border: 1px solid #c8c8c8; box-sizing: border-box; }
+.lamp-box.lamp-HC  { background: #ffffff; border-left: 1px solid #c8c8c8; border-right: 1px solid #c8c8c8; box-sizing: border-box; }
 .lamp-box.lamp-EX  { background: #dcaf45; }
 .lamp-box.lamp-F   { animation: lampBlinkF 1.4s linear infinite; }
 .lamp-box.lamp-FC  { animation: lampBlinkFC 2.1s linear infinite; }
