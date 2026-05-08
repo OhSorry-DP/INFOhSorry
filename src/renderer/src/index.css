@@ -838,6 +838,17 @@ body {
 .dp12-songs {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  position: relative;
+}
+/* 마지막 row 의 우측 빈 영역까지 가로줄 그리기 */
+.dp12-songs::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 1px;
+  background: #e0e3e7;
 }
 .dp12-song {
   /* 위아래 padding 0 — lamp-box 가 row 가득 차게. min-height 로 row 높이. */
