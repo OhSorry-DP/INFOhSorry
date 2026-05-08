@@ -303,7 +303,8 @@ body {
 /* ----- 콘텐츠 영역 ----- */
 .content {
   flex: 1;
-  padding: 12px 20px;
+  /* padding-top 0 — 탭 바로 아래에 필터/콘텐츠 붙음. 위쪽 12px 빈 공간 X */
+  padding: 0 20px 12px;
   overflow: auto;
 }
 
