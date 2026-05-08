@@ -166,13 +166,28 @@ export class RefluxManager extends EventEmitter {
   private child: ChildProcess | null = null;
   private tsvWatcher: FSWatcher | null = null;
   private lastTsvMtime = 0;
+  // Reflux 가 출력한 최근 stdout/stderr 라인 (디버깅용, UI 에도 노출)
+  private recentLines: string[] = [];
+  private static readonly MAX_RECENT = 30;
 
   getState(): RefluxState {
-    return { ...this.state };
+    return { ...this.state, recentLines: [...this.recentLines] };
   }
 
   private setState(patch: Partial<RefluxState>): void {
     this.state = { ...this.state, ...patch };
+    this.emit('state', this.getState());
+  }
+
+  private addLine(line: string): void {
+    if (!line) return;
+    // 콘솔에도 print — npm run dev 의 터미널에서 보임
+    console.log('[reflux]', line);
+    this.recentLines.push(line);
+    if (this.recentLines.length > RefluxManager.MAX_RECENT) {
+      this.recentLines.splice(0, this.recentLines.length - RefluxManager.MAX_RECENT);
+    }
+    // 라인이 추가됐으니 state push (UI 가 실시간으로 봄)
     this.emit('state', this.getState());
   }
 
@@ -232,38 +247,45 @@ export class RefluxManager extends EventEmitter {
     this.setState({ spawned: true, stage: 'hooking' });
 
     // stdout 으로 단계 감지 — Reflux Program.cs 의 출력 메시지 매칭
+    // 매칭 못해도 라인은 다 recentLines 에 보관 (UI 디버깅용)
     const onLine = (line: string): void => {
-      // 주의: 메시지 문구는 Reflux 코드에 의존하므로 변경되면 같이 갱신
-      if (/Trying to hook to INFINITAS/i.test(line)) {
+      this.addLine(line);
+      // 메시지 문구는 Reflux 코드에 의존 — 관대하게 (대소문자 + 부분 매칭)
+      if (/hook(ing)?\s+to\s+infinitas/i.test(line)) {
         this.setState({ stage: 'hooking' });
-      } else if (/Hooked to process/i.test(line)) {
+      } else if (/hooked\s+to\s+process|attached\s+to/i.test(line)) {
         this.setState({ stage: 'hooked' });
       }
       // 첫 tracker.tsv dump 는 watcher 가 감지 → setState({ stage: 'ready' })
     };
     let buf = '';
     const handleData = (data: Buffer): void => {
+      // Reflux 가 \r\n 또는 \r 만 쓸 수도 있으니 모두 split
       buf += data.toString('utf-8');
-      let idx;
-      while ((idx = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, idx).trim();
-        buf = buf.slice(idx + 1);
-        if (line) onLine(line);
+      // \r\n 또는 \n 또는 \r 단위
+      const parts = buf.split(/\r\n|\n|\r/);
+      // 마지막 part 는 미완성 라인 → 버퍼에 남김
+      buf = parts.pop() || '';
+      for (const line of parts) {
+        const trimmed = line.trim();
+        if (trimmed) onLine(trimmed);
       }
     };
     child.stdout?.on('data', handleData);
     child.stderr?.on('data', handleData);
 
-    child.on('exit', (code) => {
+    child.on('exit', (code, signal) => {
       this.child = null;
+      this.addLine(`(reflux 종료, code=${code}, signal=${signal})`);
       this.setState({
         spawned: false,
         stage: code === 0 ? 'idle' : 'error',
-        error: code !== 0 ? `Reflux 종료 코드 ${code}` : undefined,
+        error: code !== 0 ? `Reflux 비정상 종료 (code=${code}, signal=${signal})` : undefined,
       });
     });
     child.on('error', (e) => {
       this.child = null;
+      this.addLine(`(spawn 에러: ${e.message})`);
       this.setState({ spawned: false, stage: 'error', error: e.message });
     });
   }

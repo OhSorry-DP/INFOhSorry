@@ -71,6 +71,7 @@ export interface RefluxState {
   download?: { bytes: number; total: number };
   lastTsvMtime?: number;
   error?: string;
+  recentLines?: string[]; // Reflux 가 출력한 최근 stdout/stderr 라인 (디버깅용)
 }
 
 export interface RefluxStartResult {

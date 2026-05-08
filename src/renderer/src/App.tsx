@@ -142,6 +142,8 @@ export default function App() {
 
       <ProgressBar state={refluxState} />
 
+      <RefluxLog state={refluxState} />
+
       {error && <div className="error">에러: {error}</div>}
 
       {refluxState.stage === 'idle' && rows.length === 0 && (
@@ -179,6 +181,22 @@ export default function App() {
         </>
       )}
     </div>
+  );
+}
+
+// ============================================================
+// Reflux 의 최근 stdout/stderr 라인 표시 (접을 수 있음, 디버깅용)
+// ============================================================
+function RefluxLog({ state }: { state: RefluxState }): JSX.Element | null {
+  const lines = state.recentLines;
+  if (!lines || lines.length === 0) return null;
+  return (
+    <details className="reflux-log">
+      <summary>
+        Reflux 로그 (최근 {lines.length}줄) — 마지막: <code>{lines[lines.length - 1]}</code>
+      </summary>
+      <pre>{lines.join('\n')}</pre>
+    </details>
   );
 }
 
