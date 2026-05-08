@@ -56,12 +56,19 @@ export default function Dp12Table({ charts }: Props) {
         useCORS: true,
         logging: false,
       });
-      const dataUrl = canvas.toDataURL('image/png');
+      const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+      if (!blob) return;
+      const buf = await blob.arrayBuffer();
       const ts = new Date()
         .toISOString()
         .replace(/[:T.]/g, '-')
         .replace('Z', '');
-      await window.infohsorry.saveImage(dataUrl, `dp12-${ts}.png`);
+      const r = await window.infohsorry.saveImage(buf, `dp12-${ts}.png`);
+      if (r.ok && r.path) {
+        alert(`캡처 저장됨\n${r.path}`);
+      } else {
+        alert(`캡처 실패: ${r.error || '알 수 없음'}`);
+      }
     } finally {
       setCapturing(false);
     }

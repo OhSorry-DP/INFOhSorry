@@ -27,7 +27,7 @@ declare global {
         dataPath: () => Promise<string>;
       };
       saveImage: (
-        dataUrl: string,
+        data: ArrayBuffer | string,
         defaultName?: string,
       ) => Promise<{ ok: boolean; path?: string; error?: string }>;
       probe: (exeName: string) => Promise<ProbeResult>;

@@ -104,19 +104,26 @@ ipcMain.handle('reflux:openDir', async () => {
   return dir;
 });
 
-// ----- IPC: 이미지 저장 (캡처) -----
-ipcMain.handle('image:save', async (_evt, dataUrl: string, defaultName?: string) => {
-  if (!mainWindow) return { ok: false, error: 'no window' };
+// ----- IPC: 이미지 자동 저장 (캡처) -----
+// 사진 폴더 (%USERPROFILE%\Pictures\) 안 INFOhSorry 서브폴더에 자동 저장.
+// dialog 없이 — UX 단순화 + dataUrl 큰 경우 IPC 안정성 확보.
+ipcMain.handle('image:save', async (_evt, data: ArrayBuffer | string, defaultName?: string) => {
   try {
-    const r = await dialog.showSaveDialog(mainWindow, {
-      title: '캡처 저장',
-      defaultPath: defaultName || `dp12-${Date.now()}.png`,
-      filters: [{ name: 'PNG', extensions: ['png'] }],
-    });
-    if (r.canceled || !r.filePath) return { ok: false, error: 'canceled' };
-    const base64 = dataUrl.replace(/^data:image\/png;base64,/, '');
-    await (await import('fs')).promises.writeFile(r.filePath, Buffer.from(base64, 'base64'));
-    return { ok: true, path: r.filePath };
+    const fs = await import('fs');
+    const path = await import('path');
+    const dir = path.join(app.getPath('pictures'), 'INFOhSorry');
+    await fs.promises.mkdir(dir, { recursive: true });
+    const fileName = defaultName || `capture-${Date.now()}.png`;
+    const filePath = path.join(dir, fileName);
+    let buf: Buffer;
+    if (typeof data === 'string') {
+      const base64 = data.replace(/^data:image\/png;base64,/, '');
+      buf = Buffer.from(base64, 'base64');
+    } else {
+      buf = Buffer.from(data);
+    }
+    await fs.promises.writeFile(filePath, buf);
+    return { ok: true, path: filePath };
   } catch (e) {
     return { ok: false, error: (e as Error).message };
   }
