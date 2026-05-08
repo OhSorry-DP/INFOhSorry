@@ -858,9 +858,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.dp12-level {
-  border-bottom: 1px solid #e0e3e7;
-}
 
 /* 곡명 왼쪽 lamp 색박스 — row 상하 가득 차게 (border-radius 0) */
 .lamp-box {
