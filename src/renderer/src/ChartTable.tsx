@@ -121,6 +121,8 @@ export default function ChartTable({ rows, style }: Props) {
       });
     }
     const dir = sortDir === 'asc' ? 1 : -1;
+    const rateOf = (c: SongChart): number =>
+      c.noteCount > 0 ? c.exScore / (c.noteCount * 2) : 0;
     return arr.sort((a, b) => {
       let v = 0;
       switch (sortKey) {
@@ -137,12 +139,9 @@ export default function ChartTable({ rows, style }: Props) {
         case 'notes':
           v = a.noteCount - b.noteCount;
           break;
-        case 'rate': {
-          const ra = a.noteCount > 0 ? a.exScore / (a.noteCount * 2) : 0;
-          const rb = b.noteCount > 0 ? b.exScore / (b.noteCount * 2) : 0;
-          v = ra - rb;
+        case 'rate':
+          v = rateOf(a) - rateOf(b);
           break;
-        }
         case 'ex':
           v = a.exScore - b.exScore;
           break;
@@ -150,8 +149,13 @@ export default function ChartTable({ rows, style }: Props) {
           v = a.missCount - b.missCount;
           break;
       }
-      if (v === 0) v = a.title.localeCompare(b.title);
-      return v * dir;
+      if (v !== 0) return v * dir;
+      // tiebreak: lamp 정렬일 때 같은 lamp 안에서는 rate 높은 게 위 (sortDir 영향 X)
+      if (sortKey === 'lamp') {
+        const rd = rateOf(b) - rateOf(a);
+        if (rd !== 0) return rd;
+      }
+      return a.title.localeCompare(b.title);
     });
   }, [charts, sortKey, sortDir, slotIdx]);
 
