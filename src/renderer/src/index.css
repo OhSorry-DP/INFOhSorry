@@ -815,21 +815,12 @@ body {
 .dp12-grid {
   display: flex;
   flex-direction: column;
-  border: 1px solid #d0d4d8;
-  border-radius: 4px;
-  overflow: hidden;
-  background: #d0d4d8;
 }
 .dp12-group {
   display: grid;
   grid-template-columns: 70px 1fr;
-  gap: 1px;
-}
-.dp12-group + .dp12-group {
-  margin-top: 1px;
 }
 .dp12-level {
-  background: #f4f5f7;
   font-size: 22px;
   font-weight: 700;
   color: #444;
@@ -841,20 +832,14 @@ body {
 .dp12-songs {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 1px;
-  background: #d0d4d8;
 }
 .dp12-song {
   padding: 7px 10px;
-  background: #fff;
   font-size: 12.5px;
   cursor: help;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-}
-.dp12-song:hover {
-  background: #f4f5f7;
 }
 /* 차트 슬롯 별 글자 색 (배경 X) */
 .dp12-song.slot-DPN { color: #1971c2; }              /* NORMAL — 하늘 */
