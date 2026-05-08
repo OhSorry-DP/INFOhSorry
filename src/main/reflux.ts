@@ -253,8 +253,18 @@ export class RefluxManager extends EventEmitter {
 
     // ComSpec 은 Windows 가 항상 정의하는 cmd.exe 절대경로. PATH 의존 회피 (ENOENT 방지).
     const cmdExe = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
-    const child = spawn(cmdExe, ['/c', 'start', '""', '/D', workDir(), exePath()], {
-      windowsHide: true, // cmd 자체는 안 보이게 (start 가 띄우는 Reflux 콘솔창만 보임)
+
+    // 명령: start "" /D <cwd> "<cmd.exe>" /K "<Reflux.exe>"
+    //   - start: 새 콘솔창 띄움 (Reflux 가 콘솔 attach 받음 → Console.Clear OK)
+    //   - 안쪽 cmd /K: Reflux 종료해도 콘솔창 안 닫힘 (사용자가 메시지 확인 가능)
+    //
+    // shell:true + 단일 문자열로 escape 처리 위임 (array 로는 start 의 quoting 까다로움)
+    const cmdLine =
+      `start "" /D "${workDir()}" "${cmdExe}" /K "${exePath()}"`;
+
+    const child = spawn(cmdLine, [], {
+      shell: true,
+      windowsHide: true, // 우리 spawn 한 cmd 는 안 보이게 (start 가 띄우는 새 콘솔만 보임)
       stdio: 'ignore',
     });
     this.child = child;
