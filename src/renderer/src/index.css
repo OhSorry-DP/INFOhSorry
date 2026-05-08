@@ -295,7 +295,7 @@ body {
 }
 .ct-th {
   padding: 10px 8px;
-  background: #f4f5f7;
+  background: #fff;
   font-size: 12.5px;
   font-weight: 700;
   color: #555;
@@ -310,9 +310,10 @@ body {
   gap: 4px;
   white-space: nowrap;
   overflow: hidden;
+  border-bottom: 2px solid #d0d4d8;
 }
 .ct-th:hover {
-  background: #ebedf0;
+  background: #f4f5f7;
   color: #333;
 }
 .ct-th.num {
@@ -352,10 +353,6 @@ body {
   padding: 0 !important;
   min-height: 22px;
   cursor: help;
-}
-/* 첫 컬럼 헤더 (lamp 색박스) — 헤더 회색 background 가 음영처럼 보여서 흰색으로 */
-.ct-thead .ct-th:first-child {
-  background: #fff;
 }
 /* 잠긴 차트의 lamp cell 도 흰색 유지 (전체 row 의 #fafafa 음영이 lamp 까지 가지 않게) */
 .ct-tr.locked > .ct-cell.ct-lamp {
