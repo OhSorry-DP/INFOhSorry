@@ -238,12 +238,15 @@ export class RefluxManager extends EventEmitter {
     if (this.child) return; // 이미 떠있으면 skip
     this.setState({ stage: 'starting', spawned: false });
 
-    const child = spawn(exePath(), [], {
+    // Electron main 은 GUI 프로세스라 자체 콘솔이 없음 → 자식이 콘솔 inherit 받을 게 없어서
+    // Reflux 의 Console.Clear() 가 IOException 으로 즉사. shell:true 로 cmd.exe 를 거쳐
+    // 띄우면 cmd 가 콘솔을 가지고 Reflux 가 그걸 inherit → Console API 정상 동작.
+    // 부작용: cmd 콘솔창이 같이 뜸 (windowsHide:false 라).
+    const child = spawn(`"${exePath()}"`, [], {
       cwd: workDir(),
-      // Reflux 가 hook 후 Console.Clear() 를 호출 → 콘솔이 attach 되어 있어야 IOException 안 남
-      // 부득이 windowsHide:false. stdio 가 pipe 라 콘솔창 자체는 거의 비어있게 보임
       windowsHide: false,
       stdio: ['ignore', 'pipe', 'pipe'],
+      shell: true,
     });
     this.child = child;
     this.setState({ spawned: true, stage: 'hooking' });
@@ -320,6 +323,8 @@ export class RefluxManager extends EventEmitter {
   }
 
   // 자식 프로세스 종료 (앱 종료 전 호출)
+  // shell:true 로 띄웠기 때문에 child = cmd.exe, 그 안에서 Reflux.exe 가 손자 프로세스.
+  // child.kill() 은 cmd 만 죽일 가능성 있어서 Windows 에선 taskkill /T 로 tree kill.
   async stop(): Promise<void> {
     if (this.tsvWatcher) {
       this.tsvWatcher.close();
@@ -328,20 +333,18 @@ export class RefluxManager extends EventEmitter {
     const child = this.child;
     if (!child) return;
     return new Promise((resolve) => {
-      const t = setTimeout(() => {
-        try {
-          child.kill('SIGKILL');
-        } catch {
-          /* ignore */
-        }
-        resolve();
-      }, 3000);
+      const t = setTimeout(() => resolve(), 3000); // 어떻게 되든 최대 3초만 기다림
       child.once('exit', () => {
         clearTimeout(t);
         resolve();
       });
       try {
-        child.kill();
+        if (process.platform === 'win32' && child.pid) {
+          // tree kill — cmd + Reflux 둘 다 종료
+          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
+        } else {
+          child.kill();
+        }
       } catch {
         clearTimeout(t);
         resolve();
