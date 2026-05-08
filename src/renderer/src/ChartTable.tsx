@@ -218,16 +218,16 @@ export default function ChartTable({ rows, style }: Props) {
           <button
             className="ct-filter-toggle"
             onClick={() => setCollapsed((v) => !v)}
-            title={collapsed ? '필터 펼치기' : '필터 접기'}
+            title={collapsed ? 'Expand filters' : 'Collapse filters'}
           >
-            {collapsed ? '필터 ▼' : '필터 ▲'}
+            {collapsed ? 'Filter ▼' : 'Filter ▲'}
           </button>
           <span className="ct-filter-count">
             {charts.length} / {allCharts.length}
           </span>
           {hasFilter && (
             <button className="ct-filter-clear" onClick={clearFilters}>
-              필터 초기화
+              Reset
             </button>
           )}
         </div>
