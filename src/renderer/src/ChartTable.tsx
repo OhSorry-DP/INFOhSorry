@@ -184,6 +184,7 @@ function ChartRow({ c }: { c: SongChart }) {
             const pct = Math.max(0, Math.min(1, rate)) * 100;
             return (
               <>
+                <div className="rate-bg" />
                 <div className="rate-fill" style={{ width: `${pct}%` }} />
                 {RATE_CUTS.map((cut) => (
                   <div

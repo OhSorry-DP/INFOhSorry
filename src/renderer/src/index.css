@@ -286,7 +286,7 @@ body {
 .ct-table {
   /* 헤더 / 바디 두 grid 로 분리 — display:contents 와 sticky 가 충돌 안 하게.
      컬럼 너비는 CSS var 로 통일. */
-  --ct-cols: 13px 36px 1fr 80px 100px 80px 80px 60px;
+  --ct-cols: 13px 36px 1fr 80px 100px 200px 80px 60px;
   border-radius: 4px;
   /* overflow: hidden 제거 — header sticky 가 동작하려면 grid 가 overflow context 가 아니어야 함 */
 }
@@ -450,8 +450,13 @@ body {
 .ct-cell.ct-rate-bar {
   padding: 0 !important;
   position: relative;
-  background: #f0f2f5;
   overflow: hidden;
+  /* cell 자체는 default 흰색 — 노데이터 cell 은 깨끗하게. 막대 영역만 .rate-bg 로 회색 */
+}
+.ct-cell.ct-rate-bar .rate-bg {
+  position: absolute;
+  inset: 0;
+  background: #f0f2f5;
 }
 .ct-cell.ct-rate-bar .rate-fill {
   position: absolute;
