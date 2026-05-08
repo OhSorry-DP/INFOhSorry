@@ -18,7 +18,9 @@ body {
 .app {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  /* fixed height — .content 가 overflow:auto 로 스크롤 컨텍스트가 되려면 .app 이 늘어나면 안 됨.
+     min-height: 100vh 면 body 가 scroll 되어 .ct-thead 의 sticky 가 동작 X. */
+  height: 100vh;
 }
 .app-header {
   display: flex;
