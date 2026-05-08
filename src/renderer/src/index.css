@@ -300,6 +300,17 @@ body {
   z-index: 3;
   border-bottom: 2px solid #d0d4d8;
 }
+/* sticky 헤더 위쪽에 .content padding-top (12px) 만큼 흰색 가림막
+   — 그 영역에서 데이터 cell 이 비치는 현상 방지 */
+.ct-thead::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -12px;
+  height: 12px;
+  background: #fff;
+}
 .ct-tbody {
   display: grid;
   grid-template-columns: var(--ct-cols);
