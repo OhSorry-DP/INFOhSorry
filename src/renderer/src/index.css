@@ -284,7 +284,7 @@ body {
 .ct-table {
   display: grid;
   /* LAMP(색박스) / LEVEL / 곡명 / NOTES / LAMP(글자) / DJ Level / EX Score / MISS */
-  grid-template-columns: 18px 50px 1fr 80px 100px 80px 80px 60px;
+  grid-template-columns: 15px 50px 1fr 80px 100px 80px 80px 60px;
   gap: 1px;
   background: #e8eaed;
   border-radius: 4px;
@@ -345,11 +345,11 @@ body {
 }
 .ct-lamp {
   /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준
-     cell 전체를 채워 grid gap (회색 음영) 이 보이지 않게 */
+     cell 전체를 채워 grid gap 이 보이지 않게. row 높이는 다른 cell 이 결정. */
   margin: 0;
   border-radius: 0;
   padding: 0 !important;
-  min-height: 22px;
+  min-height: 0;
   cursor: help;
 }
 /* 잠긴 차트의 lamp cell 도 흰색 유지 (전체 row 의 #fafafa 음영이 lamp 까지 가지 않게) */
@@ -401,7 +401,9 @@ body {
   animation: lampBlinkFC 1.4s linear infinite;
 }
 .ct-level {
-  font-size: 12px;
+  /* LEVEL 만 살짝 큰 폰트 (행 높이 영향 X — line-height 1 로 고정) */
+  font-size: 15.5px;
+  line-height: 1;
 }
 .ct-title {
   overflow: hidden;
