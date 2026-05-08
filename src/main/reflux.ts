@@ -233,60 +233,40 @@ export class RefluxManager extends EventEmitter {
     }
   }
 
-  // child_process spawn + stdout 으로 hook 상태 감지
+  // Windows 의 `start` 명령으로 Reflux 를 띄움 (탐색기 더블클릭과 동일한 방식).
+  //
+  // 왜 이렇게: Node spawn 으로 Electron 자식 띄우면 콘솔 attach 가 안 되는데, Reflux 는
+  // hook 직후 Console.Clear() 를 호출해서 콘솔 없으면 즉사 (IOException).
+  // `cmd /c start "" "Reflux.exe"` 는 Windows 의 ShellExecute 같은 launch 라
+  // 새 콘솔창을 자동 부여 → Console API 동작.
+  //
+  // 트레이드오프:
+  //   - cmd 자체는 start 명령 후 즉시 종료. child 로는 cmd 만 잡고 있고 Reflux 본체의
+  //     PID 를 직접 모름.
+  //   - cleanup 은 image name 으로 taskkill /IM Reflux.exe (사용자가 다른 Reflux 인스턴스
+  //     안 돌리는 가정).
+  //   - stdout 도 캡처 안 됨. UI 의 recentLines / hooking stage 매칭 비활성.
+  //   - 그래도 tracker.tsv watch 만으로 'ready' 신호 감지 가능 — 핵심 흐름은 동작.
   private async spawnReflux(): Promise<void> {
-    if (this.child) return; // 이미 떠있으면 skip
+    if (this.child) return;
     this.setState({ stage: 'starting', spawned: false });
 
-    // Electron main 은 GUI 프로세스라 자체 콘솔이 없음 → 자식이 콘솔 inherit 받을 게 없어서
-    // Reflux 의 Console.Clear() 가 IOException 으로 즉사. shell:true 로 cmd.exe 를 거쳐
-    // 띄우면 cmd 가 콘솔을 가지고 Reflux 가 그걸 inherit → Console API 정상 동작.
-    // 부작용: cmd 콘솔창이 같이 뜸 (windowsHide:false 라).
-    const child = spawn(`"${exePath()}"`, [], {
-      cwd: workDir(),
-      windowsHide: false,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      shell: true,
-    });
+    const child = spawn(
+      'cmd.exe',
+      ['/c', 'start', '""', '/D', workDir(), exePath()],
+      {
+        windowsHide: true, // cmd 자체는 안 보이게 (start 가 띄우는 Reflux 콘솔창만 보임)
+        stdio: 'ignore',
+      },
+    );
     this.child = child;
+    // cmd 가 곧 종료 → spawned=true 는 사용자가 뭔가 떠 있다는 신호. Reflux 는 별도로 살아있음.
     this.setState({ spawned: true, stage: 'hooking' });
 
-    // stdout 으로 단계 감지 — Reflux Program.cs 의 출력 메시지 매칭
-    // 매칭 못해도 라인은 다 recentLines 에 보관 (UI 디버깅용)
-    const onLine = (line: string): void => {
-      this.addLine(line);
-      // 메시지 문구는 Reflux 코드에 의존 — 관대하게 (대소문자 + 부분 매칭)
-      if (/hook(ing)?\s+to\s+infinitas/i.test(line)) {
-        this.setState({ stage: 'hooking' });
-      } else if (/hooked\s+to\s+process|attached\s+to/i.test(line)) {
-        this.setState({ stage: 'hooked' });
-      }
-      // 첫 tracker.tsv dump 는 watcher 가 감지 → setState({ stage: 'ready' })
-    };
-    let buf = '';
-    const handleData = (data: Buffer): void => {
-      // Reflux 가 \r\n 또는 \r 만 쓸 수도 있으니 모두 split
-      buf += data.toString('utf-8');
-      // \r\n 또는 \n 또는 \r 단위
-      const parts = buf.split(/\r\n|\n|\r/);
-      // 마지막 part 는 미완성 라인 → 버퍼에 남김
-      buf = parts.pop() || '';
-      for (const line of parts) {
-        const trimmed = line.trim();
-        if (trimmed) onLine(trimmed);
-      }
-    };
-    child.stdout?.on('data', handleData);
-    child.stderr?.on('data', handleData);
-
-    child.on('exit', (code, signal) => {
+    // cmd 종료는 무시 (Reflux 본체는 별도 프로세스로 떠 있음)
+    child.on('exit', () => {
       this.child = null;
-      this.addLine(`(reflux 종료, code=${code}, signal=${signal})`);
-      this.setState({
-        spawned: false,
-        stage: code === 0 ? 'idle' : 'error',
-        error: code !== 0 ? `Reflux 비정상 종료 (code=${code}, signal=${signal})` : undefined,
-      });
+      // spawned 는 그대로 유지 — Reflux 본체는 살아있다고 가정
     });
     child.on('error', (e) => {
       this.child = null;
@@ -323,32 +303,25 @@ export class RefluxManager extends EventEmitter {
   }
 
   // 자식 프로세스 종료 (앱 종료 전 호출)
-  // shell:true 로 띄웠기 때문에 child = cmd.exe, 그 안에서 Reflux.exe 가 손자 프로세스.
-  // child.kill() 은 cmd 만 죽일 가능성 있어서 Windows 에선 taskkill /T 로 tree kill.
+  // `cmd /c start` 방식이라 child.pid 는 cmd 의 것. Reflux 본체는 별도 프로세스로 살아있음.
+  // 이름으로 종료: taskkill /F /IM Reflux.exe /T (모든 Reflux.exe 인스턴스 종료)
   async stop(): Promise<void> {
     if (this.tsvWatcher) {
       this.tsvWatcher.close();
       this.tsvWatcher = null;
     }
-    const child = this.child;
-    if (!child) return;
+    if (process.platform !== 'win32') return;
     return new Promise((resolve) => {
-      const t = setTimeout(() => resolve(), 3000); // 어떻게 되든 최대 3초만 기다림
-      child.once('exit', () => {
+      const k = spawn('taskkill', ['/F', '/T', '/IM', 'Reflux.exe'], { windowsHide: true });
+      const t = setTimeout(() => resolve(), 3000);
+      k.on('exit', () => {
         clearTimeout(t);
         resolve();
       });
-      try {
-        if (process.platform === 'win32' && child.pid) {
-          // tree kill — cmd + Reflux 둘 다 종료
-          spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], { windowsHide: true });
-        } else {
-          child.kill();
-        }
-      } catch {
+      k.on('error', () => {
         clearTimeout(t);
         resolve();
-      }
+      });
     });
   }
 
