@@ -457,7 +457,7 @@ body {
 .ct-cell.ct-rate-bar .rate-bg {
   position: absolute;
   inset: 0;
-  background: #f0f2f5;
+  background: #fff;
 }
 .ct-cell.ct-rate-bar .rate-fill {
   position: absolute;
