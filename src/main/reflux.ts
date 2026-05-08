@@ -251,14 +251,12 @@ export class RefluxManager extends EventEmitter {
     if (this.child) return;
     this.setState({ stage: 'starting', spawned: false });
 
-    const child = spawn(
-      'cmd.exe',
-      ['/c', 'start', '""', '/D', workDir(), exePath()],
-      {
-        windowsHide: true, // cmd 자체는 안 보이게 (start 가 띄우는 Reflux 콘솔창만 보임)
-        stdio: 'ignore',
-      },
-    );
+    // ComSpec 은 Windows 가 항상 정의하는 cmd.exe 절대경로. PATH 의존 회피 (ENOENT 방지).
+    const cmdExe = process.env.ComSpec || 'C:\\Windows\\System32\\cmd.exe';
+    const child = spawn(cmdExe, ['/c', 'start', '""', '/D', workDir(), exePath()], {
+      windowsHide: true, // cmd 자체는 안 보이게 (start 가 띄우는 Reflux 콘솔창만 보임)
+      stdio: 'ignore',
+    });
     this.child = child;
     // cmd 가 곧 종료 → spawned=true 는 사용자가 뭔가 떠 있다는 신호. Reflux 는 별도로 살아있음.
     this.setState({ spawned: true, stage: 'hooking' });
@@ -312,7 +310,10 @@ export class RefluxManager extends EventEmitter {
     }
     if (process.platform !== 'win32') return;
     return new Promise((resolve) => {
-      const k = spawn('taskkill', ['/F', '/T', '/IM', 'Reflux.exe'], { windowsHide: true });
+      // taskkill 도 PATH 의존 회피 — System32 절대경로로
+      const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+      const taskkillExe = `${winDir}\\System32\\taskkill.exe`;
+      const k = spawn(taskkillExe, ['/F', '/T', '/IM', 'Reflux.exe'], { windowsHide: true });
       const t = setTimeout(() => resolve(), 3000);
       k.on('exit', () => {
         clearTimeout(t);
