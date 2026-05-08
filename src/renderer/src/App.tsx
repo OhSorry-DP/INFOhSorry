@@ -576,14 +576,23 @@ function StarPanel({
               </ul>
             </li>
           )}
+          <li>
+            ereter ★ 갱신:{' '}
+            {ereterStatus?.exists && ereterStatus.mtime != null
+              ? formatRelativeTime(ereterStatus.mtime)
+              : '데이터 없음'}
+            {ereterStatus?.isStale && (
+              <span className="warning"> · 24시간 경과</span>
+            )}{' '}
+            <button
+              className="star-ereter-btn"
+              onClick={onRefreshEreter}
+              disabled={ereterBusy}
+            >
+              {ereterBusy ? '...' : '지금 갱신'}
+            </button>
+          </li>
         </ul>
-        <div className="star-ereter">
-          <EreterBar
-            status={ereterStatus}
-            busy={ereterBusy}
-            onRefresh={onRefreshEreter}
-          />
-        </div>
       </details>
     </div>
   );
