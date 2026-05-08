@@ -288,7 +288,7 @@ body {
   gap: 1px;
   background: #e8eaed;
   border-radius: 4px;
-  overflow: hidden;
+  /* overflow: hidden 제거 — header sticky 가 동작하려면 grid 가 overflow context 가 아니어야 함 */
 }
 .ct-thead {
   display: contents;
@@ -302,11 +302,12 @@ body {
   letter-spacing: 0.3px;
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 2;
   cursor: pointer;
   user-select: none;
   display: flex;
   align-items: center;
+  justify-content: center; /* 헤더는 모두 가운데 정렬 */
   gap: 4px;
   white-space: nowrap;
   overflow: hidden;
@@ -315,9 +316,6 @@ body {
 .ct-th:hover {
   background: #f4f5f7;
   color: #333;
-}
-.ct-th.num {
-  justify-content: flex-end;
 }
 .ct-th.active {
   color: #1971c2;
