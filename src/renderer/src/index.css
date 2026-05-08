@@ -816,13 +816,13 @@ body {
   display: flex;
   flex-direction: column;
   /* 전체 위 + 마지막 group 의 border-bottom 이 끝선 역할 */
-  border-top: 2px solid #777;
+  border-top: 1px solid #777;
 }
 .dp12-group {
   display: grid;
   grid-template-columns: 70px 1fr;
   /* 레벨 그룹 사이 + 마지막 group → 전체 끝 — 굵은 구분선 */
-  border-bottom: 2px solid #777;
+  border-bottom: 1px solid #777;
 }
 .dp12-level {
   font-size: 22px;
