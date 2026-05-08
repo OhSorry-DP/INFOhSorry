@@ -38,17 +38,21 @@ const LAMP_LABEL: Record<string, string> = {
 };
 
 export default function Dp12Table({ charts }: Props) {
-  // ereter ★ 매칭된 곡만 그룹화 (매칭 안 된 곡은 ★ 모르니 제외)
-  // 레벨 내림차순 → 같은 레벨 안에서는 곡명 순
+  // ereter 매칭된 곡 — ★ 레벨로 그룹. 매칭 안 된 곡은 '미분류' 그룹 (★11.6 아래)
+  // 정렬: 큰 ★ → 작은 ★ → 미분류 (가장 아래)
   const groups = useMemo(() => {
+    const UNCLASSIFIED = -1;
     const m = new Map<number, SongChart[]>();
     for (const c of charts) {
-      if (c.ereterLevel == null) continue;
-      const lv = c.ereterLevel;
+      const lv = c.ereterLevel ?? UNCLASSIFIED;
       if (!m.has(lv)) m.set(lv, []);
       m.get(lv)!.push(c);
     }
-    const sorted = Array.from(m.entries()).sort((a, b) => b[0] - a[0]);
+    const sorted = Array.from(m.entries()).sort((a, b) => {
+      if (a[0] === UNCLASSIFIED) return 1;
+      if (b[0] === UNCLASSIFIED) return -1;
+      return b[0] - a[0];
+    });
     for (const [, arr] of sorted) arr.sort((a, b) => a.title.localeCompare(b.title));
     return sorted;
   }, [charts]);
@@ -61,7 +65,7 @@ export default function Dp12Table({ charts }: Props) {
     <div className="dp12-grid">
       {groups.map(([level, list]) => (
         <div key={level} className="dp12-group">
-          <div className="dp12-level">★{level.toFixed(1)}</div>
+          <div className="dp12-level">{level === -1 ? '미분류' : `★${level.toFixed(1)}`}</div>
           <div className="dp12-songs">
             {list.map((c, i) => (
               <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} />
