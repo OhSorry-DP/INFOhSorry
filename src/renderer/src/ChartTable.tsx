@@ -28,6 +28,9 @@ const SLOT_COLOR: Record<ChartSlot, string> = {
 type SortKey = 'lamp' | 'level' | 'title' | 'notes' | 'rate' | 'ex' | 'miss';
 type SortDir = 'asc' | 'desc';
 
+const ALL_LAMPS: string[] = ['NP', 'F', 'AC', 'EC', 'NC', 'HC', 'EX', 'FC', 'PFC'];
+const ALL_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+
 // id 는 React key 용 (lamp 컬럼이 두 군데라 unique 식별 필요)
 const COLUMNS: { id: string; key: SortKey | null; label: string; numeric?: boolean }[] = [
   { id: 'lamp-color', key: 'lamp', label: '' },
@@ -61,10 +64,48 @@ export default function ChartTable({ rows, style }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('asc');
 
-  const charts = useMemo(
+  // 필터 state
+  const [search, setSearch] = useState('');
+  const [activeLevels, setActiveLevels] = useState<Set<number>>(new Set());
+  const [activeLamps, setActiveLamps] = useState<Set<string>>(new Set());
+  const [hideLocked, setHideLocked] = useState(false);
+
+  const allCharts = useMemo(
     () => extractCharts(rows, { slots: style === 'sp' ? SP_SLOTS : DP_SLOTS }),
     [rows, style],
   );
+
+  const charts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allCharts.filter((c) => {
+      if (hideLocked && !c.unlocked) return false;
+      if (q && !c.title.toLowerCase().includes(q)) return false;
+      if (activeLevels.size > 0 && !activeLevels.has(c.level)) return false;
+      if (activeLamps.size > 0 && !activeLamps.has(c.lamp)) return false;
+      return true;
+    });
+  }, [allCharts, search, activeLevels, activeLamps, hideLocked]);
+
+  const toggleLevel = (lv: number): void => {
+    const s = new Set(activeLevels);
+    if (s.has(lv)) s.delete(lv);
+    else s.add(lv);
+    setActiveLevels(s);
+  };
+  const toggleLamp = (lamp: string): void => {
+    const s = new Set(activeLamps);
+    if (s.has(lamp)) s.delete(lamp);
+    else s.add(lamp);
+    setActiveLamps(s);
+  };
+  const clearFilters = (): void => {
+    setSearch('');
+    setActiveLevels(new Set());
+    setActiveLamps(new Set());
+    setHideLocked(false);
+  };
+  const hasFilter =
+    search.length > 0 || activeLevels.size > 0 || activeLamps.size > 0 || hideLocked;
 
   const sortOrder: ChartSlot[] = style === 'sp' ? SP_SLOTS : DP_SLOTS;
   const slotIdx = useMemo(() => new Map(sortOrder.map((s, i) => [s, i] as const)), [sortOrder]);
@@ -129,8 +170,60 @@ export default function ChartTable({ rows, style }: Props) {
   }
 
   return (
-    <div className="ct-table">
-      <div className="ct-thead">
+    <div className="ct-wrap">
+      <div className="ct-filters">
+        <div className="ct-filter-row">
+          <input
+            type="text"
+            className="ct-search"
+            placeholder="곡명 검색"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+          <label className="ct-checkbox">
+            <input
+              type="checkbox"
+              checked={hideLocked}
+              onChange={(e) => setHideLocked(e.target.checked)}
+            />
+            잠긴 차트 숨기기
+          </label>
+          <span className="ct-filter-count">
+            {charts.length} / {allCharts.length}
+          </span>
+          {hasFilter && (
+            <button className="ct-filter-clear" onClick={clearFilters}>
+              필터 초기화
+            </button>
+          )}
+        </div>
+        <div className="ct-filter-row">
+          <span className="ct-filter-label">LV</span>
+          {ALL_LEVELS.map((lv) => (
+            <button
+              key={lv}
+              className={`ct-filter-btn${activeLevels.has(lv) ? ' active' : ''}`}
+              onClick={() => toggleLevel(lv)}
+            >
+              {lv}
+            </button>
+          ))}
+        </div>
+        <div className="ct-filter-row">
+          <span className="ct-filter-label">LAMP</span>
+          {ALL_LAMPS.map((lamp) => (
+            <button
+              key={lamp}
+              className={`ct-filter-btn${activeLamps.has(lamp) ? ' active' : ''}`}
+              onClick={() => toggleLamp(lamp)}
+            >
+              {lamp}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="ct-table">
+        <div className="ct-thead">
         {COLUMNS.map((col) => {
           const active = sortKey === col.key;
           const arrow = active ? (sortDir === 'asc' ? '▲' : '▼') : '';
@@ -150,6 +243,7 @@ export default function ChartTable({ rows, style }: Props) {
         {sorted.map((c, i) => (
           <ChartRow key={`${c.title}|${c.slot}|${i}`} c={c} />
         ))}
+      </div>
       </div>
     </div>
   );

@@ -282,6 +282,92 @@ body {
   overflow: auto;
 }
 
+/* ----- 필터 영역 ----- */
+.ct-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ct-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px 0;
+}
+.ct-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ct-filter-label {
+  width: 38px;
+  color: #888;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+.ct-search {
+  padding: 5px 10px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12.5px;
+  width: 220px;
+  outline: none;
+}
+.ct-search:focus {
+  border-color: #1971c2;
+}
+.ct-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: #555;
+  cursor: pointer;
+  user-select: none;
+}
+.ct-filter-count {
+  margin-left: auto;
+  color: #888;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+.ct-filter-clear {
+  padding: 4px 10px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: #555;
+}
+.ct-filter-clear:hover {
+  background: #f4f5f7;
+}
+.ct-filter-btn {
+  padding: 3px 9px;
+  min-width: 28px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11.5px;
+  color: #555;
+  font-variant-numeric: tabular-nums;
+}
+.ct-filter-btn:hover:not(.active) {
+  background: #f4f5f7;
+}
+.ct-filter-btn.active {
+  background: #1971c2;
+  border-color: #1971c2;
+  color: #fff;
+  font-weight: 600;
+}
+
 /* ----- 차트 단위 표 (SP / DP 탭, 한 row = 한 난이도) ----- */
 .ct-table {
   /* 헤더 / 바디 두 grid 로 분리 — display:contents 와 sticky 가 충돌 안 하게.
