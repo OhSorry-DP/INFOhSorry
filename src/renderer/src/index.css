@@ -854,15 +854,15 @@ body {
   text-overflow: ellipsis;
 }
 .dp12-song:hover {
-  filter: brightness(0.94);
+  background: #f4f5f7;
 }
-/* 차트 슬롯 별 옅은 배경 색 */
-.dp12-song.slot-DPN { background: #f3f8fc; }
-.dp12-song.slot-DPH { background: #fdf8e8; }
-.dp12-song.slot-DPA { background: #fcebeb; }
-.dp12-song.slot-DPL { background: #f9eafa; color: #d678c8; font-weight: 600; }
+/* 차트 슬롯 별 글자 색 (배경 X) */
+.dp12-song.slot-DPN { color: #212529; }              /* NORMAL — 검정 */
+.dp12-song.slot-DPH { color: #c89318; }              /* HYPER — 금색 */
+.dp12-song.slot-DPA { color: #212529; }              /* ANOTHER — 검정 */
+.dp12-song.slot-DPL { color: #d678c8; font-weight: 600; }  /* LEGGENDARIA — 마젠타 */
 /* 잠김 / NP 는 옅게 */
-.dp12-song.lamp-NP { color: #aaa; }
+.dp12-song.lamp-NP { opacity: 0.45; }
 
 /* ----- DP ☆12 차트 단위 표 (구 — 사용 안 함, 일단 보관) ----- */
 .dp12-table {
