@@ -55,6 +55,7 @@ export default function Dp12Table({ charts }: Props) {
   return (
     <div className="dp12-table">
       <div className="dp12-thead">
+        <div className="num">★</div>
         <div>곡명</div>
         <div>차트</div>
         <div className="num">RANK</div>
@@ -70,6 +71,9 @@ export default function Dp12Table({ charts }: Props) {
         const bp = c.noteCount > 0 ? (c.missCount / c.noteCount) * 100 : null;
         return (
           <div key={`${c.title}|${c.slot}|${i}`} className="dp12-tr">
+            <div className="num ereter-level">
+              {c.ereterLevel != null ? `★${c.ereterLevel.toFixed(1)}` : '-'}
+            </div>
             <div className="title">{c.title}</div>
             <div className="slot" style={{ color: slotColor }}>
               {SLOT_LABEL[c.slot]}

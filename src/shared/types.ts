@@ -39,6 +39,8 @@ export interface SongChart {
   missCount: number;
   noteCount: number;
   djPoints: number;
+  // ereter ★ (소수, 11.6~12.7) — 매칭된 경우만 set
+  ereterLevel?: number;
 }
 
 export const SP_SLOTS: ChartSlot[] = ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'];

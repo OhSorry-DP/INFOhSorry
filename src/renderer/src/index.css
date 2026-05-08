@@ -806,7 +806,8 @@ body {
 /* ----- DP ☆12 차트 단위 표 ----- */
 .dp12-table {
   display: grid;
-  grid-template-columns: 1fr 100px 56px 80px 56px 70px 60px 100px;
+  /* ★ / 곡명 / 차트 / RANK / EX / MISS / NOTES / BP% / LAMP */
+  grid-template-columns: 60px 1fr 100px 56px 80px 56px 70px 60px 100px;
   gap: 1px;
   background: #e8eaed;
   border-radius: 4px;
@@ -851,6 +852,11 @@ body {
 }
 .dp12-tr .letter {
   font-weight: 700;
+}
+.dp12-tr .ereter-level {
+  font-weight: 700;
+  color: #444;
+  font-variant-numeric: tabular-nums;
 }
 .dp12-tr .lamp {
   font-size: 10.5px;

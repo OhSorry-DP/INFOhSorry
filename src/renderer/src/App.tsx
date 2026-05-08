@@ -173,10 +173,16 @@ export default function App() {
   }, [rows, tab]);
 
   // DP ☆12 차트만 추출 (별값 추정 모델 input 의 prep)
-  const dp12Charts = useMemo(
-    () => extractCharts(rows, { slots: DP_SLOTS, level: 12 }),
-    [rows],
-  );
+  // ereter 매칭되는 차트는 ereterLevel (★ 소수) 도 추가
+  const dp12Charts = useMemo(() => {
+    const charts = extractCharts(rows, { slots: DP_SLOTS, level: 12 });
+    if (!ereterData) return charts;
+    const idx = buildEreterIndex(ereterData.charts).index;
+    return charts.map((c) => {
+      const e = idx.get(norm(c.title) + '|' + slotToDiff(c.slot));
+      return e ? { ...c, ereterLevel: e.level } : c;
+    });
+  }, [rows, ereterData]);
 
   // INFINITAS DP 차트 + ereter ★ 매칭 (★11.6~12.7 = LEVEL 12 만)
   // 별값 추정 / 추천곡의 단일 source.
