@@ -165,7 +165,9 @@ export default function ChartTable({ rows, style }: Props) {
       }
     } else {
       setSortKey(key);
-      setSortDir('asc');
+      // LAMP 는 강한 lamp 먼저 (FC > EX > ... > NP) 가 자연스러움 → 첫 클릭 desc
+      // 그 외 (LV/곡명/NOTES/RATE/EX/MISS) 는 asc 가 자연
+      setSortDir(key === 'lamp' ? 'desc' : 'asc');
     }
   }
 
