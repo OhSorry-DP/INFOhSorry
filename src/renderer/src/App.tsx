@@ -3,6 +3,13 @@ import type { EreterCacheStatus, EreterData, RefluxState, SongRow } from '../../
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
 import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
+import {
+  buildRecs,
+  type RecCandidate,
+  type RecInputChart,
+  type RecStage,
+} from '../../shared/recommend';
+import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
 import Dp12Table from './Dp12Table';
 
@@ -171,13 +178,12 @@ export default function App() {
     [rows],
   );
 
-  // ohSorry 별값 모델용 input — INFINITAS DP 차트 + ereter ★ 매칭
-  // ohSorry 와 동일하게 ereter 의 ★11.6~12.7 (= 게임 LEVEL 12) 만 대상.
-  const dp12StarInputs = useMemo(() => {
+  // INFINITAS DP 차트 + ereter ★ 매칭 (★11.6~12.7 = LEVEL 12 만)
+  // 별값 추정 / 추천곡의 단일 source.
+  const dp12Match = useMemo(() => {
     if (!ereterData) return null;
     const idx = buildEreterIndex(ereterData.charts).index;
-    const fitData: FitDatum[] = [];
-    const poolCharts: PoolChart[] = [];
+    const charts: RecInputChart[] = [];
     let matched = 0;
     let unmatched = 0;
     const unmatchedSamples: string[] = [];
@@ -195,34 +201,67 @@ export default function App() {
           }
           continue;
         }
-        // ohSorry 와 동일한 ★ 범위 필터 (DP12)
         if (e.level < 11.6 || e.level > 12.7) continue;
         matched++;
-        const ln = lampNum(c.lamp);
-        poolCharts.push({
-          lampNum: ln,
+        charts.push({
+          title: r.title,
+          slot,
+          diff: slotToDiff(slot),
           level: e.level,
+          lamp: c.lamp,
+          lampNum: lampNum(c.lamp),
           djLevel: c.letter || null,
           ec: e.ec,
           hc: e.hc,
           exh: e.exh,
         });
-        // fitData: NP 제외. ASSIST 는 ohSorry 규칙대로 모든 stage 에서 fail (lampNum < 3 = ec fail).
-        if (ln > 0) {
-          if (typeof e.ec === 'number') fitData.push({ d: e.ec, p: ln >= 3 ? 1 : 0, stage: 'ec' });
-          if (typeof e.hc === 'number') fitData.push({ d: e.hc, p: ln >= 5 ? 1 : 0, stage: 'hc' });
-          if (typeof e.exh === 'number')
-            fitData.push({ d: e.exh, p: ln >= 6 ? 1 : 0, stage: 'exh' });
-        }
       }
     }
-    return { fitData, poolCharts, matched, unmatched, unmatchedSamples };
+    return { charts, matched, unmatched, unmatchedSamples };
   }, [rows, ereterData]);
+
+  // 별값 추정 input — dp12Match 에서 derive
+  const dp12StarInputs = useMemo(() => {
+    if (!dp12Match) return null;
+    const fitData: FitDatum[] = [];
+    const poolCharts: PoolChart[] = [];
+    for (const c of dp12Match.charts) {
+      poolCharts.push({
+        lampNum: c.lampNum,
+        level: c.level,
+        djLevel: c.djLevel,
+        ec: c.ec,
+        hc: c.hc,
+        exh: c.exh,
+      });
+      if (c.lampNum > 0) {
+        if (typeof c.ec === 'number') fitData.push({ d: c.ec, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
+        if (typeof c.hc === 'number') fitData.push({ d: c.hc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
+        if (typeof c.exh === 'number') fitData.push({ d: c.exh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
+      }
+    }
+    return { fitData, poolCharts };
+  }, [dp12Match]);
 
   const dp12StarResult = useMemo(() => {
     if (!dp12StarInputs) return null;
     return estimateStar(dp12StarInputs.fitData, dp12StarInputs.poolCharts);
   }, [dp12StarInputs]);
+
+  // 추천곡 — rerollKey 가 바뀔 때마다 새로 random pick
+  const [rerollKey, setRerollKey] = useState(0);
+  const recsEC = useMemo(
+    () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'ec') : []),
+    [dp12Match, dp12StarResult, rerollKey],
+  );
+  const recsHC = useMemo(
+    () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'hc') : []),
+    [dp12Match, dp12StarResult, rerollKey],
+  );
+  const recsEXH = useMemo(
+    () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'exh') : []),
+    [dp12Match, dp12StarResult, rerollKey],
+  );
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
   const dp12Stats = useMemo(() => {
@@ -319,15 +358,22 @@ export default function App() {
               <>
                 <StarPanel
                   result={dp12StarResult}
-                  matched={dp12StarInputs?.matched ?? 0}
-                  unmatched={dp12StarInputs?.unmatched ?? 0}
+                  matched={dp12Match?.matched ?? 0}
+                  unmatched={dp12Match?.unmatched ?? 0}
                   fitDataCount={dp12StarInputs?.fitData.length ?? 0}
-                  matchedNonNp={
-                    dp12StarInputs?.poolCharts.filter((c) => c.lampNum > 0).length ?? 0
-                  }
+                  matchedNonNp={dp12Match?.charts.filter((c) => c.lampNum > 0).length ?? 0}
                   ereterReady={!!ereterData}
-                  unmatchedSamples={dp12StarInputs?.unmatchedSamples ?? []}
+                  unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
                 />
+                {dp12StarResult && (recsEC.length > 0 || recsHC.length > 0 || recsEXH.length > 0) && (
+                  <Recommendations
+                    recsEC={recsEC}
+                    recsHC={recsHC}
+                    recsEXH={recsEXH}
+                    baseStar={dp12StarResult.star}
+                    onReroll={() => setRerollKey((k) => k + 1)}
+                  />
+                )}
                 <Dp12Table charts={dp12Charts} />
               </>
             ) : (
@@ -335,6 +381,92 @@ export default function App() {
             )}
           </main>
         </>
+      )}
+    </div>
+  );
+}
+
+// ============================================================
+// 추천곡 영역 (EC / HC / EXH 3 카드, 다시 뽑기)
+// ============================================================
+const STAGE_INFO: Record<RecStage, { title: string; color: string }> = {
+  ec: { title: 'EASY 클리어', color: '#52a447' },
+  hc: { title: 'HARD 클리어', color: '#dc3545' },
+  exh: { title: 'EX-HARD 클리어', color: '#dcaf45' },
+};
+
+const DIFF_COLOR: Record<string, string> = {
+  NORMAL: '#1971c2',
+  HYPER: '#dcaf45',
+  ANOTHER: '#dc3545',
+  LEGGENDARIA: '#d678c8',
+};
+
+function Recommendations({
+  recsEC,
+  recsHC,
+  recsEXH,
+  baseStar,
+  onReroll,
+}: {
+  recsEC: RecCandidate[];
+  recsHC: RecCandidate[];
+  recsEXH: RecCandidate[];
+  baseStar: number;
+  onReroll: () => void;
+}): JSX.Element {
+  return (
+    <div className="rec-area">
+      <div className="rec-area-head">
+        <h3>
+          추천곡 <span style={{ fontWeight: 400, color: '#888', fontSize: 12 }}>★ {baseStar.toFixed(2)} 기준</span>
+        </h3>
+        <button onClick={onReroll} title="랜덤 추첨 다시">
+          ↻ 다시 뽑기
+        </button>
+      </div>
+      <div className="rec-cards">
+        <RecCard stage="ec" recs={recsEC} />
+        <RecCard stage="hc" recs={recsHC} />
+        <RecCard stage="exh" recs={recsEXH} />
+      </div>
+    </div>
+  );
+}
+
+function RecCard({ stage, recs }: { stage: RecStage; recs: RecCandidate[] }): JSX.Element {
+  const info = STAGE_INFO[stage];
+  return (
+    <div className="rec-card" style={{ borderTop: `3px solid ${info.color}` }}>
+      <div className="rec-card-head">
+        <span className="rec-card-title" style={{ color: info.color }}>
+          {info.title}
+        </span>
+        <span className="rec-card-count">{recs.length}곡</span>
+      </div>
+      {recs.length === 0 ? (
+        <div className="rec-empty">추천할 곡 없음 (이미 다 클리어했거나 풀 부족)</div>
+      ) : (
+        <ul className="rec-list">
+          {recs.map((r) => {
+            const ls = lampStyle(r.currentLamp);
+            return (
+              <li key={`${r.title}|${r.slot}`} className={`rec-row rec-${r.category}`}>
+                <span className="rec-cat" title={r.category === 'challenge' ? '도전' : '정리'}>
+                  {r.category === 'challenge' ? '↑' : '↓'}
+                </span>
+                <span className="rec-title">{r.title}</span>
+                <span className="rec-diff" style={{ color: DIFF_COLOR[r.diff] || '#888' }}>
+                  {r.diff[0]}
+                </span>
+                <span className="rec-stagestar">★{r.diffValue.toFixed(2)}</span>
+                <span className="rec-lamp" style={{ color: ls.color }}>
+                  {ls.label}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       )}
     </div>
   );

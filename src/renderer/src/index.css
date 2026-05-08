@@ -436,6 +436,114 @@ body {
   margin-top: 4px;
 }
 
+/* ----- 추천곡 영역 ----- */
+.rec-area {
+  margin-bottom: 16px;
+}
+.rec-area-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.rec-area-head h3 {
+  margin: 0;
+  font-size: 14px;
+}
+.rec-area-head button {
+  padding: 4px 12px;
+  font-size: 12px;
+  border: 1px solid #ccc;
+  background: #fff;
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.rec-area-head button:hover {
+  background: #f0f0f0;
+}
+.rec-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1100px) {
+  .rec-cards {
+    grid-template-columns: 1fr;
+  }
+}
+.rec-card {
+  background: #fff;
+  border: 1px solid #e0e3e7;
+  border-radius: 4px;
+  padding: 10px 12px;
+}
+.rec-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+.rec-card-title {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.rec-card-count {
+  color: #888;
+  font-size: 11px;
+}
+.rec-empty {
+  color: #aaa;
+  font-size: 11.5px;
+  text-align: center;
+  padding: 14px 0;
+}
+.rec-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.rec-row {
+  display: grid;
+  grid-template-columns: 16px 1fr 18px 50px 70px;
+  gap: 6px;
+  padding: 4px 4px;
+  font-size: 11.5px;
+  border-bottom: 1px solid #f4f5f7;
+  align-items: baseline;
+}
+.rec-row:last-child {
+  border-bottom: none;
+}
+.rec-row.rec-challenge .rec-cat {
+  color: #1971c2;
+  font-weight: 700;
+}
+.rec-row.rec-cleanup .rec-cat {
+  color: #888;
+}
+.rec-row .rec-title {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rec-row .rec-diff {
+  font-weight: 700;
+  text-align: center;
+}
+.rec-row .rec-stagestar {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #555;
+}
+.rec-row .rec-lamp {
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.3px;
+  text-align: right;
+}
+
 /* ----- DP ☆12 차트 단위 표 ----- */
 .dp12-table {
   display: grid;
