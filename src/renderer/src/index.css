@@ -283,8 +283,8 @@ body {
 /* ----- 차트 단위 표 (SP / DP 탭, 한 row = 한 난이도) ----- */
 .ct-table {
   display: grid;
-  /* 첫 컬럼 LAMP: 좁은 색상 박스 */
-  grid-template-columns: 18px 50px 1fr 80px 80px 80px 60px;
+  /* LAMP(색박스) / LEVEL / 곡명 / NOTES / LAMP(글자) / DJ Level / EX Score / MISS */
+  grid-template-columns: 18px 50px 1fr 80px 100px 80px 80px 60px;
   gap: 1px;
   background: #e8eaed;
   border-radius: 4px;
@@ -409,6 +409,10 @@ body {
 }
 .ct-letter {
   font-weight: 700;
+}
+.ct-lamp-text {
+  font-size: 12.5px;
+  letter-spacing: 0.3px;
 }
 .ct-empty {
   color: #ccc;

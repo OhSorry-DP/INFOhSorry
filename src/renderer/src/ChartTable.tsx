@@ -40,14 +40,16 @@ const LETTER_RANK: Record<string, number> = {
 type SortKey = 'lamp' | 'level' | 'title' | 'notes' | 'letter' | 'ex' | 'miss';
 type SortDir = 'asc' | 'desc';
 
-const COLUMNS: { key: SortKey | null; label: string; numeric?: boolean }[] = [
-  { key: 'lamp', label: 'LAMP' },
-  { key: 'level', label: 'LEVEL' },
-  { key: 'title', label: '곡명' },
-  { key: 'notes', label: 'NOTES', numeric: true },
-  { key: 'letter', label: 'DJ Level' },
-  { key: 'ex', label: 'EX Score', numeric: true },
-  { key: 'miss', label: 'MISS', numeric: true },
+// id 는 React key 용 (lamp 컬럼이 두 군데라 unique 식별 필요)
+const COLUMNS: { id: string; key: SortKey | null; label: string; numeric?: boolean }[] = [
+  { id: 'lamp-color', key: 'lamp', label: '' },
+  { id: 'level', key: 'level', label: 'LEVEL' },
+  { id: 'title', key: 'title', label: '곡명' },
+  { id: 'notes', key: 'notes', label: 'NOTES', numeric: true },
+  { id: 'lamp-text', key: 'lamp', label: 'LAMP' },
+  { id: 'letter', key: 'letter', label: 'DJ Level' },
+  { id: 'ex', key: 'ex', label: 'EX Score', numeric: true },
+  { id: 'miss', key: 'miss', label: 'MISS', numeric: true },
 ];
 
 export default function ChartTable({ rows, style }: Props) {
@@ -126,7 +128,7 @@ export default function ChartTable({ rows, style }: Props) {
           const arrow = active ? (sortDir === 'asc' ? '▲' : '▼') : '';
           return (
             <div
-              key={col.label}
+              key={col.id}
               className={`ct-th${col.numeric ? ' num' : ''}${active ? ' active' : ''}`}
               onClick={() => clickSort(col.key)}
             >
@@ -168,6 +170,13 @@ function ChartRow({ c }: { c: SongChart }) {
         {(c.slot === 'SPL' || c.slot === 'DPL' ? '† ' : '') + c.title}
       </div>
       <div className="ct-cell num">{c.noteCount > 0 ? c.noteCount.toLocaleString() : '-'}</div>
+      <div className="ct-cell ct-lamp-text">
+        {locked ? (
+          <span className="ct-empty">잠김</span>
+        ) : (
+          <span style={{ color: ls.color, fontWeight: 700 }}>{ls.label}</span>
+        )}
+      </div>
       <div className="ct-cell ct-letter">
         {played && c.letter ? (
           <span style={{ color: letterColor(c.letter), fontWeight: 700 }}>{c.letter}</span>
