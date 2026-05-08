@@ -11,6 +11,7 @@
 //   - INFINITAS 가 켜질 때까지 hook 시도 ("Trying to hook to INFINITAS...")
 //   - hook 되면 곡 선택 화면 진입할 때마다 tracker.tsv dump
 //   - INFINITAS 종료되면 다시 hook 대기
+import { app } from 'electron';
 import { ChildProcess, spawn } from 'child_process';
 import { promises as fsp, createWriteStream, existsSync, watch as fsWatch, FSWatcher } from 'fs';
 import { join } from 'path';
@@ -20,9 +21,9 @@ import type { RefluxState } from '../shared/types';
 
 const RELEASES_API = 'https://api.github.com/repos/olji/Reflux/releases/latest';
 
-// 작업 디렉토리 — C:\ohsorry (Reflux.exe / config / tracker.tsv / sessions / ereter-data 모두 이 안)
+// userData 안의 Reflux 작업 디렉토리 (예: %APPDATA%/infohsorry/Reflux)
 function workDir(): string {
-  return 'C:\\ohsorry';
+  return join(app.getPath('userData'), 'Reflux');
 }
 function exePath(): string {
   return join(workDir(), 'Reflux.exe');

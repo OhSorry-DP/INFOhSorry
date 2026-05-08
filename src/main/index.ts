@@ -111,7 +111,7 @@ ipcMain.handle('image:save', async (_evt, data: ArrayBuffer | string, defaultNam
   try {
     const fs = await import('fs');
     const path = await import('path');
-    const dir = 'C:\\ohsorry';
+    const dir = app.getPath('downloads');
     await fs.promises.mkdir(dir, { recursive: true });
     const fileName = defaultName || `capture-${Date.now()}.png`;
     const filePath = path.join(dir, fileName);

@@ -8,6 +8,7 @@
 //   - 24h 안의 캐시면 그대로 반환
 //   - 없거나 expired 면 fetch + 저장
 //   - 사용자가 force=true 로 강제 새로고침 가능
+import { app } from 'electron';
 import { promises as fsp, existsSync, statSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'node-html-parser';
@@ -35,8 +36,7 @@ export interface EreterData {
 }
 
 function dataPath(): string {
-  // Reflux 작업 폴더와 동일 — C:\ohsorry
-  return join('C:\\ohsorry', 'ereter-data.json');
+  return join(app.getPath('userData'), 'ereter-data.json');
 }
 
 // HTTPS GET 헬퍼 (Node 18+ global fetch 사용)
