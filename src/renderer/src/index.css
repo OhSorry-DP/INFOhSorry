@@ -299,7 +299,7 @@ body {
   position: sticky;
   top: 0;
   z-index: 3;
-  border-bottom: 2px solid #d0d4d8;
+  border-bottom: 2px solid #555;
 }
 /* sticky 헤더 위쪽에 .content padding-top (12px) 만큼 흰색 가림막
    — 그 영역에서 데이터 cell 이 비치는 현상 방지 */
