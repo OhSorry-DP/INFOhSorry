@@ -840,7 +840,32 @@ body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  border-bottom: 1px solid #e0e3e7;
+  display: flex;
+  align-items: center;
+  gap: 7px;
 }
+.dp12-level {
+  border-bottom: 1px solid #e0e3e7;
+}
+
+/* 곡명 왼쪽 작은 lamp 색박스 (ChartTable 의 .ct-lamp-X 와 동일 색) */
+.lamp-box {
+  flex-shrink: 0;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+}
+.lamp-box.lamp-NP  { background: #c5c8cc; }
+.lamp-box.lamp-AC  { background: #9966cc; }
+.lamp-box.lamp-EC  { background: #7bc16a; }
+.lamp-box.lamp-NC  { background: #5cb8ea; }
+.lamp-box.lamp-HC  { background: #ffffff; border: 1px solid #c8c8c8; box-sizing: border-box; }
+.lamp-box.lamp-EX  { background: #dcaf45; }
+.lamp-box.lamp-F   { animation: lampBlinkF 1.4s linear infinite; }
+.lamp-box.lamp-FC  { animation: lampBlinkFC 2.1s linear infinite; }
+.lamp-box.lamp-PFC { animation: lampBlinkFC 1.4s linear infinite; }
 /* 차트 슬롯 별 글자 색 (배경 X) */
 .dp12-song.slot-DPN { color: #1971c2; }              /* NORMAL — 하늘 */
 .dp12-song.slot-DPH { color: #c89318; }              /* HYPER — 금색 */

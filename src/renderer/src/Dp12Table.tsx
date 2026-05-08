@@ -95,6 +95,7 @@ function SongCell({ c }: { c: SongChart }) {
 
   return (
     <div className={`dp12-song slot-${c.slot} lamp-${c.lamp}`} title={tooltip}>
+      <span className={`lamp-box lamp-${c.lamp}`} />
       {(isLegg ? '† ' : '') + c.title}
     </div>
   );
