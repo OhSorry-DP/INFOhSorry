@@ -28,7 +28,7 @@ const SLOT_COLOR: Record<ChartSlot, string> = {
 type SortKey = 'lamp' | 'level' | 'title' | 'notes' | 'rate' | 'ex' | 'miss';
 type SortDir = 'asc' | 'desc';
 
-const ALL_LAMPS: string[] = ['NP', 'F', 'AC', 'EC', 'NC', 'HC', 'EX', 'FC', 'PFC'];
+const ALL_LAMPS: string[] = ['NP', 'F', 'AC', 'EC', 'NC', 'HC', 'EX', 'FC'];
 const ALL_LEVELS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
 
 // id 는 React key 용 (lamp 컬럼이 두 군데라 unique 식별 필요)

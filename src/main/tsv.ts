@@ -41,11 +41,14 @@ function parseRow(idx: Map<string, number>, fields: string[]): SongRow | null {
   for (const slot of ALL_SLOTS) {
     const unlockedStr = get(`${slot} Unlocked`);
     if (unlockedStr === '') continue; // 컬럼 자체가 없으면 (구버전 TSV?) skip
+    // Reflux 의 'PFC' (Perfect Full Combo) 는 'FC' 와 통합 — 표시/필터/통계 일관성
+    let lamp = get(`${slot} Lamp`) as Lamp;
+    if (lamp === 'PFC') lamp = 'FC';
     charts[slot] = {
       unlocked: parseBool(unlockedStr),
       // Reflux 의 'Rating' 컬럼은 사실 게임 내 LEVEL (정수 1~12)
       level: parseInt0(get(`${slot} Rating`)),
-      lamp: get(`${slot} Lamp`) as Lamp,
+      lamp,
       letter: get(`${slot} Letter`),
       exScore: parseInt0(get(`${slot} EX Score`)),
       missCount: parseInt0(get(`${slot} Miss Count`)),
