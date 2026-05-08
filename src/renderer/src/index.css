@@ -471,7 +471,7 @@ body {
   top: 0;
   bottom: 0;
   width: 1px;
-  background: #888;
+  background: #c4c8cc;
   z-index: 1;
 }
 .ct-cell.ct-rate-bar .rate-text {
