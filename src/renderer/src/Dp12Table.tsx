@@ -23,15 +23,16 @@ const SLOT_COLOR: Record<string, string> = {
   DPL: '#d678c8',
 };
 
-// lamp 강함 순서 (ohSorry 와 동일)
+// lamp 강함 순서 (Reflux enum 기준, PFC 가 가장 위)
 const LAMP_RANK: Record<string, number> = {
-  FullCombo: 7,
-  ExHard: 6,
-  Hard: 5,
-  Clear: 4,
-  Easy: 3,
-  Assist: 2,
-  Failed: 1,
+  PFC: 8,
+  FC: 7,
+  EX: 6,
+  HC: 5,
+  NC: 4,
+  EC: 3,
+  AC: 2,
+  F: 1,
   NP: 0,
 };
 

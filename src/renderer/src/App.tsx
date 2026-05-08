@@ -237,10 +237,11 @@ export default function App() {
       total++;
       if (c.lamp === 'NP') continue;
       attempted++;
-      if (['Easy', 'Clear', 'Hard', 'ExHard', 'FullCombo'].includes(c.lamp)) cleared++;
-      if (['Hard', 'ExHard', 'FullCombo'].includes(c.lamp)) hard++;
-      if (['ExHard', 'FullCombo'].includes(c.lamp)) exhard++;
-      if (c.lamp === 'FullCombo') fc++;
+      // Reflux Lamp: F < AC < EC < NC < HC < EX < FC < PFC
+      if (['EC', 'NC', 'HC', 'EX', 'FC', 'PFC'].includes(c.lamp)) cleared++;
+      if (['HC', 'EX', 'FC', 'PFC'].includes(c.lamp)) hard++;
+      if (['EX', 'FC', 'PFC'].includes(c.lamp)) exhard++;
+      if (c.lamp === 'FC' || c.lamp === 'PFC') fc++;
     }
     return { total, attempted, cleared, hard, exhard, fc };
   }, [dp12Charts]);
@@ -320,6 +321,10 @@ export default function App() {
                   result={dp12StarResult}
                   matched={dp12StarInputs?.matched ?? 0}
                   unmatched={dp12StarInputs?.unmatched ?? 0}
+                  fitDataCount={dp12StarInputs?.fitData.length ?? 0}
+                  matchedNonNp={
+                    dp12StarInputs?.poolCharts.filter((c) => c.lampNum > 0).length ?? 0
+                  }
                   ereterReady={!!ereterData}
                   unmatchedSamples={dp12StarInputs?.unmatchedSamples ?? []}
                 />
@@ -342,12 +347,16 @@ function StarPanel({
   result,
   matched,
   unmatched,
+  fitDataCount,
+  matchedNonNp,
   ereterReady,
   unmatchedSamples,
 }: {
   result: ReturnType<typeof estimateStar>;
   matched: number;
   unmatched: number;
+  fitDataCount: number;
+  matchedNonNp: number;
   ereterReady: boolean;
   unmatchedSamples: string[];
 }): JSX.Element {
@@ -360,14 +369,19 @@ function StarPanel({
   }
   if (!result) {
     return (
-      <div className="star-panel waiting">
-        별값 계산 표본 부족 (NP 제외 30개 미만). DP12 곡을 더 시도해주세요.
-        {matched + unmatched > 0 && (
-          <span className="match-stats">
-            {' '}
-            · 매칭 {matched} / 미매칭 {unmatched}
-          </span>
-        )}
+      <div className="star-panel waiting" style={{ textAlign: 'left' }}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>
+          별값 계산 표본 부족 — 데이터 점 {fitDataCount}개 / 30개 필요
+        </div>
+        <div style={{ fontSize: 11.5, color: '#666', lineHeight: 1.6 }}>
+          DP ☆12 매칭된 차트: <b>{matched}</b>개 (NP 제외: <b>{matchedNonNp}</b>개) · 미매칭 시도:{' '}
+          <b>{unmatched}</b>개
+          <br />
+          모델은 <b>DP ☆12</b> (= ereter ★11.6~12.7) 만 대상. SP 또는 DP11 이하 플레이는 input 이
+          되지 않습니다.
+          <br />
+          최소 NP 제외 매칭 차트가 ~10개 이상 (= 데이터 점 30개) 있어야 추정 가능.
+        </div>
       </div>
     );
   }

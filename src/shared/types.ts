@@ -2,16 +2,10 @@
 //
 // Reflux TSV 파싱 결과 모델. 메인에서 파싱 후 IPC 로 그대로 전달.
 
-export type Lamp =
-  | 'NP'
-  | 'Failed'
-  | 'Assist'
-  | 'Easy'
-  | 'Clear'
-  | 'Hard'
-  | 'ExHard'
-  | 'FullCombo'
-  | string;
+// Reflux Lamp enum (Utils.cs):
+//   NP=0 / F=Failed / AC=Assist Clear / EC=Easy Clear / NC=Normal Clear /
+//   HC=Hard Clear / EX=EX Hard Clear / FC=Full Combo / PFC=Perfect FC
+export type Lamp = 'NP' | 'F' | 'AC' | 'EC' | 'NC' | 'HC' | 'EX' | 'FC' | 'PFC' | string;
 
 export interface ChartCell {
   unlocked: boolean;

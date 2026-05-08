@@ -13,19 +13,21 @@ export interface LampStyle {
 
 export function lampStyle(lamp: Lamp): LampStyle {
   switch (lamp) {
-    case 'FullCombo':
+    case 'PFC':
+      return { label: 'P-FC', color: '#00d4dd', bg: '#e0f7f9' };
+    case 'FC':
       return { label: 'F-COMBO', color: '#00aab2', bg: '#e6fafa' };
-    case 'ExHard':
-      return { label: 'EXH-CLEAR', color: '#dcaf45', bg: '#fff8e6' };
-    case 'Hard':
+    case 'EX':
+      return { label: 'EX-HARD', color: '#dcaf45', bg: '#fff8e6' };
+    case 'HC':
       return { label: 'H-CLEAR', color: '#dc3545', bg: '#fbe9eb' };
-    case 'Clear':
+    case 'NC':
       return { label: 'CLEAR', color: '#212529', bg: '#f0f0f0' };
-    case 'Easy':
+    case 'EC':
       return { label: 'E-CLEAR', color: '#52a447', bg: '#eaf6e8' };
-    case 'Assist':
+    case 'AC':
       return { label: 'A-CLEAR', color: '#9966cc', bg: '#f3edfa' };
-    case 'Failed':
+    case 'F':
       return { label: 'FAILED', color: '#8b3a3a', bg: '#f8eaea' };
     case 'NP':
       return { label: 'NO PLAY', color: '#aaa', bg: '#f5f5f5' };

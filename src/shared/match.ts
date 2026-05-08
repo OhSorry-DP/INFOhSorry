@@ -78,17 +78,19 @@ export function matchEreter(
   return ereterIdx.get(norm(inf.title) + '|' + diff);
 }
 
-// Reflux Lamp string → ohSorry numeric lamp
-//   NP=0 / Failed=1 / Assist=2 / Easy=3 / Clear=4 / Hard=5 / ExHard=6 / FullCombo=7
+// Reflux Lamp enum string → ohSorry numeric lamp
+//   NP=0 / F=1 (Failed) / AC=2 (Assist) / EC=3 (Easy) / NC=4 (Clear) /
+//   HC=5 (Hard) / EX=6 (EX Hard) / FC=7 / PFC=7 (ohSorry 모델은 7 max — PFC 도 FC 로 통합)
 export const LAMP_TO_NUM: Record<string, number> = {
   NP: 0,
-  Failed: 1,
-  Assist: 2,
-  Easy: 3,
-  Clear: 4,
-  Hard: 5,
-  ExHard: 6,
-  FullCombo: 7,
+  F: 1,
+  AC: 2,
+  EC: 3,
+  NC: 4,
+  HC: 5,
+  EX: 6,
+  FC: 7,
+  PFC: 7,
 };
 
 export function lampNum(lamp: string): number {
