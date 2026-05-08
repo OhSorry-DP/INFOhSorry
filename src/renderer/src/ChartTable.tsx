@@ -152,15 +152,8 @@ function ChartRow({ c }: { c: SongChart }) {
   return (
     <div className={`ct-tr${locked ? ' locked' : ''}`}>
       <div
-        className="ct-cell ct-lamp"
+        className={`ct-cell ct-lamp${locked ? '' : ` ct-lamp-${c.lamp}`}`}
         title={locked ? '잠김' : ls.label}
-        style={
-          locked
-            ? undefined
-            : c.lamp === 'NP'
-            ? undefined
-            : { background: ls.color }
-        }
       />
 
       <div className="ct-cell ct-level">

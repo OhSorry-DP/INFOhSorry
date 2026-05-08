@@ -283,8 +283,8 @@ body {
 /* ----- 차트 단위 표 (SP / DP 탭, 한 row = 한 난이도) ----- */
 .ct-table {
   display: grid;
-  /* 첫 컬럼 LAMP: 영대문자 한 글자 폭 (~24px) */
-  grid-template-columns: 24px 50px 1fr 80px 80px 80px 60px;
+  /* 첫 컬럼 LAMP: 좁은 색상 박스 */
+  grid-template-columns: 18px 50px 1fr 80px 80px 80px 60px;
   gap: 1px;
   background: #e8eaed;
   border-radius: 4px;
@@ -346,11 +346,53 @@ body {
 }
 .ct-lamp {
   /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준 */
-  margin: 5px;
-  border-radius: 3px;
+  margin: 4px 3px;
+  border-radius: 2px;
   padding: 0;
   min-height: 22px;
   cursor: help;
+}
+
+/* lamp 색상 매핑 (사용자 spec) */
+.ct-lamp-NP {
+  background: #999;
+}
+.ct-lamp-AC {
+  background: #9966cc;
+}
+.ct-lamp-EC {
+  background: #52a447; /* 연두 */
+}
+.ct-lamp-NC {
+  background: #5cb8ea; /* 하늘 */
+}
+.ct-lamp-HC {
+  background: #ffffff;
+  border: 1px solid #c8c8c8; /* 흰색은 테두리 없으면 안 보임 */
+}
+.ct-lamp-EX {
+  background: #dcaf45; /* 금 */
+}
+/* Failed: 어두운 적색 ↔ 회색 깜빡임 */
+.ct-lamp-F {
+  animation: lampBlinkF 1.4s linear infinite;
+}
+@keyframes lampBlinkF {
+  0%, 100% { background: #8b3a3a; }
+  50%      { background: #999; }
+}
+/* Full Combo: 하늘 → 흰 → 금 → 하늘 깜빡임 */
+.ct-lamp-FC {
+  animation: lampBlinkFC 2.1s linear infinite;
+}
+@keyframes lampBlinkFC {
+  0%, 100% { background: #5cb8ea; }
+  33%      { background: #ffffff; box-shadow: inset 0 0 0 1px #c8c8c8; }
+  66%      { background: #dcaf45; }
+}
+/* Perfect FC: FC 와 같은 깜빡임이되 더 빠르게 */
+.ct-lamp-PFC {
+  animation: lampBlinkFC 1.4s linear infinite;
 }
 .ct-level {
   font-size: 12px;
