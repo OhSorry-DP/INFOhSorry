@@ -357,7 +357,7 @@ body {
    .ct-cell prefix 로 specificity 를 .ct-tr > .ct-cell 와 동급으로 맞춤
    (그래야 default 흰 배경을 덮을 수 있음) */
 .ct-cell.ct-lamp-NP {
-  background: #999;
+  background: #c5c8cc;
 }
 .ct-cell.ct-lamp-AC {
   background: #9966cc;
@@ -381,7 +381,7 @@ body {
 }
 @keyframes lampBlinkF {
   0%, 100% { background: #8b3a3a; }
-  50%      { background: #999; }
+  50%      { background: #c5c8cc; }
 }
 /* Full Combo: 하늘 → 흰 → 금 → 하늘 깜빡임 */
 .ct-cell.ct-lamp-FC {
