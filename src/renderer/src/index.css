@@ -293,7 +293,8 @@ body {
 .ct-thead {
   display: grid;
   grid-template-columns: var(--ct-cols);
-  gap: 1px;
+  /* 세로 줄 X — column-gap 0, row-gap 만 (헤더 row 1개라 사실상 안 보이지만 통일) */
+  gap: 0;
   background: #fff;
   position: sticky;
   top: 0;
@@ -314,7 +315,8 @@ body {
 .ct-tbody {
   display: grid;
   grid-template-columns: var(--ct-cols);
-  gap: 1px;
+  /* 가로 줄만 (row 사이 1px), 세로 줄 X */
+  gap: 1px 0;
   background: #e8eaed;
 }
 .ct-th {
