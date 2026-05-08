@@ -803,12 +803,13 @@ body {
   text-align: right;
 }
 
-/* ----- DP ☆12 격자 정렬 토글 — 박스 X, 텍스트 only, 선택 시 볼드 ----- */
+/* ----- DP ☆12 격자 정렬 토글 — 우측 정렬, 박스 X, 텍스트 only ----- */
 .dp12-sort {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 8px;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-bottom: 16px;
 }
 .dp12-sort-btn {
   padding: 0;
@@ -825,6 +826,11 @@ body {
 .dp12-sort-btn.active {
   color: #212529;
   font-weight: 700;
+}
+.dp12-sort-sep {
+  color: #ccc;
+  font-size: 13px;
+  user-select: none;
 }
 
 /* ----- DP ☆12 격자 (level 그룹) ----- */

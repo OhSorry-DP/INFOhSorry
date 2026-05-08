@@ -86,6 +86,7 @@ export default function Dp12Table({ charts }: Props) {
         >
           곡명 순
         </button>
+        <span className="dp12-sort-sep">|</span>
         <button
           className={`dp12-sort-btn${sortBy === 'lamp' ? ' active' : ''}`}
           onClick={() => setSortBy('lamp')}
