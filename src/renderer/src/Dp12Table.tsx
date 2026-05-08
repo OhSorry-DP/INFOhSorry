@@ -11,8 +11,9 @@
 // 각 곡 cell: 차트 slot 별 옅은 배경 색 (DPN/DPH/DPA/DPL)
 //             LEGGENDARIA 는 † + 마젠타 글자
 //             hover title 에 lamp / EX / rate / miss / notes 표시
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import type { ChartSlot, SongChart } from '../../shared/types';
+import { lampNum } from '../../shared/match';
 
 interface Props {
   charts: SongChart[];
@@ -37,9 +38,14 @@ const LAMP_LABEL: Record<string, string> = {
   PFC: 'PERFECT FC',
 };
 
+type SortBy = 'title' | 'lamp';
+
 export default function Dp12Table({ charts }: Props) {
+  const [sortBy, setSortBy] = useState<SortBy>('title');
+
   // ereter 매칭된 곡 — ★ 레벨로 그룹. 매칭 안 된 곡은 '미분류' 그룹 (★11.6 아래)
-  // 정렬: 큰 ★ → 작은 ★ → 미분류 (가장 아래)
+  // 그룹 정렬: 큰 ★ → 작은 ★ → 미분류 (가장 아래)
+  // 그룹 내 정렬: 곡명 순 또는 램프 강한 순
   const groups = useMemo(() => {
     const UNCLASSIFIED = -1;
     const m = new Map<number, SongChart[]>();
@@ -53,26 +59,53 @@ export default function Dp12Table({ charts }: Props) {
       if (b[0] === UNCLASSIFIED) return -1;
       return b[0] - a[0];
     });
-    for (const [, arr] of sorted) arr.sort((a, b) => a.title.localeCompare(b.title));
+    for (const [, arr] of sorted) {
+      if (sortBy === 'title') {
+        arr.sort((a, b) => a.title.localeCompare(b.title));
+      } else {
+        arr.sort((a, b) => {
+          const ln = lampNum(b.lamp) - lampNum(a.lamp);
+          if (ln !== 0) return ln;
+          return a.title.localeCompare(b.title);
+        });
+      }
+    }
     return sorted;
-  }, [charts]);
+  }, [charts, sortBy]);
 
   if (groups.length === 0) {
     return <div className="dp12-empty">매칭된 DP ☆12 곡이 없습니다.</div>;
   }
 
   return (
-    <div className="dp12-grid">
-      {groups.map(([level, list]) => (
-        <div key={level} className="dp12-group">
-          <div className="dp12-level">{level === -1 ? '미분류' : level.toFixed(1)}</div>
-          <div className="dp12-songs">
-            {list.map((c, i) => (
-              <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} />
-            ))}
+    <div>
+      <div className="dp12-sort">
+        <span className="dp12-sort-label">난이도 안 정렬</span>
+        <button
+          className={`dp12-sort-btn${sortBy === 'title' ? ' active' : ''}`}
+          onClick={() => setSortBy('title')}
+        >
+          곡명 순
+        </button>
+        <button
+          className={`dp12-sort-btn${sortBy === 'lamp' ? ' active' : ''}`}
+          onClick={() => setSortBy('lamp')}
+        >
+          램프 순
+        </button>
+      </div>
+      <div className="dp12-grid">
+          {groups.map(([level, list]) => (
+          <div key={level} className="dp12-group">
+            <div className="dp12-level">{level === -1 ? '미분류' : level.toFixed(1)}</div>
+            <div className="dp12-songs">
+              {list.map((c, i) => (
+                <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} />
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }
