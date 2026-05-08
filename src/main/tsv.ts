@@ -17,7 +17,10 @@ function parseInt0(s: string): number {
 }
 
 function parseBool(s: string): boolean {
-  return s === 'True' || s === 'true' || s === '1';
+  if (!s) return false;
+  // Reflux 는 "TRUE" / "FALSE" (모두 대문자) 로 출력 — case-insensitive 처리
+  const v = s.trim().toLowerCase();
+  return v === 'true' || v === '1' || v === 'yes';
 }
 
 function buildHeaderIndex(headerLine: string): Map<string, number> {
