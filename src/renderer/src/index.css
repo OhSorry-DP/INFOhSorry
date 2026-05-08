@@ -803,7 +803,68 @@ body {
   text-align: right;
 }
 
-/* ----- DP ☆12 차트 단위 표 ----- */
+/* ----- DP ☆12 격자 (level 그룹) ----- */
+.dp12-empty {
+  padding: 30px;
+  text-align: center;
+  color: #888;
+  background: #fff;
+  border: 1px solid #e0e3e7;
+  border-radius: 4px;
+}
+.dp12-grid {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid #d0d4d8;
+  border-radius: 4px;
+  overflow: hidden;
+  background: #d0d4d8;
+}
+.dp12-group {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  gap: 1px;
+}
+.dp12-group + .dp12-group {
+  margin-top: 1px;
+}
+.dp12-level {
+  background: #f4f5f7;
+  font-size: 22px;
+  font-weight: 700;
+  color: #444;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-variant-numeric: tabular-nums;
+}
+.dp12-songs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 1px;
+  background: #d0d4d8;
+}
+.dp12-song {
+  padding: 7px 10px;
+  background: #fff;
+  font-size: 12.5px;
+  cursor: help;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp12-song:hover {
+  filter: brightness(0.94);
+}
+/* 차트 슬롯 별 옅은 배경 색 */
+.dp12-song.slot-DPN { background: #f3f8fc; }
+.dp12-song.slot-DPH { background: #fdf8e8; }
+.dp12-song.slot-DPA { background: #fcebeb; }
+.dp12-song.slot-DPL { background: #f9eafa; color: #d678c8; font-weight: 600; }
+/* 잠김 / NP 는 옅게 */
+.dp12-song.lamp-NP { color: #aaa; }
+
+/* ----- DP ☆12 차트 단위 표 (구 — 사용 안 함, 일단 보관) ----- */
 .dp12-table {
   display: grid;
   /* ★ / 곡명 / 차트 / RANK / EX / MISS / NOTES / BP% / LAMP */

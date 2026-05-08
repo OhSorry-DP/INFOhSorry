@@ -1,10 +1,18 @@
-// DP ☆12 차트만 평탄화한 1차트 = 1행 표
+// DP ☆12 격자 표 — ereter ★ 레벨로 그룹화, 곡명만 표시, hover 시 상세 정보
 //
-// ohSorry 의 별값 추정 / 추천곡 모델의 input 형식과 매칭됨.
-// 사용자가 한 곡의 4개 DP 차트 (DPN/DPH/DPA/DPL) 중 ☆12 인 것만 골라내서 보여줌.
+// 레이아웃:
+//   ┌─────────┬─────────────────────────────────┐
+//   │ ★12.7   │ 곡A  곡B  곡C  ...                │
+//   ├─────────┼─────────────────────────────────┤
+//   │ ★12.6   │ ...                             │
+//   ├─────────┼─────────────────────────────────┤
+//   ...
+//
+// 각 곡 cell: 차트 slot 별 옅은 배경 색 (DPN/DPH/DPA/DPL)
+//             LEGGENDARIA 는 † + 마젠타 글자
+//             hover title 에 lamp / EX / rate / miss / notes 표시
 import { useMemo } from 'react';
-import type { SongChart } from '../../shared/types';
-import { lampStyle, letterColor } from './lampStyle';
+import type { ChartSlot, SongChart } from '../../shared/types';
 
 interface Props {
   charts: SongChart[];
@@ -16,83 +24,78 @@ const SLOT_LABEL: Record<string, string> = {
   DPA: 'ANOTHER',
   DPL: 'LEGGENDARIA',
 };
-const SLOT_COLOR: Record<string, string> = {
-  DPN: '#1971c2',
-  DPH: '#dcaf45',
-  DPA: '#dc3545',
-  DPL: '#d678c8',
-};
 
-// lamp 강함 순서 (Reflux enum 기준, PFC 가 가장 위)
-const LAMP_RANK: Record<string, number> = {
-  PFC: 8,
-  FC: 7,
-  EX: 6,
-  HC: 5,
-  NC: 4,
-  EC: 3,
-  AC: 2,
-  F: 1,
-  NP: 0,
+const LAMP_LABEL: Record<string, string> = {
+  NP: 'NO PLAY',
+  F: 'FAILED',
+  AC: 'ASSIST',
+  EC: 'EASY',
+  NC: 'CLEAR',
+  HC: 'HARD',
+  EX: 'EX-HARD',
+  FC: 'FULL COMBO',
+  PFC: 'PERFECT FC',
 };
 
 export default function Dp12Table({ charts }: Props) {
-  // 정렬: 강한 lamp 우선 → 같은 lamp 면 EX score 내림차순 → title
-  const sorted = useMemo(
-    () =>
-      [...charts].sort((a, b) => {
-        const la = LAMP_RANK[a.lamp] ?? -1;
-        const lb = LAMP_RANK[b.lamp] ?? -1;
-        if (la !== lb) return lb - la;
-        if (a.exScore !== b.exScore) return b.exScore - a.exScore;
-        return a.title.localeCompare(b.title);
-      }),
-    [charts],
-  );
+  // ereter ★ 매칭된 곡만 그룹화 (매칭 안 된 곡은 ★ 모르니 제외)
+  // 레벨 내림차순 → 같은 레벨 안에서는 곡명 순
+  const groups = useMemo(() => {
+    const m = new Map<number, SongChart[]>();
+    for (const c of charts) {
+      if (c.ereterLevel == null) continue;
+      const lv = c.ereterLevel;
+      if (!m.has(lv)) m.set(lv, []);
+      m.get(lv)!.push(c);
+    }
+    const sorted = Array.from(m.entries()).sort((a, b) => b[0] - a[0]);
+    for (const [, arr] of sorted) arr.sort((a, b) => a.title.localeCompare(b.title));
+    return sorted;
+  }, [charts]);
 
-  // grid 가 .dp12-table 의 직계 자식만 셀로 잡으므로 thead / tr 는 display:contents 로
-  // 자식을 직접 grid 셀로 펼침. tbody wrapper 는 두면 grid 흐름이 끊겨서 생략.
+  if (groups.length === 0) {
+    return <div className="dp12-empty">매칭된 DP ☆12 곡이 없습니다.</div>;
+  }
+
   return (
-    <div className="dp12-table">
-      <div className="dp12-thead">
-        <div className="num">★</div>
-        <div>곡명</div>
-        <div>차트</div>
-        <div className="num">RANK</div>
-        <div className="num">EX</div>
-        <div className="num">MISS</div>
-        <div className="num">NOTES</div>
-        <div className="num">BP%</div>
-        <div>LAMP</div>
-      </div>
-      {sorted.map((c, i) => {
-        const ls = lampStyle(c.lamp);
-        const slotColor = SLOT_COLOR[c.slot] || '#888';
-        const bp = c.noteCount > 0 ? (c.missCount / c.noteCount) * 100 : null;
-        return (
-          <div key={`${c.title}|${c.slot}|${i}`} className="dp12-tr">
-            <div className="num ereter-level">
-              {c.ereterLevel != null ? `★${c.ereterLevel.toFixed(1)}` : '-'}
-            </div>
-            <div className="title">{c.title}</div>
-            <div className="slot" style={{ color: slotColor }}>
-              {SLOT_LABEL[c.slot]}
-            </div>
-            <div className="num letter" style={{ color: letterColor(c.letter) }}>
-              {c.letter || '-'}
-            </div>
-            <div className="num">{c.exScore > 0 ? c.exScore.toLocaleString() : '-'}</div>
-            <div className="num">
-              {c.missCount === 0 && c.lamp === 'NP' ? '-' : c.missCount}
-            </div>
-            <div className="num">{c.noteCount > 0 ? c.noteCount : '-'}</div>
-            <div className="num">{bp != null ? bp.toFixed(2) : '-'}</div>
-            <div className="lamp" style={{ color: ls.color, background: ls.bg }}>
-              {ls.label}
-            </div>
+    <div className="dp12-grid">
+      {groups.map(([level, list]) => (
+        <div key={level} className="dp12-group">
+          <div className="dp12-level">★{level.toFixed(1)}</div>
+          <div className="dp12-songs">
+            {list.map((c, i) => (
+              <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} />
+            ))}
           </div>
-        );
-      })}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SongCell({ c }: { c: SongChart }) {
+  const isLegg = c.slot === 'DPL';
+  const played = c.lamp !== 'NP' && c.unlocked;
+  const rate = played && c.noteCount > 0 ? (c.exScore / (c.noteCount * 2)) * 100 : null;
+  const lampLabel = LAMP_LABEL[c.lamp] ?? c.lamp;
+  const slotLabel = SLOT_LABEL[c.slot as ChartSlot] ?? c.slot;
+
+  // hover tooltip — native title (한 줄씩)
+  const tooltip = [
+    `${c.title}`,
+    `${slotLabel} · ${lampLabel}`,
+    !c.unlocked
+      ? '잠김'
+      : played
+      ? `EX ${c.exScore.toLocaleString()} (${rate?.toFixed(2)}%)\n${
+          c.letter || '-'
+        } · MISS ${c.missCount} / NOTES ${c.noteCount}`
+      : `NOTES ${c.noteCount}`,
+  ].join('\n');
+
+  return (
+    <div className={`dp12-song slot-${c.slot} lamp-${c.lamp}`} title={tooltip}>
+      {(isLegg ? '† ' : '') + c.title}
     </div>
   );
 }
