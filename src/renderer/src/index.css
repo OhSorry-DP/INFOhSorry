@@ -488,12 +488,13 @@ body {
 }
 .ct-cell.ct-rate-bar .rate-letter {
   font-weight: 700;
-  /* 기본: 연한 회색 (D/E/F 등) */
+  /* 기본 (D/E/F): 연한 회색 글씨 + 더 연한 회색 테두리. AAA~C 는 inline style 로 색 덮음. */
+  color: #767b80;
   text-shadow:
-    -1px -1px 0 #b8bbbf,
-    1px -1px 0 #b8bbbf,
-    -1px 1px 0 #b8bbbf,
-    1px 1px 0 #b8bbbf;
+    -1px -1px 0 #d4d7db,
+    1px -1px 0 #d4d7db,
+    -1px 1px 0 #d4d7db,
+    1px 1px 0 #d4d7db;
 }
 /* letter 색에 가까운 톤다운 회색 — 색상 헤치지 않게 */
 .ct-cell.ct-rate-bar .rate-letter[data-letter='AAA'],
