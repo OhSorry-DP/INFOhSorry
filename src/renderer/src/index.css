@@ -352,9 +352,9 @@ body {
   min-height: 0;
   cursor: help;
 }
-/* 잠긴 차트의 lamp cell 도 흰색 유지 (전체 row 의 #fafafa 음영이 lamp 까지 가지 않게) */
+/* 잠긴 차트의 lamp 색상박스: 어두운 회색 (NP 의 밝은 회색과 구분) */
 .ct-tr.locked > .ct-cell.ct-lamp {
-  background: #fff;
+  background: #6b6f73;
 }
 
 /* lamp 색상 매핑 (사용자 spec)
