@@ -36,7 +36,7 @@ const COLUMNS: { id: string; key: SortKey | null; label: string; numeric?: boole
   { id: 'notes', key: 'notes', label: 'NOTES', numeric: true },
   { id: 'lamp-text', key: 'lamp', label: 'LAMP' },
   { id: 'rate', key: 'rate', label: 'RATE' },
-  { id: 'ex', key: 'ex', label: 'EX Score', numeric: true },
+  { id: 'ex', key: 'ex', label: '스코어', numeric: true },
   { id: 'miss', key: 'miss', label: 'MISS', numeric: true },
 ];
 
