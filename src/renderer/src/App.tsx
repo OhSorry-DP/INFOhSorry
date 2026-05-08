@@ -294,7 +294,7 @@ export default function App() {
       <header className="app-header">
         <div className="title">
           <h1>
-            IIDX INFINITAS Play Data Viewer
+            IIDX INFINITAS DP Play Data Viewer
             <span className="by-author"> - by오소리</span>
           </h1>
         </div>

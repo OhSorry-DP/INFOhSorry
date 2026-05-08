@@ -133,7 +133,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    title: 'INFOhSorry',
+    title: 'IIDX INFINITAS DP Play Data Viewer',
     icon: join(__dirname, '../../ohsorry.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

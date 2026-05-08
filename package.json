@@ -1,8 +1,8 @@
 {
   "name": "infohsorry",
   "version": "0.0.2",
-  "description": "IIDX INFINITAS 플레이 데이터 분석 (베타)",
-  "productName": "INF오소리",
+  "description": "IIDX INFINITAS DP Play Data Viewer",
+  "productName": "IIDX INFINITAS DP Play Data Viewer",
   "main": "./out/main/index.js",
   "private": true,
   "scripts": {
@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "com.yenkara.infohsorry",
-    "productName": "INF오소리",
+    "productName": "IIDX INFINITAS DP Play Data Viewer",
     "directories": {
       "output": "release"
     },
@@ -70,10 +70,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "INF오소리"
+      "shortcutName": "IIDX INFINITAS DP Play Data Viewer"
     },
     "portable": {
-      "artifactName": "INF오소리-${version}-portable.exe"
+      "artifactName": "IIDX-INFINITAS-DP-Viewer-${version}-portable.exe"
     }
   }
 }
