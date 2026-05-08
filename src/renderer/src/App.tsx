@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { EreterCacheStatus, EreterData, RefluxState, SongRow } from '../../shared/types';
+import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
 import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
@@ -53,10 +54,8 @@ export default function App() {
   const [ereterBusy, setEreterBusy] = useState(false);
   const [ereterData, setEreterData] = useState<EreterData | null>(null);
 
-  // 마운트 시:
-  //   1. Reflux state 구독 시작
-  //   2. 현재 tsvPath / 현재 state 한 번 가져오기
-  //   3. 디스크에 tracker.tsv 가 이미 있으면 → 즉시 읽어서 표시 (이전 세션 데이터 복원)
+  // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
+  // browser 모드 (LAN) 에서는 window.infohsorry 가 HTTP bridge 로 자동 patch (api.ts).
   useEffect(() => {
     const off = window.infohsorry.reflux.onState((s) => setRefluxState(s));
     void (async () => {
@@ -64,7 +63,6 @@ export default function App() {
       setTsvPath(path);
       const state = await window.infohsorry.reflux.getState();
       setRefluxState(state);
-      // 자동 복원 — 파일 없으면 ok:false 반환되니 그냥 ignore
       const r = await window.infohsorry.readTsv(path);
       if (r.ok && r.rows && r.rows.length > 0) {
         setRows(r.rows);
@@ -78,7 +76,6 @@ export default function App() {
   }, []);
 
   // 마운트 시 ereter 상태 확인 — 24h 지났거나 데이터 없으면 자동 갱신
-  // 캐시 유효해도 데이터 자체는 받아둬야 별값 계산 가능
   useEffect(() => {
     void (async () => {
       const status = await window.infohsorry.ereter.status();
@@ -86,7 +83,6 @@ export default function App() {
       if (status.isStale || !status.exists) {
         await refreshEreter(false);
       } else {
-        // 캐시 유효 — 데이터만 가져오기 (force=false 라 fetch 안 함)
         const r = await window.infohsorry.ereter.get(false);
         if (r.ok && r.data) setEreterData(r.data);
       }
