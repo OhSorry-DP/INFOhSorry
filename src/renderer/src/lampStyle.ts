@@ -22,7 +22,7 @@ export function lampStyle(lamp: Lamp): LampStyle {
     case 'HC':
       return { label: 'H-CLEAR', color: '#dc3545', bg: '#fbe9eb' };
     case 'NC':
-      return { label: 'CLEAR', color: '#444', bg: '#f0f0f0' };
+      return { label: 'CLEAR', color: '#666', bg: '#f0f0f0' };
     case 'EC':
       return { label: 'E-CLEAR', color: '#52a447', bg: '#eaf6e8' };
     case 'AC':
