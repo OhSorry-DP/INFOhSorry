@@ -401,9 +401,11 @@ body {
   animation: lampBlinkFC 1.4s linear infinite;
 }
 .ct-level {
-  /* LEVEL 만 살짝 큰 폰트 (행 높이 영향 X — line-height 1 로 고정) */
-  font-size: 15.5px;
+  /* 행 높이 가득 채우는 큰 LEVEL 숫자, 위아래 margin 2px 만 */
+  padding: 2px 8px !important;
+  font-size: 26px;
   line-height: 1;
+  font-weight: 700;
 }
 .ct-title {
   overflow: hidden;
