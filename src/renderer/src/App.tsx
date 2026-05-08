@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { EreterCacheStatus, RefluxState, SongRow } from '../../shared/types';
+import type { EreterCacheStatus, EreterData, RefluxState, SongRow } from '../../shared/types';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
+import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
+import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
 import ChartTable from './ChartTable';
 import Dp12Table from './Dp12Table';
 
@@ -39,9 +41,10 @@ export default function App() {
   const lastLoadedMtime = useRef<number>(0);
   const [tsvMtime, setTsvMtime] = useState<number>(0);
 
-  // ereter ★ 데이터 캐시 상태 + 갱신 진행 표시
+  // ereter ★ 데이터 캐시 상태 + 갱신 진행 표시 + 실제 데이터
   const [ereterStatus, setEreterStatus] = useState<EreterCacheStatus | null>(null);
   const [ereterBusy, setEreterBusy] = useState(false);
+  const [ereterData, setEreterData] = useState<EreterData | null>(null);
 
   // 마운트 시:
   //   1. Reflux state 구독 시작
@@ -67,14 +70,18 @@ export default function App() {
     return off;
   }, []);
 
-  // 마운트 시 ereter 캐시 상태 확인 — 24h 지났거나 데이터 없으면 자동 갱신
+  // 마운트 시 ereter 상태 확인 — 24h 지났거나 데이터 없으면 자동 갱신
+  // 캐시 유효해도 데이터 자체는 받아둬야 별값 계산 가능
   useEffect(() => {
     void (async () => {
       const status = await window.infohsorry.ereter.status();
       setEreterStatus(status);
       if (status.isStale || !status.exists) {
-        // 백그라운드 자동 갱신 (force=false 이지만 stale 이라 fetch 됨)
         await refreshEreter(false);
+      } else {
+        // 캐시 유효 — 데이터만 가져오기 (force=false 라 fetch 안 함)
+        const r = await window.infohsorry.ereter.get(false);
+        if (r.ok && r.data) setEreterData(r.data);
       }
     })();
   }, []);
@@ -85,6 +92,7 @@ export default function App() {
     try {
       const r = await window.infohsorry.ereter.get(force);
       if (!r.ok) setError(r.error || 'ereter 갱신 실패');
+      else if (r.data) setEreterData(r.data);
       const updated = await window.infohsorry.ereter.status();
       setEreterStatus(updated);
     } catch (e) {
@@ -162,6 +170,59 @@ export default function App() {
     () => extractCharts(rows, { slots: DP_SLOTS, level: 12 }),
     [rows],
   );
+
+  // ohSorry 별값 모델용 input — INFINITAS DP 차트 + ereter ★ 매칭
+  // ohSorry 와 동일하게 ereter 의 ★11.6~12.7 (= 게임 LEVEL 12) 만 대상.
+  const dp12StarInputs = useMemo(() => {
+    if (!ereterData) return null;
+    const idx = buildEreterIndex(ereterData.charts).index;
+    const fitData: FitDatum[] = [];
+    const poolCharts: PoolChart[] = [];
+    let matched = 0;
+    let unmatched = 0;
+    const unmatchedSamples: string[] = [];
+    for (const r of rows) {
+      for (const slot of DP_SLOTS) {
+        const c = r.charts[slot];
+        if (!c) continue;
+        const e = idx.get(norm(r.title) + '|' + slotToDiff(slot));
+        if (!e) {
+          if (c.unlocked && c.lamp !== 'NP') {
+            unmatched++;
+            if (unmatchedSamples.length < 10) {
+              unmatchedSamples.push(`${r.title} [${slotToDiff(slot)}] (lamp=${c.lamp})`);
+            }
+          }
+          continue;
+        }
+        // ohSorry 와 동일한 ★ 범위 필터 (DP12)
+        if (e.level < 11.6 || e.level > 12.7) continue;
+        matched++;
+        const ln = lampNum(c.lamp);
+        poolCharts.push({
+          lampNum: ln,
+          level: e.level,
+          djLevel: c.letter || null,
+          ec: e.ec,
+          hc: e.hc,
+          exh: e.exh,
+        });
+        // fitData: NP 제외. ASSIST 는 ohSorry 규칙대로 모든 stage 에서 fail (lampNum < 3 = ec fail).
+        if (ln > 0) {
+          if (typeof e.ec === 'number') fitData.push({ d: e.ec, p: ln >= 3 ? 1 : 0, stage: 'ec' });
+          if (typeof e.hc === 'number') fitData.push({ d: e.hc, p: ln >= 5 ? 1 : 0, stage: 'hc' });
+          if (typeof e.exh === 'number')
+            fitData.push({ d: e.exh, p: ln >= 6 ? 1 : 0, stage: 'exh' });
+        }
+      }
+    }
+    return { fitData, poolCharts, matched, unmatched, unmatchedSamples };
+  }, [rows, ereterData]);
+
+  const dp12StarResult = useMemo(() => {
+    if (!dp12StarInputs) return null;
+    return estimateStar(dp12StarInputs.fitData, dp12StarInputs.poolCharts);
+  }, [dp12StarInputs]);
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
   const dp12Stats = useMemo(() => {
@@ -254,13 +315,110 @@ export default function App() {
 
           <main className="content">
             {tab === 'dp12' ? (
-              <Dp12Table charts={dp12Charts} />
+              <>
+                <StarPanel
+                  result={dp12StarResult}
+                  matched={dp12StarInputs?.matched ?? 0}
+                  unmatched={dp12StarInputs?.unmatched ?? 0}
+                  ereterReady={!!ereterData}
+                  unmatchedSamples={dp12StarInputs?.unmatchedSamples ?? []}
+                />
+                <Dp12Table charts={dp12Charts} />
+              </>
             ) : (
               <ChartTable rows={rows} style={tab} />
             )}
           </main>
         </>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// DP ☆12 별값 결과 패널 (ohSorry v3.2.9 모델)
+// ============================================================
+function StarPanel({
+  result,
+  matched,
+  unmatched,
+  ereterReady,
+  unmatchedSamples,
+}: {
+  result: ReturnType<typeof estimateStar>;
+  matched: number;
+  unmatched: number;
+  ereterReady: boolean;
+  unmatchedSamples: string[];
+}): JSX.Element {
+  if (!ereterReady) {
+    return (
+      <div className="star-panel waiting">
+        ereter ★ 데이터 받는 중... 받아오면 별값 계산됩니다.
+      </div>
+    );
+  }
+  if (!result) {
+    return (
+      <div className="star-panel waiting">
+        별값 계산 표본 부족 (NP 제외 30개 미만). DP12 곡을 더 시도해주세요.
+        {matched + unmatched > 0 && (
+          <span className="match-stats">
+            {' '}
+            · 매칭 {matched} / 미매칭 {unmatched}
+          </span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="star-panel">
+      <div className="star-main">
+        <span className="star-label">DP ☆12 추정 ★</span>
+        <span className="star-value">{result.star.toFixed(2)}</span>
+      </div>
+      <div className="star-detail">
+        <span>raw {result.raw.toFixed(2)}</span>
+        <span>표본 {result.fitDataCount}</span>
+        <span>클리어 {result.nClearedV32}</span>
+        <span>lamp {result.validStages.join('/')}</span>
+        <span>매칭 {matched} / 미매칭 {unmatched}</span>
+        {result.isUnderCutoff && <span className="warning">CUTOFF 미달 (n_cleared &lt; 50)</span>}
+      </div>
+      <details className="star-debug">
+        <summary>모델 내부 (디버그)</summary>
+        <ul>
+          <li>
+            ridge 보정: {result.ridgeCorrection >= 0 ? '+' : ''}
+            {result.ridgeCorrection.toFixed(3)}
+            {result.ridgeMuted && ' (v3.2.9 ★음소거)'}
+          </li>
+          <li>
+            post 보정: {result.postCorrection >= 0 ? '+' : ''}
+            {result.postCorrection.toFixed(3)}
+            {result.binImplied &&
+              ` (${result.binImplied.stage} bin → ${result.binImplied.implied.toFixed(3)})`}
+          </li>
+          <li>
+            djLevel boost: {result.djBoost >= 0 ? '+' : ''}
+            {result.djBoost.toFixed(3)}
+            {result.djBoostInfo &&
+              ` (M lamp=EC, djLv=${result.djBoostInfo.djLevel}, gap=${result.djBoostInfo.gap.toFixed(2)})`}
+          </li>
+          {unmatchedSamples.length > 0 && (
+            <li>
+              미매칭 샘플 ({unmatchedSamples.length}건):
+              <ul>
+                {unmatchedSamples.map((s) => (
+                  <li key={s} style={{ color: '#888' }}>
+                    {s}
+                  </li>
+                ))}
+              </ul>
+            </li>
+          )}
+        </ul>
+      </details>
     </div>
   );
 }
