@@ -364,6 +364,7 @@ body {
 }
 .ct-tr > .ct-cell.num {
   justify-content: flex-end;
+  padding-right: 20px; /* default 10 + 추가 10 */
 }
 .ct-lamp {
   /* 색상 박스만 표시 (글자 X) — 정렬은 lampNum 기준
