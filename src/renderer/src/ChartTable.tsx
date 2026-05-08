@@ -25,18 +25,6 @@ const SLOT_COLOR: Record<ChartSlot, string> = {
   DPL: '#d678c8',
 };
 
-const SLOT_SHORT: Record<ChartSlot, string> = {
-  SPB: 'B',
-  SPN: 'N',
-  SPH: 'H',
-  SPA: 'A',
-  SPL: 'L',
-  DPN: 'N',
-  DPH: 'H',
-  DPA: 'A',
-  DPL: 'L',
-};
-
 // DJ Level 랭킹 (높을수록 위)
 const LETTER_RANK: Record<string, number> = {
   AAA: 7,
@@ -158,7 +146,6 @@ export default function ChartTable({ rows, style }: Props) {
 function ChartRow({ c }: { c: SongChart }) {
   const ls = lampStyle(c.lamp);
   const slotColor = SLOT_COLOR[c.slot];
-  const slotShort = SLOT_SHORT[c.slot];
   const locked = !c.unlocked;
   const played = c.lamp !== 'NP' && !locked;
 
@@ -177,11 +164,14 @@ function ChartRow({ c }: { c: SongChart }) {
       />
 
       <div className="ct-cell ct-level">
-        <span style={{ color: slotColor, fontWeight: 700 }}>
-          {slotShort} {c.level || '-'}
-        </span>
+        <span style={{ color: slotColor, fontWeight: 700 }}>{c.level || '-'}</span>
       </div>
-      <div className="ct-cell ct-title" title={c.title}>
+      <div
+        className="ct-cell ct-title"
+        title={c.title}
+        // LEGGENDARIA 차트는 곡명도 연한 마젠타 색
+        style={c.slot === 'SPL' || c.slot === 'DPL' ? { color: slotColor } : undefined}
+      >
         {c.title}
       </div>
       <div className="ct-cell num">{c.noteCount > 0 ? c.noteCount.toLocaleString() : '-'}</div>
