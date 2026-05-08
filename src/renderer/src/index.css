@@ -352,9 +352,9 @@ body {
   min-height: 0;
   cursor: help;
 }
-/* 잠긴 차트의 lamp 색상박스: 어두운 회색 (NP 의 밝은 회색과 구분) */
+/* 잠긴 차트의 lamp 색상박스: NP 와 동일한 회색 */
 .ct-tr.locked > .ct-cell.ct-lamp {
-  background: #6b6f73;
+  background: #c5c8cc;
 }
 
 /* lamp 색상 매핑 (사용자 spec)
