@@ -214,18 +214,6 @@ export default function ChartTable({ rows, style }: Props) {
           )}
         </div>
         <div className="ct-filter-row">
-          <span className="ct-filter-label">LV</span>
-          {ALL_LEVELS.map((lv) => (
-            <button
-              key={lv}
-              className={`ct-filter-btn${activeLevels.has(lv) ? ' active' : ''}`}
-              onClick={() => toggleLevel(lv)}
-            >
-              {lv}
-            </button>
-          ))}
-        </div>
-        <div className="ct-filter-row">
           <span className="ct-filter-label">LAMP</span>
           {ALL_LAMPS.map(({ value, label }) => (
             <button
@@ -234,6 +222,18 @@ export default function ChartTable({ rows, style }: Props) {
               onClick={() => toggleLamp(value)}
             >
               {label}
+            </button>
+          ))}
+        </div>
+        <div className="ct-filter-row">
+          <span className="ct-filter-label">LV</span>
+          {ALL_LEVELS.map((lv) => (
+            <button
+              key={lv}
+              className={`ct-filter-btn${activeLevels.has(lv) ? ' active' : ''}`}
+              onClick={() => toggleLevel(lv)}
+            >
+              {lv}
             </button>
           ))}
         </div>
