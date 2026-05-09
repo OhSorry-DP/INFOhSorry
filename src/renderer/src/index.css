@@ -8,7 +8,7 @@
 body {
   margin: 0;
   font-family: -apple-system, "Segoe UI", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
-  background: #fafbfc;
+  background: #fff;
   color: #212529;
   font-size: 13px;
   line-height: 1.5;
@@ -837,13 +837,8 @@ body {
 }
 .rec-cards {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
-}
-@media (max-width: 1100px) {
-  .rec-cards {
-    grid-template-columns: 1fr;
-  }
 }
 .rec-card {
   background: #fff;
@@ -851,19 +846,39 @@ body {
   border-radius: 4px;
   padding: 10px 12px;
 }
-/* <summary> 기본 마커 / 커서 / 스타일 정리 */
+/* <summary> 기본 마커 / 커서 / 스타일 정리.
+   PC 는 collapsible 비활성 — cursor default. 모바일에서만 pointer */
 .rec-card > summary {
   list-style: none;
-  cursor: pointer;
+  cursor: default;
 }
 .rec-card > summary::-webkit-details-marker {
   display: none;
 }
 .rec-card-head {
   display: flex;
-  justify-content: space-between;
   align-items: baseline;
+  gap: 6px;
   margin-bottom: 6px;
+}
+.rec-card-head .rec-reroll {
+  margin-left: auto;
+}
+/* 카드별 ↻ 다시 뽑기 버튼 (summary 안) */
+.rec-reroll {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  font-size: 14px;
+  font-family: inherit;
+  padding: 2px 6px;
+  margin-left: 8px;
+  border-radius: 3px;
+}
+.rec-reroll:hover {
+  background: #f0f0f0;
+  color: #333;
 }
 .rec-card-title {
   font-size: 12px;
@@ -885,44 +900,63 @@ body {
   margin: 0;
   padding: 0;
 }
+/* 추천곡 row — PC / 모바일 동일한 flex 레이아웃
+   순서: [title] [lamp text] [★stagestar] · [☆level] [diff letter]
+   lamp / stagestar / level 무채색, diff letter 만 색상 유지 */
 .rec-row {
-  display: grid;
-  grid-template-columns: 16px 1fr 18px 50px 70px;
+  display: flex;
+  align-items: baseline;
   gap: 6px;
   padding: 4px 4px;
-  font-size: 11.5px;
+  font-size: 12px;
   border-bottom: 1px solid #f4f5f7;
-  align-items: baseline;
 }
 .rec-row:last-child {
   border-bottom: none;
 }
-.rec-row.rec-challenge .rec-cat {
-  color: #1971c2;
-  font-weight: 700;
-}
-.rec-row.rec-cleanup .rec-cat {
-  color: #888;
+.rec-row .rec-cat {
+  display: none;
 }
 .rec-row .rec-title {
+  order: 1;
+  flex: 1 1 0;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.rec-row .rec-diff {
-  font-weight: 700;
-  text-align: center;
+.rec-row .rec-lamp {
+  order: 2;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: #888 !important;
 }
 .rec-row .rec-stagestar {
+  order: 3;
+  flex-shrink: 0;
   text-align: right;
-  font-variant-numeric: tabular-nums;
   color: #555;
+  font-variant-numeric: tabular-nums;
 }
-.rec-row .rec-lamp {
-  font-weight: 600;
-  font-size: 10px;
-  letter-spacing: 0.3px;
+.rec-row .rec-level {
+  display: inline;
+  order: 4;
+  flex-shrink: 0;
+  color: #888;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.rec-row .rec-level::before {
+  content: '· ';
+  color: #ccc;
+  margin-right: 2px;
+}
+.rec-row .rec-diff {
+  order: 5;
+  flex-shrink: 0;
+  font-weight: 700;
   text-align: right;
+  min-width: 12px;
 }
 
 /* ----- DP ☆12 격자 정렬 토글 — 우측 정렬, 박스 X, 텍스트 only ----- */
@@ -1370,29 +1404,33 @@ body {
     font-size: 10px;
   }
 
-  /* ----- 모바일 정렬 버튼 row — 항상 표시 ----- */
+  /* ----- 모바일 정렬 — 우측 정렬, 텍스트만 (버튼 스타일 X) ----- */
   .ct-mobile-sort-row {
     display: flex;
-    gap: 6px;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0;
     margin-bottom: 8px;
+    font-size: 12px;
   }
   .ct-mobile-sort-btn {
-    flex: 1;
-    padding: 8px 6px;
-    font-size: 13px;
-    border: 1px solid #ccc;
-    background: #fff;
-    border-radius: 3px;
-    cursor: pointer;
+    background: none;
+    border: none;
+    padding: 6px 4px;
     font-family: inherit;
-    color: #555;
-    min-height: 36px;
+    font-size: 12px;
     font-weight: 600;
+    color: #888;
+    cursor: pointer;
+    letter-spacing: 0.3px;
   }
   .ct-mobile-sort-btn.active {
-    background: #1971c2;
-    border-color: #1971c2;
-    color: #fff;
+    color: #1971c2;
+  }
+  .ct-mobile-sort-sep {
+    color: #ccc;
+    font-weight: 400;
+    margin: 0 6px;
   }
 
   /* ----- 필터 — 터치 친화 + 검색/필터 토글 한 줄로 ----- */
@@ -1452,10 +1490,38 @@ body {
     font-size: 12px;
   }
 
-  /* ----- 추천곡 카드 — 768px 이하에서도 1열 (기존 1100px breakpoint 와 동일 효과) ----- */
+  /* ----- 추천곡 카드 — 모바일은 박스 없이 1열 (기존 오소리 디자인) ----- */
+  .rec-cards {
+    grid-template-columns: 1fr;
+    gap: 0;
+  }
+  .rec-card {
+    background: transparent !important;
+    border: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    margin-bottom: 0;
+  }
+  .rec-card > summary {
+    padding: 4px 0;
+    margin-bottom: 4px;
+    cursor: pointer;
+  }
+  .rec-card-title {
+    font-size: 14px;
+    color: #212529;
+    font-weight: 700;
+  }
+  .rec-reroll {
+    font-size: 16px;
+    padding: 2px 8px;
+  }
+
+  /* 추천곡 row 는 PC 와 동일한 flex 레이아웃 (전역 룰 그대로 적용)
+     모바일에서만 패딩 / 폰트 살짝 조정 */
   .rec-row {
-    grid-template-columns: 14px 1fr 18px 44px 60px;
-    font-size: 12px;
+    padding: 6px 4px;
+    font-size: 12.5px;
   }
 
   /* ----- DP12 격자 — 모바일은 레벨이 위에 row, 곡 목록 3열 ----- */

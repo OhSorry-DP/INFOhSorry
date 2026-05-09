@@ -210,32 +210,16 @@ export default function ChartTable({ rows, style }: Props) {
     }
   }
 
-  // 모바일 정렬 버튼 (CSS 가 데스크탑에서 숨김 처리)
+  // 모바일 정렬 (CSS 가 데스크탑에서 숨김 처리)
   const mobileSortKeys: { key: SortKey; label: string }[] = [
-    { key: 'lamp', label: '램프순' },
-    { key: 'level', label: '레벨순' },
-    { key: 'miss', label: '미스순' },
+    { key: 'lamp', label: 'LAMP' },
+    { key: 'level', label: 'LEVEL' },
+    { key: 'miss', label: 'MISS' },
   ];
 
   return (
     <div className="ct-wrap">
       <div className="ct-filters" ref={filtersRef}>
-        <div className="ct-mobile-sort-row">
-          {mobileSortKeys.map((s) => {
-            const active = sortKey === s.key;
-            const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
-            return (
-              <button
-                key={s.key}
-                className={`ct-mobile-sort-btn${active ? ' active' : ''}`}
-                onClick={() => clickSort(s.key)}
-              >
-                {s.label}
-                {arrow}
-              </button>
-            );
-          })}
-        </div>
         <div className="ct-filter-row">
           <input
             type="text"
@@ -296,6 +280,24 @@ export default function ChartTable({ rows, style }: Props) {
             </div>
           </>
         )}
+        <div className="ct-mobile-sort-row">
+          {mobileSortKeys.map((s, i) => {
+            const active = sortKey === s.key;
+            const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+            return (
+              <span key={s.key} style={{ display: 'inline-flex', alignItems: 'center' }}>
+                {i > 0 && <span className="ct-mobile-sort-sep">|</span>}
+                <button
+                  className={`ct-mobile-sort-btn${active ? ' active' : ''}`}
+                  onClick={() => clickSort(s.key)}
+                >
+                  {s.label}
+                  {arrow}
+                </button>
+              </span>
+            );
+          })}
+        </div>
       </div>
       <div
         className="ct-table"

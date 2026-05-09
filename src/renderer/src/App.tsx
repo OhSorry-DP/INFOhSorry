@@ -250,19 +250,21 @@ export default function App() {
     return estimateStar(dp12StarInputs.fitData, dp12StarInputs.poolCharts);
   }, [dp12StarInputs]);
 
-  // 추천곡 — rerollKey 가 바뀔 때마다 새로 random pick
-  const [rerollKey, setRerollKey] = useState(0);
+  // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게)
+  const [rerollEC, setRerollEC] = useState(0);
+  const [rerollHC, setRerollHC] = useState(0);
+  const [rerollEXH, setRerollEXH] = useState(0);
   const recsEC = useMemo(
     () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'ec') : []),
-    [dp12Match, dp12StarResult, rerollKey],
+    [dp12Match, dp12StarResult, rerollEC],
   );
   const recsHC = useMemo(
     () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'hc') : []),
-    [dp12Match, dp12StarResult, rerollKey],
+    [dp12Match, dp12StarResult, rerollHC],
   );
   const recsEXH = useMemo(
     () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'exh') : []),
-    [dp12Match, dp12StarResult, rerollKey],
+    [dp12Match, dp12StarResult, rerollEXH],
   );
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
@@ -368,7 +370,9 @@ export default function App() {
                     recsHC={recsHC}
                     recsEXH={recsEXH}
                     baseStar={dp12StarResult.star}
-                    onReroll={() => setRerollKey((k) => k + 1)}
+                    onRerollEC={() => setRerollEC((k) => k + 1)}
+                    onRerollHC={() => setRerollHC((k) => k + 1)}
+                    onRerollEXH={() => setRerollEXH((k) => k + 1)}
                   />
                 )}
                 <Dp12Table charts={dp12Charts} />
@@ -386,10 +390,10 @@ export default function App() {
 // ============================================================
 // 추천곡 영역 (EC / HC / EXH 3 카드, 다시 뽑기)
 // ============================================================
-const STAGE_INFO: Record<RecStage, { title: string; color: string }> = {
-  ec: { title: 'EASY 클리어', color: '#52a447' },
-  hc: { title: 'HARD 클리어', color: '#dc3545' },
-  exh: { title: 'EX-HARD 클리어', color: '#dcaf45' },
+const STAGE_INFO: Record<RecStage, { prefix: string; label: string; color: string }> = {
+  ec: { prefix: 'EASY', label: '클리어 추천', color: '#52a447' },
+  hc: { prefix: 'HARD', label: '클리어 추천', color: '#dc3545' },
+  exh: { prefix: 'EX-HARD', label: '클리어 추천', color: '#dcaf45' },
 };
 
 const DIFF_COLOR: Record<string, string> = {
@@ -404,13 +408,17 @@ function Recommendations({
   recsHC,
   recsEXH,
   baseStar,
-  onReroll,
+  onRerollEC,
+  onRerollHC,
+  onRerollEXH,
 }: {
   recsEC: RecCandidate[];
   recsHC: RecCandidate[];
   recsEXH: RecCandidate[];
   baseStar: number;
-  onReroll: () => void;
+  onRerollEC: () => void;
+  onRerollHC: () => void;
+  onRerollEXH: () => void;
 }): JSX.Element {
   return (
     <div className="rec-area">
@@ -418,41 +426,60 @@ function Recommendations({
         <h3>
           추천곡 <span style={{ fontWeight: 400, color: '#888', fontSize: 12 }}>★ {baseStar.toFixed(2)} 기준</span>
         </h3>
-        <button onClick={onReroll} title="랜덤 추첨 다시">
-          ↻ 다시 뽑기
-        </button>
       </div>
       <div className="rec-cards">
-        <RecCard stage="ec" recs={recsEC} />
-        <RecCard stage="hc" recs={recsHC} />
-        <RecCard stage="exh" recs={recsEXH} />
+        <RecCard stage="ec" recs={recsEC} onReroll={onRerollEC} />
+        <RecCard stage="hc" recs={recsHC} onReroll={onRerollHC} />
+        <RecCard stage="exh" recs={recsEXH} onReroll={onRerollEXH} />
       </div>
     </div>
   );
 }
 
-function RecCard({ stage, recs }: { stage: RecStage; recs: RecCandidate[] }): JSX.Element {
+function RecCard({
+  stage,
+  recs,
+  onReroll,
+}: {
+  stage: RecStage;
+  recs: RecCandidate[];
+  onReroll: () => void;
+}): JSX.Element {
   const info = STAGE_INFO[stage];
-  // 모바일 (768px 이하) 에서는 기본 접힘, 데스크탑은 기본 펴짐.
-  // 사용자가 토글한 후엔 그 상태 유지 (controlled).
-  const [open, setOpen] = useState(() =>
-    typeof window === 'undefined' ? true : !window.matchMedia('(max-width: 768px)').matches,
+  // 모바일에서만 collapsible — 데스크탑은 항상 펴진 상태로 고정 (toggle 비활성).
+  const [isMobile] = useState(() =>
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches,
   );
+  const [openMobile, setOpenMobile] = useState(false);
   return (
     <details
       className="rec-card"
-      open={open}
-      onToggle={(e) => setOpen(e.currentTarget.open)}
+      open={isMobile ? openMobile : true}
+      onToggle={isMobile ? (e) => setOpenMobile(e.currentTarget.open) : undefined}
       style={{ borderTop: `3px solid ${info.color}` }}
     >
-      <summary className="rec-card-head">
-        <span className="rec-card-title" style={{ color: info.color }}>
-          {info.title}
+      <summary
+        className="rec-card-head"
+        onClick={isMobile ? undefined : (e) => e.preventDefault()}
+      >
+        <span className="rec-card-title">
+          <span style={{ color: info.color }}>{info.prefix}</span> {info.label}
         </span>
-        <span className="rec-card-count">{recs.length}곡</span>
+        <span className="rec-card-count">({recs.length}곡)</span>
+        <button
+          className="rec-reroll"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onReroll();
+          }}
+          title="랜덤 추첨 다시"
+        >
+          ↻
+        </button>
       </summary>
       {recs.length === 0 ? (
-        <div className="rec-empty">추천할 곡 없음 (이미 다 클리어했거나 풀 부족)</div>
+        <div className="rec-empty">현재 ★값 근처의 추천곡이 없습니다.</div>
       ) : (
         <ul className="rec-list">
           {recs.map((r) => {
@@ -470,6 +497,7 @@ function RecCard({ stage, recs }: { stage: RecStage; recs: RecCandidate[] }): JS
                 <span className="rec-lamp" style={{ color: ls.color }}>
                   {ls.label}
                 </span>
+                <span className="rec-level">☆{r.level.toFixed(1)}</span>
               </li>
             );
           })}

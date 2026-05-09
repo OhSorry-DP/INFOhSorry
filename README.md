@@ -17,8 +17,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF Setup 0.0.5.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.5-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF Setup 0.0.6.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.6-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -63,6 +63,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.6 — 추천곡 / 정렬 UI 정리
+- **모바일 UI 개선**
+- **body 배경 흰색** — 옅은 회색 `#fafbfc` → `#fff`
+- **Reflux health check 안정화** — `tasklist` 절대 경로 사용 + 실패 시 alive 로 가정 (PATH 의존 제거 + 무한 spawn 방지)
 
 ### 0.0.5 — 모바일 페이지 개선
 - **SP / DP 차트 표 2줄 레이아웃** — 한 행을 2줄로 분리. lamp 색박스 / LV 가 2줄 다 차지, 1줄 = title / SCORE 값, 2줄 = rate-bar / MISS 값

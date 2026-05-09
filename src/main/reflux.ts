@@ -240,13 +240,20 @@ export class RefluxManager extends EventEmitter {
   }
 
   // tasklist 로 Reflux.exe 가 떠 있는지 확인. 매치 있으면 stdout 에 "Reflux.exe" 행 포함.
+  // PATH 의존 회피 — System32 절대 경로 사용 (electron spawned env 에 System32 없을 수 있음).
   private async isRefluxAlive(): Promise<boolean> {
     if (process.platform !== 'win32') return false;
     try {
-      const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq Reflux.exe" /NH');
+      const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+      const tasklistExe = `${winDir}\\System32\\tasklist.exe`;
+      const { stdout } = await execAsync(
+        `"${tasklistExe}" /FI "IMAGENAME eq Reflux.exe" /NH`,
+      );
       return stdout.toLowerCase().includes('reflux.exe');
-    } catch {
-      return false;
+    } catch (e) {
+      console.warn('[reflux] tasklist 실행 실패:', (e as Error).message);
+      // tasklist 가 못 돌면 살아있는지 모름 — 안전하게 "alive" 로 가정해서 무한 spawn 방지
+      return true;
     }
   }
 
