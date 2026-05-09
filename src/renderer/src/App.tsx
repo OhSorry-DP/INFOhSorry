@@ -5,6 +5,7 @@ import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
 import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
 import {
+  buildExhRecs,
   buildRecsWithPool,
   STAGE_THRESHOLD,
   type RecCandidate,
@@ -22,7 +23,7 @@ import { uploadProfile } from './supabaseSync';
 import { IS_BROWSER_REMOTE } from './api';
 
 // 빌드 시 package.json 의 version 으로 채워짐 (electron-vite define 또는 hardcode 갱신)
-const APP_VERSION = '0.0.11';
+const APP_VERSION = '0.0.12';
 // Supabase 자동 업로드 주기 — 값 바뀔때마다 하면 트래픽/노이즈 부담이라 3분에 한 번.
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
 const SUPABASE_INTERVAL_MS = 3 * 60 * 1000;
@@ -307,6 +308,7 @@ export default function App() {
           lamp: c.lamp,
           lampNum: lampNum(c.lamp),
           djLevel: c.letter || null,
+          missCount: typeof c.missCount === 'number' ? c.missCount : null,
           ec: e.ec,
           hc: e.hc,
           exh: e.exh,
@@ -450,7 +452,7 @@ export default function App() {
     const threshold = STAGE_THRESHOLD[stage];
     const map = new Map<string, RecInputChart>();
     for (const c of charts) map.set(c.title + '|' + c.slot, c);
-    // picked: 클리어된 곡만 제거. lamp 가 실제로 바뀐 경우만 새 객체 생성 (identity 보존).
+    // picked: 클리어된 곡만 제거. lamp / missCount 가 바뀐 경우만 새 객체 생성 (identity 보존).
     let droppedCount = 0;
     let pickedChanged = false;
     const updatedPicked: RecCandidate[] = [];
@@ -462,8 +464,8 @@ export default function App() {
           pickedChanged = true;
           continue;
         }
-        if (c.lamp !== r.currentLamp) {
-          updatedPicked.push({ ...r, currentLamp: c.lamp });
+        if (c.lamp !== r.currentLamp || c.missCount !== r.missCount) {
+          updatedPicked.push({ ...r, currentLamp: c.lamp, missCount: c.missCount });
           pickedChanged = true;
         } else {
           updatedPicked.push(r); // 변화 없음 → 같은 ref 재사용
@@ -481,8 +483,8 @@ export default function App() {
           poolChanged = true;
           continue;
         }
-        if (c.lamp !== r.currentLamp) {
-          updatedPool.push({ ...r, currentLamp: c.lamp });
+        if (c.lamp !== r.currentLamp || c.missCount !== r.missCount) {
+          updatedPool.push({ ...r, currentLamp: c.lamp, missCount: c.missCount });
           poolChanged = true;
         } else {
           updatedPool.push(r);
@@ -502,8 +504,21 @@ export default function App() {
     if (!pickedChanged && !poolChanged) {
       return prev;
     }
-    // 변화 있을 때만 정렬 — 전체 10곡 ★ asc 통합 정렬 (카테고리 무관)
-    updatedPicked.sort((a, b) => a.diffValue - b.diffValue);
+    // 변화 있을 때만 정렬:
+    //   EC/HC — diffValue (★) asc
+    //   EXH   — missCount asc (null 뒤로) — buildExhRecs 와 동일한 순서 유지
+    if (stage === 'exh') {
+      updatedPicked.sort((a, b) => {
+        const ma = a.missCount;
+        const mb = b.missCount;
+        if (ma == null && mb == null) return 0;
+        if (ma == null) return 1;
+        if (mb == null) return -1;
+        return ma - mb;
+      });
+    } else {
+      updatedPicked.sort((a, b) => a.diffValue - b.diffValue);
+    }
     return { picked: updatedPicked, pool: updatedPool };
   }
 
@@ -529,7 +544,8 @@ export default function App() {
     if (!dp12Match || !dp12StarResult) return;
     if (lastRerollEXH.current !== rerollEXH) {
       lastRerollEXH.current = rerollEXH;
-      setRecsEXH(buildRecsWithPool(dp12Match.charts, dp12StarResult.star, 'exh'));
+      // EXH 는 ohSorry 스타일 별도 로직 — ★ 낮은 30곡 → missCount 낮은 순 10곡
+      setRecsEXH(buildExhRecs(dp12Match.charts, dp12StarResult.star));
     } else {
       setRecsEXH((prev) => refreshRecs(prev, 'exh', dp12Match.charts));
     }
@@ -812,16 +828,23 @@ function RecCard({
                       ? '하드 도전'
                       : r.category === 'challenge-easy'
                       ? '약 도전'
+                      : r.category === 'exh-near'
+                      ? `BP ${r.missCount ?? '?'} — 다음에 통과 후보`
                       : '정리'
                   }
                 >
-                  {r.category === 'cleanup' ? '↓' : '↑'}
+                  {r.category === 'exh-near' ? '⚡' : r.category === 'cleanup' ? '↓' : '↑'}
                 </span>
                 <span className="rec-title">{r.title}</span>
                 <span className="rec-diff" style={{ color: DIFF_COLOR[r.diff] || '#888' }}>
                   {r.diff[0]}
                 </span>
                 <span className="rec-stagestar">★{r.diffValue.toFixed(2)}</span>
+                {r.category === 'exh-near' && (
+                  <span className="rec-misscount" title="미스 카운트 (BP)">
+                    BP{r.missCount ?? '?'}
+                  </span>
+                )}
                 <span className="rec-lamp" style={{ color: ls.color }}>
                   {ls.label}
                 </span>

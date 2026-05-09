@@ -1259,6 +1259,15 @@ body {
   color: var(--text-disabled);
   margin-right: 2px;
 }
+/* EXH 추천 — BP (미스카운트) 배지. ohSorry 스타일 EXH 만 표시 */
+.rec-row .rec-misscount {
+  order: 4;
+  flex-shrink: 0;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+  margin-left: 2px;
+}
 
 /* ----- DP ☆12 격자 정렬 토글 — 우측 정렬, 박스 X, 텍스트 only ----- */
 .dp12-sort {

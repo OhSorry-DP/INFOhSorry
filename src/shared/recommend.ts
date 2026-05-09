@@ -24,6 +24,7 @@ export interface RecInputChart {
   lamp: Lamp;
   lampNum: number;
   djLevel: string | null; // DJ Level (AAA/AA/A/B/C/D/E/F) — v3.2.6 djLevel boost 에 사용
+  missCount: number | null; // BP — Reflux tracker.tsv 에서 가져옴 (EXH 추천 정렬용)
   ec: number | null;
   hc: number | null;
   exh: number | null;
@@ -38,6 +39,7 @@ export interface RecCandidate {
   diff: string;
   level: number;
   currentLamp: Lamp;
+  missCount: number | null;
   ec: number | null;
   hc: number | null;
   exh: number | null;
@@ -47,7 +49,7 @@ export interface RecCandidate {
   diffValue: number; // 해당 stage 의 ★
   diffCount: number; // 해당 stage 의 클리어 인구수 (정렬용)
   margin: number; // baseStar - diffValue (음수면 도전, 양수면 정리)
-  category: 'challenge-hard' | 'challenge-easy' | 'cleanup';
+  category: 'challenge-hard' | 'challenge-easy' | 'cleanup' | 'exh-near';
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';
@@ -139,6 +141,7 @@ export function buildRecsWithPool(
       diff: c.diff,
       level: c.level,
       currentLamp: c.lamp,
+      missCount: c.missCount,
       ec: c.ec,
       hc: c.hc,
       exh: c.exh,
@@ -214,4 +217,54 @@ export function buildRecs(
   stage: RecStage,
 ): RecCandidate[] {
   return buildRecsWithPool(matched, baseStar, stage).picked;
+}
+
+// EXH 전용 추천 — ohSorry 의 buildExhRecs 포팅.
+//   EXH 미클리어 (lampNum < 6) AND EXH ★ ≤ baseStar (자기 실력 이하) 후보 풀에서:
+//     1. EXH ★ 오름차순 → top 30 (가장 쉬운 30곡)
+//     2. missCount (BP) 오름차순, null 은 뒤 → top 10
+//   "거의 통과한 곡" 우선 — 다음 도전에 클리어 확률 높은 것부터.
+//   refresh 시 보충용으로 picked 외 후보를 pool 에 보관.
+export function buildExhRecs(
+  matched: RecInputChart[],
+  baseStar: number,
+): { picked: RecCandidate[]; pool: RecCandidate[] } {
+  if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
+  const candidates: RecCandidate[] = [];
+  for (const c of matched) {
+    if (c.lampNum >= 6) continue; // EXH 클리어한 곡 제외
+    if (typeof c.exh !== 'number') continue;
+    if (c.exh > baseStar) continue; // 자기 실력 위 곡 제외
+    candidates.push({
+      title: c.title,
+      slot: c.slot,
+      diff: c.diff,
+      level: c.level,
+      currentLamp: c.lamp,
+      missCount: c.missCount,
+      ec: c.ec,
+      hc: c.hc,
+      exh: c.exh,
+      ec_n: c.ec_n,
+      hc_n: c.hc_n,
+      exh_n: c.exh_n,
+      diffValue: c.exh,
+      diffCount: typeof c.exh_n === 'number' ? c.exh_n : 0,
+      margin: baseStar - c.exh,
+      category: 'exh-near',
+    });
+  }
+  // 1. EXH ★ 낮은 순 → top 30
+  candidates.sort((a, b) => a.diffValue - b.diffValue);
+  const top30 = candidates.slice(0, 30);
+  // 2. missCount 낮은 순 (null 은 뒤로)
+  top30.sort((a, b) => {
+    const ma = a.missCount;
+    const mb = b.missCount;
+    if (ma == null && mb == null) return 0;
+    if (ma == null) return 1;
+    if (mb == null) return -1;
+    return ma - mb;
+  });
+  return { picked: top30.slice(0, 10), pool: top30.slice(10) };
 }
