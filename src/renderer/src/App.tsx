@@ -352,45 +352,66 @@ export default function App() {
     const threshold = STAGE_THRESHOLD[stage];
     const map = new Map<string, RecInputChart>();
     for (const c of charts) map.set(c.title + '|' + c.slot, c);
-    // picked: 클리어된 곡만 제거 (map 에 없으면 이전 rec 그대로 유지 — 일시적 매칭 변동 방어).
+    // picked: 클리어된 곡만 제거. lamp 가 실제로 바뀐 경우만 새 객체 생성 (identity 보존).
     let droppedCount = 0;
+    let pickedChanged = false;
     const updatedPicked: RecCandidate[] = [];
     for (const r of prev.picked) {
       const c = map.get(r.title + '|' + r.slot);
       if (c) {
         if (c.lampNum >= threshold) {
           droppedCount++;
+          pickedChanged = true;
           continue;
         }
-        updatedPicked.push({ ...r, currentLamp: c.lamp });
+        if (c.lamp !== r.currentLamp) {
+          updatedPicked.push({ ...r, currentLamp: c.lamp });
+          pickedChanged = true;
+        } else {
+          updatedPicked.push(r); // 변화 없음 → 같은 ref 재사용
+        }
       } else {
-        // 매칭 안 됨 — 이전 정보 그대로 유지 (false-drop 방지)
-        updatedPicked.push(r);
+        updatedPicked.push(r); // 매칭 안 됨 — 이전 그대로
       }
     }
+    let poolChanged = false;
     const updatedPool: RecCandidate[] = [];
     for (const r of prev.pool) {
       const c = map.get(r.title + '|' + r.slot);
       if (c) {
-        if (c.lampNum >= threshold) continue;
-        updatedPool.push({ ...r, currentLamp: c.lamp });
+        if (c.lampNum >= threshold) {
+          poolChanged = true;
+          continue;
+        }
+        if (c.lamp !== r.currentLamp) {
+          updatedPool.push({ ...r, currentLamp: c.lamp });
+          poolChanged = true;
+        } else {
+          updatedPool.push(r);
+        }
       } else {
         updatedPool.push(r);
       }
     }
-    // 클리어로 빠진 만큼만 풀에서 보충 (강제 10개 채우기 X — picked 가 줄어들면 그대로 둠)
+    // 클리어로 빠진 만큼만 풀에서 보충
     while (droppedCount > 0 && updatedPool.length > 0) {
       const next = updatedPool.shift();
       if (next) updatedPicked.push(next);
       droppedCount--;
+      poolChanged = true;
     }
-    // 정렬은 picked 가 실제로 변경된 경우만 (성능 + identity 보존)
-    if (updatedPicked.length !== prev.picked.length || updatedPicked.some((r, i) => r !== prev.picked[i])) {
-      updatedPicked.sort((a, b) => {
-        if (a.category !== b.category) return a.category === 'challenge' ? -1 : 1;
-        return b.diffValue - a.diffValue;
-      });
+    // 변화 없으면 prev state ref 그대로 반환 → setRecs 가 noop, React 재렌더 안 함
+    if (!pickedChanged && !poolChanged) {
+      return prev;
     }
+    // 변화 있을 때만 정렬 — 카테고리 순서: challenge-hard → challenge-easy → cleanup, 각 그룹 내 ★ asc
+    const catOrder = (c: RecCandidate['category']): number =>
+      c === 'challenge-hard' ? 0 : c === 'challenge-easy' ? 1 : 2;
+    updatedPicked.sort((a, b) => {
+      const co = catOrder(a.category) - catOrder(b.category);
+      if (co !== 0) return co;
+      return a.diffValue - b.diffValue;
+    });
     return { picked: updatedPicked, pool: updatedPool };
   }
 
@@ -602,16 +623,21 @@ function RecCard({
   onReroll: () => void;
 }): JSX.Element {
   const info = STAGE_INFO[stage];
-  // 모바일에서만 collapsible — 데스크탑은 항상 펴진 상태로 고정 (toggle 비활성).
+  // 모바일에서만 collapsible. uncontrolled — 초기 open 만 ref 로 설정, 이후 React 가 안 건드림.
+  // (controlled 로 하면 polling re-render 가 사용자 토글을 덮어쓰는 race condition 발생)
   const [isMobile] = useState(() =>
     typeof window !== 'undefined' && window.matchMedia('(max-width: 768px)').matches,
   );
-  const [openMobile, setOpenMobile] = useState(false);
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    if (detailsRef.current) {
+      detailsRef.current.open = !isMobile; // PC 펼침, 모바일 접힘
+    }
+  }, [isMobile]);
   return (
     <details
+      ref={detailsRef}
       className="rec-card"
-      open={isMobile ? openMobile : true}
-      onToggle={isMobile ? (e) => setOpenMobile(e.currentTarget.open) : undefined}
       style={{ borderTop: `3px solid ${info.color}` }}
     >
       <summary
@@ -643,8 +669,17 @@ function RecCard({
             const ls = lampStyle(r.currentLamp);
             return (
               <li key={`${r.title}|${r.slot}`} className={`rec-row rec-${r.category}`}>
-                <span className="rec-cat" title={r.category === 'challenge' ? '도전' : '정리'}>
-                  {r.category === 'challenge' ? '↑' : '↓'}
+                <span
+                  className="rec-cat"
+                  title={
+                    r.category === 'challenge-hard'
+                      ? '하드 도전'
+                      : r.category === 'challenge-easy'
+                      ? '약 도전'
+                      : '정리'
+                  }
+                >
+                  {r.category === 'cleanup' ? '↓' : '↑'}
                 </span>
                 <span className="rec-title">{r.title}</span>
                 <span className="rec-diff" style={{ color: DIFF_COLOR[r.diff] || '#888' }}>
