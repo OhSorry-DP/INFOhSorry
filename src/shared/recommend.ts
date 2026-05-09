@@ -62,10 +62,35 @@ export function challengeOffset(baseStar: number): number {
   return 1.0 - ((baseStar - 0.5) * 0.7) / 13.5;
 }
 
-// 약 도전 (low challenge) 범위 — baseStar ~ baseStar + 0.2 (고정)
-const EASY_CHALLENGE_WIDTH = 0.2;
-// 하드 도전 (high challenge) 범위 — baseStar+offset-0.3 ~ baseStar+offset (고정 0.3 폭)
-const HARD_CHALLENGE_WIDTH = 0.3;
+// 풀 범위 — stage 별로 다름.
+//   HC / EXH (기본):
+//     easy  = [base,            base + 0.2]                  (폭 0.2, base 위)
+//     hard  = [base + offset - 0.3, base + offset]           (폭 0.3, offset top)
+//     cleanup = [0, base)                                    (if-else 순서로 자동)
+//   EC (살짝 아래로 시프트):
+//     easy  = [base - 0.1,      base + 0.1]                  (폭 0.2, base 중심)
+//     hard  = [base + offset - 0.4, base + offset - 0.1]     (폭 0.3, offset 보다 0.1 아래)
+//     cleanup = [0, base - 0.1)                              (if-else 순서로 자동)
+function poolBounds(
+  baseStar: number,
+  offset: number,
+  stage: RecStage,
+): { hardMin: number; hardMax: number; easyMin: number; easyMax: number } {
+  if (stage === 'ec') {
+    return {
+      hardMin: baseStar + offset - 0.4,
+      hardMax: baseStar + offset - 0.1,
+      easyMin: baseStar - 0.1,
+      easyMax: baseStar + 0.1,
+    };
+  }
+  return {
+    hardMin: baseStar + offset - 0.3,
+    hardMax: baseStar + offset,
+    easyMin: baseStar,
+    easyMax: baseStar + 0.2,
+  };
+}
 
 function shuffle<T>(arr: T[]): T[] {
   const a = arr.slice();
@@ -96,11 +121,8 @@ export function buildRecsWithPool(
   const offset = challengeOffset(baseStar);
   const countField = (stage + '_n') as 'ec_n' | 'hc_n' | 'exh_n';
 
-  // 범위 정의
-  const hardMax = baseStar + offset;
-  const hardMin = baseStar + offset - HARD_CHALLENGE_WIDTH;
-  const easyMax = baseStar + EASY_CHALLENGE_WIDTH;
-  const easyMin = baseStar;
+  // 범위 정의 — stage 별 분기 (EC 는 살짝 아래로 시프트)
+  const { hardMin, hardMax, easyMin, easyMax } = poolBounds(baseStar, offset, stage);
 
   const hardPool: RecCandidate[] = [];
   const easyPool: RecCandidate[] = [];

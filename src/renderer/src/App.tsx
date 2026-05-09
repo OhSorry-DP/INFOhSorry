@@ -22,7 +22,7 @@ import { uploadProfile } from './supabaseSync';
 import { IS_BROWSER_REMOTE } from './api';
 
 // 빌드 시 package.json 의 version 으로 채워짐 (electron-vite define 또는 hardcode 갱신)
-const APP_VERSION = '0.0.10';
+const APP_VERSION = '0.0.11';
 // Supabase 자동 업로드 주기 — 값 바뀔때마다 하면 트래픽/노이즈 부담이라 3분에 한 번.
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
 const SUPABASE_INTERVAL_MS = 3 * 60 * 1000;
