@@ -91,6 +91,11 @@ if (!IS_HOST) {
       status: () => callIpc('ereter:status') as ReturnType<Window['infohsorry']['ereter']['status']>,
       dataPath: () => callIpc('ereter:dataPath') as Promise<string>,
     },
+    zasa: {
+      get: (force?: boolean) =>
+        callIpc('zasa:get', force) as ReturnType<Window['infohsorry']['zasa']['get']>,
+      status: () => callIpc('zasa:status') as ReturnType<Window['infohsorry']['zasa']['status']>,
+    },
     saveImage: browserDownloadPng,
     probe: (exeName: string) => callIpc('memory:probe', exeName) as Promise<ProbeResult>,
   };

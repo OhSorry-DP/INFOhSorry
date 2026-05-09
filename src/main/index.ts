@@ -8,6 +8,7 @@ import {
   getCacheStatus as getEreterCacheStatus,
   getDataPath as getEreterDataPath,
 } from './ereter';
+import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
 import { startHttpServer } from './http-server';
 
 let mainWindow: BrowserWindow | null = null;
@@ -69,6 +70,18 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   },
   'ereter:status': async () => getEreterCacheStatus(),
   'ereter:dataPath': async () => getEreterDataPath(),
+
+  // zasa (보충용 ☆12 난이도표 — DP12 격자 표 미분류 곡 fallback 매칭)
+  'zasa:get': async (...args: never[]) => {
+    const force = (args[0] as boolean | undefined) ?? false;
+    try {
+      const data = await getZasaData(force);
+      return { ok: true, data };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  },
+  'zasa:status': async () => getZasaCacheStatus(),
 
   // TSV
   'tsv:read': async (...args: never[]) => {

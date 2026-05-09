@@ -150,3 +150,29 @@ export interface EreterCacheStatus {
   isStale: boolean;
   exists: boolean;
 }
+
+// zasa.sakura.ne.jp 보충 데이터 — DP12 격자 표 미분류 곡 fallback 매칭용.
+export interface ZasaChart {
+  title: string;
+  diff: string; // 'HYPER' | 'ANOTHER' | 'LEGGENDARIA'
+  level: number;
+}
+
+export interface ZasaData {
+  extractedAt: string;
+  source: string;
+  count: number;
+  charts: ZasaChart[];
+}
+
+export interface ZasaGetResult {
+  ok: boolean;
+  error?: string;
+  data?: ZasaData;
+}
+
+export interface ZasaCacheStatus {
+  mtime: number | null;
+  isStale: boolean;
+  exists: boolean;
+}

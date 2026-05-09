@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { EreterCacheStatus, EreterData, RefluxState, SongRow } from '../../shared/types';
+import type { EreterCacheStatus, EreterData, RefluxState, SongRow, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
@@ -55,6 +55,9 @@ export default function App() {
   const [ereterBusy, setEreterBusy] = useState(false);
   const [ereterData, setEreterData] = useState<EreterData | null>(null);
 
+  // zasa 보충 데이터 (DP12 격자 미분류 fallback)
+  const [zasaData, setZasaData] = useState<ZasaData | null>(null);
+
   // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
   // Reflux 가 설치돼있으면 무조건 자동 시작 (5분 health check 가 떴는지 계속 확인).
   // 미설치면 "데이터 불러오기" 버튼으로 사용자가 직접 install 트리거.
@@ -92,6 +95,18 @@ export default function App() {
       } else {
         const r = await window.infohsorry.ereter.get(false);
         if (r.ok && r.data) setEreterData(r.data);
+      }
+    })();
+  }, []);
+
+  // 마운트 시 zasa 보충 데이터 자동 fetch (실패해도 무시 — DP12 격자 미분류 fallback 만 영향)
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await window.infohsorry.zasa.get(false);
+        if (r.ok && r.data) setZasaData(r.data);
+      } catch {
+        /* ignore */
       }
     })();
   }, []);
@@ -168,16 +183,28 @@ export default function App() {
   }, [rows, tab]);
 
   // DP ☆12 차트만 추출 (별값 추정 모델 input 의 prep)
-  // ereter 매칭되는 차트는 ereterLevel (★ 소수) 도 추가
+  // 매칭 우선순위: ereter ★ → zasa ★ (둘 다 없으면 미분류).
+  // zasa 만 매칭된 차트는 추천 / ★값 추정엔 사용 X — DP12 격자 분류만 영향.
   const dp12Charts = useMemo(() => {
     const charts = extractCharts(rows, { slots: DP_SLOTS, level: 12 });
-    if (!ereterData) return charts;
-    const idx = buildEreterIndex(ereterData.charts).index;
+    if (!ereterData && !zasaData) return charts;
+    const ereterIdx = ereterData ? buildEreterIndex(ereterData.charts).index : null;
+    // zasa 인덱스 — 같은 키 형식 (norm(title) + '|' + diff)
+    const zasaIdx = new Map<string, { level: number }>();
+    if (zasaData) {
+      for (const z of zasaData.charts) {
+        zasaIdx.set(norm(z.title) + '|' + z.diff, { level: z.level });
+      }
+    }
     return charts.map((c) => {
-      const e = idx.get(norm(c.title) + '|' + slotToDiff(c.slot));
-      return e ? { ...c, ereterLevel: e.level } : c;
+      const key = norm(c.title) + '|' + slotToDiff(c.slot);
+      const e = ereterIdx?.get(key);
+      if (e) return { ...c, ereterLevel: e.level };
+      const z = zasaIdx.get(key);
+      if (z) return { ...c, ereterLevel: z.level };
+      return c;
     });
-  }, [rows, ereterData]);
+  }, [rows, ereterData, zasaData]);
 
   // INFINITAS DP 차트 + ereter ★ 매칭 (★11.6~12.7 = LEVEL 12 만)
   // 별값 추정 / 추천곡의 단일 source.
@@ -188,18 +215,43 @@ export default function App() {
     let matched = 0;
     let unmatched = 0;
     const unmatchedSamples: string[] = [];
+    const unmatchedAll: {
+      title: string;
+      diff: string;
+      lamp: string;
+      normKey: string;
+      ereterCandidates: string[];
+    }[] = [];
+
+    // 곡명 norm → ereter 등록된 모든 차트 인덱스 (미매칭 진단용)
+    const ereterByTitleNorm = new Map<string, string[]>();
+    for (const e of ereterData.charts) {
+      const k = norm(e.title);
+      if (!ereterByTitleNorm.has(k)) ereterByTitleNorm.set(k, []);
+      ereterByTitleNorm.get(k)!.push(`${e.title} [${e.diff}] ★${e.level}`);
+    }
     for (const r of rows) {
       for (const slot of DP_SLOTS) {
         const c = r.charts[slot];
         if (!c) continue;
         // INFINITAS LEVEL 12 만 대상 — LEVEL 1~11 차트는 ereter 매칭 시도조차 X
         if (c.level !== 12) continue;
-        const e = idx.get(norm(r.title) + '|' + slotToDiff(slot));
+        const diff = slotToDiff(slot);
+        const normKey = norm(r.title) + '|' + diff;
+        const e = idx.get(normKey);
         if (!e) {
           if (c.unlocked && c.lamp !== 'NP') {
             unmatched++;
+            const titleK = norm(r.title);
+            unmatchedAll.push({
+              title: r.title,
+              diff,
+              lamp: c.lamp,
+              normKey,
+              ereterCandidates: ereterByTitleNorm.get(titleK) ?? [],
+            });
             if (unmatchedSamples.length < 10) {
-              unmatchedSamples.push(`${r.title} [${slotToDiff(slot)}] (lamp=${c.lamp})`);
+              unmatchedSamples.push(`${r.title} [${diff}] (lamp=${c.lamp})`);
             }
           }
           continue;
@@ -209,7 +261,7 @@ export default function App() {
         charts.push({
           title: r.title,
           slot,
-          diff: slotToDiff(slot),
+          diff,
           level: e.level,
           lamp: c.lamp,
           lampNum: lampNum(c.lamp),
@@ -223,7 +275,33 @@ export default function App() {
         });
       }
     }
-    return { charts, matched, unmatched, unmatchedSamples };
+    // dev 디버그: 미매칭 곡 전체 목록 + ereter 의 norm 키 후보 console 출력
+    if (unmatchedAll.length > 0) {
+      console.group(`[dp12Match] 미매칭 ${unmatchedAll.length}곡 (★12 + 시도한 곡)`);
+      console.log(unmatchedAll.map((u) => `${u.title} [${u.diff}] (lamp=${u.lamp})`).join('\n'));
+      // 같은 곡명의 ereter 후보 — diff 종류는 다를 수 있음
+      const titleNorm = new Map<string, string[]>();
+      for (const e of ereterData.charts) {
+        const k = norm(e.title);
+        if (!titleNorm.has(k)) titleNorm.set(k, []);
+        titleNorm.get(k)!.push(`${e.title} [${e.diff}] ★${e.level}`);
+      }
+      console.group('미매칭 곡명별 — ereter 동일 norm 후보 (있으면 다른 diff 가능성, 없으면 ereter 미등록)');
+      for (const u of unmatchedAll) {
+        const tk = u.normKey.split('|')[0];
+        const cands = titleNorm.get(tk);
+        if (cands && cands.length > 0) {
+          console.log(`  '${u.title}' [${u.diff}] → ereter 후보: ${cands.join(' / ')}`);
+        } else {
+          console.log(`  '${u.title}' [${u.diff}] → ereter 곡명 자체 없음 (norm '${tk}')`);
+        }
+      }
+      console.groupEnd();
+      console.groupEnd();
+      // 전역 노출 (개발자가 console 에서 window.__dp_unmatched 로 다시 볼 수 있게)
+      (window as unknown as { __dp_unmatched: typeof unmatchedAll }).__dp_unmatched = unmatchedAll;
+    }
+    return { charts, matched, unmatched, unmatchedSamples, unmatchedAll };
   }, [rows, ereterData]);
 
   // 별값 추정 input — dp12Match 에서 derive
@@ -274,32 +352,45 @@ export default function App() {
     const threshold = STAGE_THRESHOLD[stage];
     const map = new Map<string, RecInputChart>();
     for (const c of charts) map.set(c.title + '|' + c.slot, c);
-    // picked: lamp 갱신 + 클리어 (lampNum >= threshold) 된 곡 제거
+    // picked: 클리어된 곡만 제거 (map 에 없으면 이전 rec 그대로 유지 — 일시적 매칭 변동 방어).
+    let droppedCount = 0;
     const updatedPicked: RecCandidate[] = [];
     for (const r of prev.picked) {
       const c = map.get(r.title + '|' + r.slot);
-      if (!c) continue;
-      if (c.lampNum >= threshold) continue;
-      updatedPicked.push({ ...r, currentLamp: c.lamp });
+      if (c) {
+        if (c.lampNum >= threshold) {
+          droppedCount++;
+          continue;
+        }
+        updatedPicked.push({ ...r, currentLamp: c.lamp });
+      } else {
+        // 매칭 안 됨 — 이전 정보 그대로 유지 (false-drop 방지)
+        updatedPicked.push(r);
+      }
     }
-    // pool: 동일하게 cleared 제거
     const updatedPool: RecCandidate[] = [];
     for (const r of prev.pool) {
       const c = map.get(r.title + '|' + r.slot);
-      if (!c) continue;
-      if (c.lampNum >= threshold) continue;
-      updatedPool.push({ ...r, currentLamp: c.lamp });
+      if (c) {
+        if (c.lampNum >= threshold) continue;
+        updatedPool.push({ ...r, currentLamp: c.lamp });
+      } else {
+        updatedPool.push(r);
+      }
     }
-    // picked 가 10개 미만이면 풀에서 채움
-    while (updatedPicked.length < 10 && updatedPool.length > 0) {
+    // 클리어로 빠진 만큼만 풀에서 보충 (강제 10개 채우기 X — picked 가 줄어들면 그대로 둠)
+    while (droppedCount > 0 && updatedPool.length > 0) {
       const next = updatedPool.shift();
       if (next) updatedPicked.push(next);
+      droppedCount--;
     }
-    // 표시 순서 유지: 도전 (★ desc) → 정리 (★ desc)
-    updatedPicked.sort((a, b) => {
-      if (a.category !== b.category) return a.category === 'challenge' ? -1 : 1;
-      return b.diffValue - a.diffValue;
-    });
+    // 정렬은 picked 가 실제로 변경된 경우만 (성능 + identity 보존)
+    if (updatedPicked.length !== prev.picked.length || updatedPicked.some((r, i) => r !== prev.picked[i])) {
+      updatedPicked.sort((a, b) => {
+        if (a.category !== b.category) return a.category === 'challenge' ? -1 : 1;
+        return b.diffValue - a.diffValue;
+      });
+    }
     return { picked: updatedPicked, pool: updatedPool };
   }
 
@@ -424,6 +515,7 @@ export default function App() {
                   matchedNonNp={dp12Match?.charts.filter((c) => c.lampNum > 0).length ?? 0}
                   ereterReady={!!ereterData}
                   unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
+                  unmatchedAll={dp12Match?.unmatchedAll ?? []}
                   ereterStatus={ereterStatus}
                   ereterBusy={ereterBusy}
                   onRefreshEreter={() => refreshEreter(true)}
@@ -589,6 +681,7 @@ function StarPanel({
   matchedNonNp,
   ereterReady,
   unmatchedSamples,
+  unmatchedAll,
   ereterStatus,
   ereterBusy,
   onRefreshEreter,
@@ -600,6 +693,13 @@ function StarPanel({
   matchedNonNp: number;
   ereterReady: boolean;
   unmatchedSamples: string[];
+  unmatchedAll: {
+    title: string;
+    diff: string;
+    lamp: string;
+    normKey: string;
+    ereterCandidates: string[];
+  }[];
   ereterStatus: EreterCacheStatus | null;
   ereterBusy: boolean;
   onRefreshEreter: () => void;
@@ -663,15 +763,56 @@ function StarPanel({
             {result.djBoostInfo &&
               ` (M lamp=EC, djLv=${result.djBoostInfo.djLevel}, gap=${result.djBoostInfo.gap.toFixed(2)})`}
           </li>
-          {unmatchedSamples.length > 0 && (
+          {unmatchedAll.length > 0 && (
             <li>
-              미매칭 샘플 ({unmatchedSamples.length}건):
+              미매칭 ({unmatchedAll.length}건){' '}
+              <button
+                className="star-ereter-btn"
+                onClick={() => {
+                  // JSON 복사 — 진단 정보 포함 (ereter 후보 / 키)
+                  const json = JSON.stringify(unmatchedAll, null, 2);
+                  void navigator.clipboard
+                    .writeText(json)
+                    .then(() =>
+                      alert(`미매칭 ${unmatchedAll.length}건 클립보드 복사 완료 (JSON, ereter 후보 포함)`),
+                    )
+                    .catch((e) => alert('복사 실패: ' + (e as Error).message));
+                }}
+              >
+                📋 JSON 복사
+              </button>{' '}
+              <button
+                className="star-ereter-btn"
+                onClick={async () => {
+                  const json = JSON.stringify(unmatchedAll, null, 2);
+                  // electron 환경: saveImage 활용 어려우니 a 태그 다운로드
+                  const blob = new Blob([json], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `unmatched-${new Date()
+                    .toISOString()
+                    .replace(/[:T.]/g, '-')
+                    .replace('Z', '')}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  a.remove();
+                  setTimeout(() => URL.revokeObjectURL(url), 1000);
+                }}
+              >
+                💾 JSON 저장
+              </button>
               <ul>
                 {unmatchedSamples.map((s) => (
                   <li key={s} style={{ color: '#888' }}>
                     {s}
                   </li>
                 ))}
+                {unmatchedAll.length > unmatchedSamples.length && (
+                  <li style={{ color: '#aaa', fontSize: 11 }}>
+                    ... 외 {unmatchedAll.length - unmatchedSamples.length}건 (위 버튼으로 전체 받기)
+                  </li>
+                )}
               </ul>
             </li>
           )}

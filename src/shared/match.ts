@@ -9,11 +9,46 @@ export function norm(s: string): string {
   return (s || '')
     .toLowerCase()
     .replace(/[\s　]+/g, '')
+    // 틸드 종류 (ASCII / 수학 / 일본 wave dash / fullwidth)
     .replace(/[~∼〜～]/g, '~')
     .replace(/[!！]/g, '!')
     .replace(/[?？]/g, '?')
-    .replace(/[（(]/g, '(')
-    .replace(/[）)]/g, ')')
+    .replace(/[(（]/g, '(')
+    .replace(/[)）]/g, ')')
+    // 더블 쿼터 종류 → ASCII " (U+201C/D 좌우 / 일본식 〝〞〟 / 독일 „)
+    .replace(/[“”„‟〝〞〟]/g, '"')
+    // 싱글 쿼터 종류 → ASCII ' (U+2018/9 좌우 / U+201A/B 저상부 / backtick / acute)
+    .replace(/[‘’‚‛`´ʼˈˊˋ]/g, "'")
+    // 라틴 확장 → 기본
+    .replace(/ƒ/g, 'f')              // ƒ "FFFFF"
+    .replace(/[Øø]/g, 'o')      // Ø ø "VØID" "ACTØ"
+    .replace(/[Ææ]/g, 'ae')     // Æ æ "Iræ"
+    .replace(/ə/g, 'e')              // ə schwa "uən"
+    .replace(/[Œœ]/g, 'oe')     // Œ œ
+    .replace(/ß/g, 'ss')             // ß
+    // 키릴 → ASCII (homoglyph 으로 쓰인 케이스: "RINИE")
+    .replace(/[Ии]/g, 'n')      // И и
+    .replace(/[Аа]/g, 'a')      // А а
+    .replace(/[Ее]/g, 'e')      // Е е
+    .replace(/[Кк]/g, 'k')      // К к
+    .replace(/[Мм]/g, 'm')      // М м
+    .replace(/[Оо]/g, 'o')      // О о
+    .replace(/[Рр]/g, 'p')      // Р р
+    .replace(/[Сс]/g, 'c')      // С с
+    .replace(/[Тт]/g, 't')      // Т т
+    .replace(/[Хх]/g, 'x')      // Х х
+    // 대시 변종 → ASCII '-' (가타카나 장음 ー U+30FC 는 제외)
+    .replace(/[—–‐‑−]/g, '-')
+    // 장식 기호 / 음악 / 수학 기호 제거
+    .replace(/[♠-♯]/g, '')      // ♠♡♢♣♤♥♦♧♨♩♪♫♬♭♮♯
+    .replace(/[†‡]/g, '')       // † ‡ daggers
+    .replace(/[→←↑↓]/g, '') // ← → ↑ ↓
+    .replace(/[※⁂]/g, '')       // ※ ⁂
+    .replace(/[★☆]/g, '')       // ★ ☆
+    .replace(/[∫∮∂∇∈∞]/g, '') // ∫ ∮ ∂ ∇ ∈ ∞
+    // diacritic 분해 후 라틴 결합 마크 (U+0300~036F) 만 제거 — 일본어 탁점 (U+3099/A) 보존
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
     .normalize('NFKC');
 }
 

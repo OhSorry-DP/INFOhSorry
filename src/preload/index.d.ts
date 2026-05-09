@@ -6,6 +6,8 @@ import type {
   RefluxStartResult,
   EreterGetResult,
   EreterCacheStatus,
+  ZasaGetResult,
+  ZasaCacheStatus,
 } from '../shared/types';
 
 declare global {
@@ -23,6 +25,10 @@ declare global {
         get: (force?: boolean) => Promise<EreterGetResult>;
         status: () => Promise<EreterCacheStatus>;
         dataPath: () => Promise<string>;
+      };
+      zasa: {
+        get: (force?: boolean) => Promise<ZasaGetResult>;
+        status: () => Promise<ZasaCacheStatus>;
       };
       saveImage: (
         data: ArrayBuffer | string,

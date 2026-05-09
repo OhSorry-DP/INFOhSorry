@@ -6,6 +6,8 @@ import type {
   RefluxStartResult,
   EreterGetResult,
   EreterCacheStatus,
+  ZasaGetResult,
+  ZasaCacheStatus,
 } from '../shared/types';
 
 const api = {
@@ -32,6 +34,12 @@ const api = {
     get: (force = false): Promise<EreterGetResult> => ipcRenderer.invoke('ereter:get', force),
     status: (): Promise<EreterCacheStatus> => ipcRenderer.invoke('ereter:status'),
     dataPath: (): Promise<string> => ipcRenderer.invoke('ereter:dataPath'),
+  },
+
+  // zasa.sakura.ne.jp 보충 데이터 (DP12 격자 미분류 곡 fallback)
+  zasa: {
+    get: (force = false): Promise<ZasaGetResult> => ipcRenderer.invoke('zasa:get', force),
+    status: (): Promise<ZasaCacheStatus> => ipcRenderer.invoke('zasa:status'),
   },
 
   // 캡처 이미지 자동 저장 (사진 폴더 / INFOhSorry / *.png)
