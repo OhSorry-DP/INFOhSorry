@@ -70,10 +70,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - 480px 이하에서는 차트 표의 MISS / SCORE-letter 컬럼 숨김 (공간 확보)
 - 입력 필드 16px 폰트 — iOS Safari 자동 확대 방지
 - viewport meta 추가
+- **1시간 stale 체크 제거** — Reflux 가 설치돼있으면 앱 시작 시 무조건 자동 실행
+- **중복 spawn 방지** — 이전 세션의 Reflux.exe 가 살아있으면 새로 spawn 하지 않고 health check 만 시작
 
 ### 0.0.3
 - productName 통일 — `ohSorryScoreINF`
-- 캐시된 tracker.tsv 가 1시간 이상 지났으면 앱 시작 시 자동 Reflux 시작
 - 5분 주기 health check — Reflux.exe 가 죽으면 자동 재시작
 - 4단계 진행 바 → 인라인 스피너 + 한 줄 상태 텍스트로 단순화
 - "TSV 직접 선택" / "폴더 열기" 버튼 제거. "데이터 불러오기" 버튼은 데이터 없거나 미설치일 때만 표시

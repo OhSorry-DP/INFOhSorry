@@ -177,7 +177,13 @@ export class RefluxManager extends EventEmitter {
   private static readonly HEALTH_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
   getState(): RefluxState {
-    return { ...this.state, recentLines: [...this.recentLines] };
+    // installed 는 디스크 exe 존재 여부로도 결정. 앱 부팅 직후 (state.installed=false 기본값)
+    // 라도 이전 세션에서 다운로드돼있으면 true 로 보고됨 → renderer 가 자동 시작 가능.
+    return {
+      ...this.state,
+      installed: this.state.installed || existsSync(exePath()),
+      recentLines: [...this.recentLines],
+    };
   }
 
   private setState(patch: Partial<RefluxState>): void {
@@ -325,6 +331,13 @@ export class RefluxManager extends EventEmitter {
   //   - 그래도 tracker.tsv watch 만으로 'ready' 신호 감지 가능 — 핵심 흐름은 동작.
   private async spawnReflux(): Promise<void> {
     if (this.child) return;
+    // 이미 Reflux.exe 가 떠 있으면 중복 spawn 안 함 (이전 세션에서 살아남은 인스턴스 등).
+    // health check 가 이후 죽음 감지하면 재시작.
+    if (await this.isRefluxAlive()) {
+      this.addLine('(기존 Reflux.exe 감지 — spawn 생략)');
+      this.setState({ spawned: true, stage: 'hooking' });
+      return;
+    }
     this.setState({ stage: 'starting', spawned: false });
 
     // PowerShell Start-Process -WindowStyle Hidden — 콘솔창 작업표시줄에도 안 보임.

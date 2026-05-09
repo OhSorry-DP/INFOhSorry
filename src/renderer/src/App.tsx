@@ -55,7 +55,8 @@ export default function App() {
   const [ereterData, setEreterData] = useState<EreterData | null>(null);
 
   // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
-  // 추가: tracker.tsv 가 1시간 이상 지났으면 자동으로 Reflux 재실행해서 갱신.
+  // Reflux 가 설치돼있으면 무조건 자동 시작 (5분 health check 가 떴는지 계속 확인).
+  // 미설치면 "데이터 불러오기" 버튼으로 사용자가 직접 install 트리거.
   // browser 모드 (LAN) 에서는 window.infohsorry 가 HTTP bridge 로 자동 patch (api.ts).
   useEffect(() => {
     const off = window.infohsorry.reflux.onState((s) => setRefluxState(s));
@@ -71,13 +72,10 @@ export default function App() {
           lastLoadedMtime.current = r.mtime;
           setTsvMtime(r.mtime);
         }
-        // 캐시된 tsv 가 1시간 이상 지났고, Reflux 가 아직 안 떠 있으면 자동 시작.
-        // (Reflux 가 hook 후 게임에서 곡 선택 화면 진입하면 새 tsv 가 dump 됨)
-        const STALE_MS = 60 * 60 * 1000;
-        const tsvAge = r.mtime ? Date.now() - r.mtime : Infinity;
-        if (tsvAge > STALE_MS && !state.spawned) {
-          void window.infohsorry.reflux.start();
-        }
+      }
+      // 설치돼있으면 자동 시작. spawnReflux 가 이미 살아있는 Reflux.exe 감지 시 중복 spawn 안 함.
+      if (state.installed && !state.spawned) {
+        void window.infohsorry.reflux.start();
       }
     })();
     return off;
