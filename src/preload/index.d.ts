@@ -35,6 +35,16 @@ declare global {
         defaultName?: string,
       ) => Promise<{ ok: boolean; path?: string; error?: string }>;
       probe: (exeName: string) => Promise<ProbeResult>;
+      shell: {
+        showInFolder: (path: string) => Promise<{ ok: boolean }>;
+      };
+      window: {
+        minimize: () => Promise<{ ok: boolean }>;
+        maximizeToggle: () => Promise<{ ok: boolean; maximized?: boolean }>;
+        close: () => Promise<{ ok: boolean }>;
+        isMaximized: () => Promise<boolean>;
+        onMaximizedChange: (cb: (maximized: boolean) => void) => () => void;
+      };
     };
   }
 }

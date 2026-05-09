@@ -238,11 +238,6 @@ export default function ChartTable({ rows, style }: Props) {
           <span className="ct-filter-count">
             {charts.length} / {allCharts.length}
           </span>
-          {hasFilter && (
-            <button className="ct-filter-clear" onClick={clearFilters}>
-              Reset
-            </button>
-          )}
         </div>
         {!collapsed && (
           <>
@@ -259,6 +254,22 @@ export default function ChartTable({ rows, style }: Props) {
               ))}
             </div>
             <div className="ct-filter-row">
+              <label className="ct-checkbox ct-hide-locked">
+                <input
+                  type="checkbox"
+                  checked={hideLocked}
+                  onChange={(e) => setHideLocked(e.target.checked)}
+                />
+                Hide Locked
+              </label>
+              {hasFilter && (
+                <button
+                  className="ct-filter-clear ct-filter-clear-desktop"
+                  onClick={clearFilters}
+                >
+                  Reset
+                </button>
+              )}
               <span className="ct-filter-label">LV</span>
               {ALL_LEVELS.map((lv) => (
                 <button
@@ -269,18 +280,18 @@ export default function ChartTable({ rows, style }: Props) {
                   {lv}
                 </button>
               ))}
-              <label className="ct-checkbox ct-hide-locked">
-                <input
-                  type="checkbox"
-                  checked={hideLocked}
-                  onChange={(e) => setHideLocked(e.target.checked)}
-                />
-                Hide Locked
-              </label>
             </div>
           </>
         )}
         <div className="ct-mobile-sort-row">
+          {hasFilter && (
+            <button
+              className="ct-filter-clear ct-filter-clear-mobile"
+              onClick={clearFilters}
+            >
+              Reset
+            </button>
+          )}
           {mobileSortKeys.map((s, i) => {
             const active = sortKey === s.key;
             const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';

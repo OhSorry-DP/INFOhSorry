@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron';
 import { join } from 'path';
 import { readTsv } from './tsv';
 import { findInfinitas, closeHandle } from './memory';
@@ -94,6 +94,31 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
 
+  // 창 컨트롤 (frameless 모드 — 커스텀 헤더 버튼에서 호출)
+  'window:minimize': async () => {
+    mainWindow?.minimize();
+    return { ok: true };
+  },
+  'window:maximize-toggle': async () => {
+    if (!mainWindow) return { ok: false };
+    if (mainWindow.isMaximized()) mainWindow.unmaximize();
+    else mainWindow.maximize();
+    return { ok: true, maximized: mainWindow.isMaximized() };
+  },
+  'window:close': async () => {
+    mainWindow?.close();
+    return { ok: true };
+  },
+  'window:isMaximized': async () => mainWindow?.isMaximized() ?? false,
+
+  // 폴더 열기 (저장된 캡처 파일 위치 보여주기)
+  'shell:showInFolder': async (...args: never[]) => {
+    const path = args[0] as string;
+    if (!path) return { ok: false };
+    shell.showItemInFolder(path);
+    return { ok: true };
+  },
+
   // 진단
   'memory:probe': async (...args: never[]) => {
     const exeName = args[0] as string;
@@ -128,14 +153,27 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
+    minWidth: 520, // 그 이하에선 헤더 / 탭 / 추천 패널 레이아웃이 깨짐
+    minHeight: 400,
     title: 'ohSorryScoreINF',
     icon: join(__dirname, '../../ohsorry.ico'),
+    frame: false,  // 프레임리스 — 헤더에 커스텀 close/min/max 버튼 사용
+    roundedCorners: false,  // Windows 11 기본 라운드 코너 비활성
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
     },
   });
+
+  // 창 상태 변화 → renderer 에 알림 (max ↔ restore 아이콘 토글용)
+  const emitMaxState = (): void => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('window:maximized', mainWindow.isMaximized());
+    }
+  };
+  mainWindow.on('maximize', emitMaxState);
+  mainWindow.on('unmaximize', emitMaxState);
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);

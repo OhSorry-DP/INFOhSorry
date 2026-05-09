@@ -174,12 +174,10 @@ export function buildRecsWithPool(
     }
   }
 
-  // 표시 순서: 하드 도전 (★ asc) → 약 도전 (★ asc) → 정리 (★ asc) → extras (★ asc)
-  hardPicked.sort((a, b) => a.diffValue - b.diffValue);
-  easyPicked.sort((a, b) => a.diffValue - b.diffValue);
-  cleanupPicked.sort((a, b) => a.diffValue - b.diffValue);
-  extras.sort((a, b) => a.diffValue - b.diffValue);
-  const picked = [...hardPicked, ...easyPicked, ...cleanupPicked, ...extras];
+  // 표시 순서: 카테고리 무관, 전체 10곡 ★ asc 통합 정렬
+  const picked = [...hardPicked, ...easyPicked, ...cleanupPicked, ...extras].sort(
+    (a, b) => a.diffValue - b.diffValue,
+  );
 
   // pool = 후보 합집합 - picked 사용분 (보충용)
   const pool = allCandidates.filter((r) => !used.has(keyOf(r)));

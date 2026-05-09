@@ -75,6 +75,8 @@ async function browserDownloadPng(
 
 if (!IS_HOST) {
   // Browser 환경 — window.infohsorry 를 HTTP bridge 로 polyfill
+  // CSS 에서 PC2 모드 분기용 (e.g. WindowControls 자리 padding 제거)
+  document.documentElement.classList.add('browser-remote');
   const onState = makeRefluxStatePoller();
   const bridge: Window['infohsorry'] = {
     readTsv: (path: string) => callIpc('tsv:read', path) as Promise<TsvReadResult>,
@@ -98,6 +100,18 @@ if (!IS_HOST) {
     },
     saveImage: browserDownloadPng,
     probe: (exeName: string) => callIpc('memory:probe', exeName) as Promise<ProbeResult>,
+    shell: {
+      showInFolder: (path: string) =>
+        callIpc('shell:showInFolder', path) as Promise<{ ok: boolean }>,
+    },
+    // 브라우저 원격에선 창 컨트롤 의미 없음 — noop (UI 자체가 안 보일 거지만 안전망)
+    window: {
+      minimize: async () => ({ ok: false }),
+      maximizeToggle: async () => ({ ok: false }),
+      close: async () => ({ ok: false }),
+      isMaximized: async () => false,
+      onMaximizedChange: () => () => {},
+    },
   };
   (window as unknown as { infohsorry: Window['infohsorry'] }).infohsorry = bridge;
   console.log('[api] browser 환경 — HTTP bridge 활성');

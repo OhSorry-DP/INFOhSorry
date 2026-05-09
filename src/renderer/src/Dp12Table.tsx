@@ -44,17 +44,48 @@ type SortBy = 'title' | 'lamp';
 export default function Dp12Table({ charts }: Props) {
   const [sortBy, setSortBy] = useState<SortBy>('title');
   const [capturing, setCapturing] = useState(false);
+  // 캡처 결과 토스트 — 저장 path / 에러 / null (미표시)
+  const [captureToast, setCaptureToast] = useState<
+    { kind: 'success'; path: string } | { kind: 'error'; error: string } | null
+  >(null);
   const gridRef = useRef<HTMLDivElement>(null);
 
   async function captureGrid(): Promise<void> {
     if (!gridRef.current) return;
     setCapturing(true);
+    // 화면 밖에 1200px 폭 임시 컨테이너 만들어서 grid 복제 → 캡처 → 제거
+    // (창 크기와 무관하게 일정한 1200px 폭의 캡처 결과 보장)
+    const bgColor =
+      getComputedStyle(document.documentElement).getPropertyValue('--bg-page').trim() ||
+      '#ffffff';
+    const wrapper = document.createElement('div');
+    wrapper.style.cssText = `
+      position: fixed;
+      left: -10000px;
+      top: 0;
+      width: 1200px;
+      padding: 16px;
+      box-sizing: border-box;
+      background: ${bgColor};
+      z-index: -1;
+      pointer-events: none;
+    `;
+    const clone = gridRef.current.cloneNode(true) as HTMLElement;
+    clone.style.width = '100%';
+    wrapper.appendChild(clone);
+    document.body.appendChild(wrapper);
+    // 두 frame 대기 — 레이아웃 + paint 완료 보장
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(undefined))));
     try {
-      const canvas = await html2canvas(gridRef.current, {
-        backgroundColor: '#ffffff',
-        scale: window.devicePixelRatio || 1,
+      const canvas = await html2canvas(wrapper, {
+        backgroundColor: bgColor,
+        // devicePixelRatio 무관하게 일정한 출력 (PC1 / PC2 모바일 모두 동일 결과)
+        scale: 1,
         useCORS: true,
         logging: false,
+        width: 1200,
+        // 미디어쿼리를 1200px 기준 데스크톱 모드로 평가 — 모바일에서도 데스크톱 레이아웃 캡처
+        windowWidth: 1200,
       });
       const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
       if (!blob) return;
@@ -65,11 +96,12 @@ export default function Dp12Table({ charts }: Props) {
         .replace('Z', '');
       const r = await window.infohsorry.saveImage(buf, `dp12-${ts}.png`);
       if (r.ok && r.path) {
-        alert(`캡처 저장됨\n${r.path}`);
+        setCaptureToast({ kind: 'success', path: r.path });
       } else {
-        alert(`캡처 실패: ${r.error || '알 수 없음'}`);
+        setCaptureToast({ kind: 'error', error: r.error || '알 수 없음' });
       }
     } finally {
+      document.body.removeChild(wrapper);
       setCapturing(false);
     }
   }
@@ -145,6 +177,37 @@ export default function Dp12Table({ charts }: Props) {
           </div>
         ))}
       </div>
+      {captureToast && (
+        <div className="capture-toast" role="status" aria-live="polite">
+          <div className="capture-toast-msg">
+            {captureToast.kind === 'success' ? '캡처 저장됨' : `캡처 실패: ${captureToast.error}`}
+          </div>
+          {captureToast.kind === 'success' && (
+            <div className="capture-toast-path">{captureToast.path}</div>
+          )}
+          <div className="capture-toast-btns">
+            {captureToast.kind === 'success' && (
+              <button
+                type="button"
+                className="capture-toast-btn"
+                onClick={() => {
+                  void window.infohsorry.shell.showInFolder(captureToast.path);
+                  setCaptureToast(null);
+                }}
+              >
+                폴더 열기
+              </button>
+            )}
+            <button
+              type="button"
+              className="capture-toast-btn capture-toast-btn-primary"
+              onClick={() => setCaptureToast(null)}
+            >
+              확인
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

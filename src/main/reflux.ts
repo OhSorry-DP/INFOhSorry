@@ -409,17 +409,22 @@ export class RefluxManager extends EventEmitter {
     }
   }
 
-  // 자식 프로세스 종료 (앱 종료 전 호출)
-  // `cmd /c start` 방식이라 child.pid 는 cmd 의 것. Reflux 본체는 별도 프로세스로 살아있음.
-  // 이름으로 종료: taskkill /F /IM Reflux.exe /T (모든 Reflux.exe 인스턴스 종료)
+  // 자식 프로세스 종료 (앱 종료 전 또는 사용자가 ⏻ 토글로 끌 때 호출)
+  // - health check timer 정리 → 5분 자동 재시작 비활성
+  // - tsv watcher 정리
+  // - taskkill /F /IM Reflux.exe /T (모든 Reflux.exe 인스턴스 종료)
+  // - state 를 idle 로 → UI 가 "꺼짐" 으로 표시
   async stop(): Promise<void> {
     this.stopHealthCheck();
     if (this.tsvWatcher) {
       this.tsvWatcher.close();
       this.tsvWatcher = null;
     }
-    if (process.platform !== 'win32') return;
-    return new Promise((resolve) => {
+    if (process.platform !== 'win32') {
+      this.setState({ spawned: false, stage: 'idle', error: undefined });
+      return;
+    }
+    await new Promise<void>((resolve) => {
       // taskkill 도 PATH 의존 회피 — System32 절대경로로
       const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
       const taskkillExe = `${winDir}\\System32\\taskkill.exe`;
@@ -434,6 +439,8 @@ export class RefluxManager extends EventEmitter {
         resolve();
       });
     });
+    this.setState({ spawned: false, stage: 'idle', error: undefined });
+    this.addLine('(Reflux 종료됨 — 자동 재시작 비활성)');
   }
 
   // 외부 노출 (renderer 가 tsv 직접 읽을 수 있게)

@@ -51,6 +51,28 @@ const api = {
 
   // 진단용 (현재 미사용, 나중에 INFINITAS 실행 감지에 활용)
   probe: (exeName: string): Promise<ProbeResult> => ipcRenderer.invoke('memory:probe', exeName),
+
+  // 셸 액션
+  shell: {
+    showInFolder: (path: string): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('shell:showInFolder', path),
+  },
+
+  // 창 컨트롤 (frameless 모드)
+  window: {
+    minimize: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('window:minimize'),
+    maximizeToggle: (): Promise<{ ok: boolean; maximized?: boolean }> =>
+      ipcRenderer.invoke('window:maximize-toggle'),
+    close: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('window:close'),
+    isMaximized: (): Promise<boolean> => ipcRenderer.invoke('window:isMaximized'),
+    onMaximizedChange: (cb: (maximized: boolean) => void): (() => void) => {
+      const listener = (_evt: unknown, m: boolean): void => cb(m);
+      ipcRenderer.on('window:maximized', listener);
+      return (): void => {
+        ipcRenderer.off('window:maximized', listener);
+      };
+    },
+  },
 };
 
 contextBridge.exposeInMainWorld('infohsorry', api);

@@ -14,6 +14,7 @@ import {
 import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
 import Dp12Table from './Dp12Table';
+import { ThemeToggle, WindowControls } from './theme';
 
 type Tab = 'sp' | 'dp' | 'dp12';
 
@@ -41,7 +42,7 @@ export default function App() {
     spawned: false,
   });
   const [rows, setRows] = useState<SongRow[]>([]);
-  const [tab, setTab] = useState<Tab>('sp');
+  const [tab, setTab] = useState<Tab>('dp');
   const [tsvPath, setTsvPath] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -160,6 +161,21 @@ export default function App() {
       if (!r.ok) setError(r.error || 'Reflux 시작 실패');
     } finally {
       setBusy(false);
+    }
+  }
+
+  // Reflux on/off 토글 — 헤더의 ⏻ 버튼
+  async function toggleReflux(): Promise<void> {
+    const isRunning =
+      refluxState.stage !== 'idle' && refluxState.stage !== 'error';
+    if (isRunning) {
+      try {
+        await window.infohsorry.reflux.stop();
+      } catch (e) {
+        setError((e as Error).message);
+      }
+    } else {
+      void startReflux();
     }
   }
 
@@ -404,14 +420,8 @@ export default function App() {
     if (!pickedChanged && !poolChanged) {
       return prev;
     }
-    // 변화 있을 때만 정렬 — 카테고리 순서: challenge-hard → challenge-easy → cleanup, 각 그룹 내 ★ asc
-    const catOrder = (c: RecCandidate['category']): number =>
-      c === 'challenge-hard' ? 0 : c === 'challenge-easy' ? 1 : 2;
-    updatedPicked.sort((a, b) => {
-      const co = catOrder(a.category) - catOrder(b.category);
-      if (co !== 0) return co;
-      return a.diffValue - b.diffValue;
-    });
+    // 변화 있을 때만 정렬 — 전체 10곡 ★ asc 통합 정렬 (카테고리 무관)
+    updatedPicked.sort((a, b) => a.diffValue - b.diffValue);
     return { picked: updatedPicked, pool: updatedPool };
   }
 
@@ -474,14 +484,39 @@ export default function App() {
             <span className="by-author"> - by오소리</span>
           </h1>
         </div>
-        <div className="actions">
-          <StageSpinner state={refluxState} />
-          {(rows.length === 0 || !refluxState.installed) && (
-            <button className="btn-primary" onClick={startReflux} disabled={busy}>
-              데이터 불러오기
-            </button>
-          )}
+        <div className="header-right">
+          <div className="actions">
+            {(rows.length === 0 || !refluxState.installed) && (
+              <button className="btn-primary" onClick={startReflux} disabled={busy}>
+                데이터 불러오기
+              </button>
+            )}
+          </div>
+          <div className="header-cluster">
+            {/* 탭이 안 보일 때 (초기 로딩) 만 헤더에 — 탭 등장하면 탭 line 으로 이동 */}
+            {rows.length === 0 && <StageSpinner state={refluxState} />}
+            {(() => {
+              const isRunning =
+                refluxState.stage !== 'idle' && refluxState.stage !== 'error';
+              // 다운로드 중일 때만 비활성 — hooking(대기) / starting / hooked / ready 는 모두 끌 수 있음
+              const isTransitioning = refluxState.stage === 'downloading';
+              return (
+                <button
+                  type="button"
+                  className={`reflux-toggle${isRunning ? ' on' : ''}`}
+                  onClick={() => void toggleReflux()}
+                  disabled={isTransitioning || busy}
+                  title={isRunning ? 'Reflux 끄기' : 'Reflux 켜기'}
+                  aria-label={isRunning ? 'Reflux 끄기' : 'Reflux 켜기'}
+                >
+                  ⏻
+                </button>
+              );
+            })()}
+            <ThemeToggle />
+          </div>
         </div>
+        <WindowControls />
       </header>
 
       <RefluxLog state={refluxState} />
@@ -500,11 +535,11 @@ export default function App() {
       {rows.length > 0 && (
         <>
           <nav className="tabs">
-            <button className={tab === 'sp' ? 'tab active' : 'tab'} onClick={() => setTab('sp')}>
-              SP
-            </button>
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
               DP
+            </button>
+            <button className={tab === 'sp' ? 'tab active' : 'tab'} onClick={() => setTab('sp')}>
+              SP
             </button>
             <button
               className={tab === 'dp12' ? 'tab active' : 'tab'}
@@ -523,6 +558,7 @@ export default function App() {
                 </span>
               )}
             </span>
+            <StageSpinner state={refluxState} />
           </nav>
 
           <main className="content">
@@ -601,7 +637,7 @@ function Recommendations({
     <div className="rec-area">
       <div className="rec-area-head">
         <h3>
-          추천곡 <span style={{ fontWeight: 400, color: '#888', fontSize: 12 }}>★ {baseStar.toFixed(2)} 기준</span>
+          추천곡 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12 }}>★ {baseStar.toFixed(2)} 기준</span>
         </h3>
       </div>
       <div className="rec-cards">
@@ -752,7 +788,7 @@ function StarPanel({
         <div style={{ fontWeight: 600, marginBottom: 6 }}>
           별값 계산 표본 부족 — 데이터 점 {fitDataCount}개 / 30개 필요
         </div>
-        <div style={{ fontSize: 11.5, color: '#666', lineHeight: 1.6 }}>
+        <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
           DP ☆12 매칭된 차트: <b>{matched}</b>개 (NP 제외: <b>{matchedNonNp}</b>개) · 미매칭 시도:{' '}
           <b>{unmatched}</b>개
           <br />
@@ -767,8 +803,8 @@ function StarPanel({
   return (
     <div className="star-panel">
       <div className="star-main">
-        <span className="star-label">DP ☆12 추정 ★</span>
-        <span className="star-value">{result.star.toFixed(2)}</span>
+        <span className="star-label">DP ☆12 추정</span>
+        <span className="star-value">★ {result.star.toFixed(2)}</span>
       </div>
       <div className="star-detail">
         <span>raw {result.raw.toFixed(2)}</span>
@@ -839,12 +875,12 @@ function StarPanel({
               </button>
               <ul>
                 {unmatchedSamples.map((s) => (
-                  <li key={s} style={{ color: '#888' }}>
+                  <li key={s} style={{ color: 'var(--text-muted)' }}>
                     {s}
                   </li>
                 ))}
                 {unmatchedAll.length > unmatchedSamples.length && (
-                  <li style={{ color: '#aaa', fontSize: 11 }}>
+                  <li style={{ color: 'var(--text-faint)', fontSize: 11 }}>
                     ... 외 {unmatchedAll.length - unmatchedSamples.length}건 (위 버튼으로 전체 받기)
                   </li>
                 )}
