@@ -6,7 +6,7 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 - **Reflux 자동 통합** — 처음 실행 시 [olji/Reflux](https://github.com/olji/Reflux) 를 자동 다운로드. 메모리 리딩 + tracker.tsv dump 까지 백그라운드에서 처리
 - **SP / DP 곡 표** — 차트 단위 (한 row = 한 난이도)로 LAMP / LV / 곡명 / NOTES / RATE 시각화 / SCORE / MISS
-- **DP RECOMMEND 탭** — ereter ★11.6~12.7 매칭 + ohSorry v3.2.9 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리)
+- **DP RECOMMEND 탭** — ereter ★11.6~12.7 매칭 + ohSorry v3.2.10 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리)
 - **ereter 데이터 자동 갱신** — 24h TTL 캐시. 만료되면 자동 fetch (수동 갱신 버튼도 있음)
 - **LAN 원격 제어** — 같은 네트워크의 다른 PC 의 Chrome 으로 접속하면 같은 화면 + 모든 기능 사용 가능 (HTTP RPC bridge)
 - **곡 목록 필터** — 검색 / LAMP / LV / 잠긴 차트 숨김 / sticky 헤더 + 필터
@@ -65,7 +65,15 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 ## 변경 이력
 
 ### 0.0.6 — 추천곡 / 정렬 UI 정리
-- **모바일 UI 개선**
+- **추천곡 row 디자인 통일** — PC / 모바일 동일한 flex 레이아웃: `[title] [lamp] [★star · ☆level] [diff letter]`
+- ↑/↓ 도전/정리 indicator 제거. lamp / star / level 무채색, **난이도 letter (A/H/N/L) 만 색상 유지**
+- **추천곡 카드 박스 제거 (모바일)** — 박스 없이 헤더 + 행만. PC 는 카드형 유지하되 항상 3열 고정
+- **PC 추천곡 collapse 기능 제거** — 항상 펼친 상태. 모바일만 collapse 가능 (기본 접힘)
+- **카드별 ↻ 다시 뽑기** — 기존 전역 버튼 1개 → EC / HC / EXH 별 개별 버튼
+- **카드 제목 색 분리** — `EASY 클리어 추천` 에서 "EASY" 만 색상, "클리어 추천" 은 검정
+- 카드 사이 빈 줄 제거 (모바일 gap: 0)
+- **추천곡 빈 메시지** — "현재 ★값 근처의 추천곡이 없습니다."
+- **모바일 정렬 UI** — 버튼 박스 → 텍스트 only `LAMP | LEVEL | MISS`. 필터 영역 하단 우측 정렬
 - **body 배경 흰색** — 옅은 회색 `#fafbfc` → `#fff`
 - **Reflux health check 안정화** — `tasklist` 절대 경로 사용 + 실패 시 alive 로 가정 (PATH 의존 제거 + 무한 spawn 방지)
 
@@ -100,4 +108,4 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 - [olji/Reflux](https://github.com/olji/Reflux) (MIT) — INFINITAS 메모리 리더 / tracker.tsv 출처
 - [ereter.net](https://ereter.net/) — ★ 데이터 출처
-- ohSorry — 별값 추정 / 추천곡 모델 (v3.2.9) 의 원본 (e-amusement 아케이드 IIDX 도구)
+- ohSorry — 별값 추정 / 추천곡 모델 (v3.2.10) 의 원본 (e-amusement 아케이드 IIDX 도구)

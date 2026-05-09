@@ -1,6 +1,6 @@
-// ohSorry v3.2.9 별값 추정 모델 — INFOhSorry 용 포팅
+// ohSorry v3.2.10 별값 추정 모델 — INFOhSorry 용 포팅
 //
-// 원본: d:\work\ohSorry\2-calc-score.js (v3.2.9 / 2026-05-08 기준)
+// 원본: d:\work\ohSorry\2-calc-score.js (v3.2.10 / 2026-05-08 기준)
 //
 // 단계:
 //   1. raw S grid search (logistic NLL, alpha = quadratic of S)
@@ -9,7 +9,7 @@
 //   4. Ridge 회귀 (α=5.0, learned coef hardcoded)
 //   5. v3.2.7 bin clear-rate 누적 post-correction
 //   6. v3.2.6 djLevel boost (M lamp = EC + djLv ≥ A 일 때)
-//   7. v3.2.9 ridge muting (bin 보너스 활성 + ridge < 0 면 ridge=0)
+//   7. v3.2.10 ridge muting (bin 보너스 활성 + ridge < 0 면 ridge=0)
 //   8. clamp [0, 15]
 //
 // 입력:
@@ -53,7 +53,7 @@ export interface StarResult {
 }
 
 // ============================================================
-// 모델 파라미터 (v3.2.9)
+// 모델 파라미터 (v3.2.10)
 // ============================================================
 // alpha 의 quadratic coefficients (raw S 의 함수)
 const ALPHA_COEFF: Record<'ec' | 'hc' | 'exh', [number, number, number]> = {
@@ -86,7 +86,7 @@ const LOW_FALLBACK = 0.5;
 const RAW_BOUNDS: [number, number] = [0.5, 14.5];
 const Z_CLAMP = 50;
 
-// v3.2.4 + v3.2.7 + v3.2.9 — bin post-correction
+// v3.2.4 + v3.2.7 + v3.2.10 — bin post-correction
 const STAGE_BONUS_V324: Record<'ec' | 'hc' | 'exh', number> = { ec: 0.05, hc: 0.1, exh: 0.15 };
 const STAGE_MIN_V324: Record<'ec' | 'hc' | 'exh', number> = { ec: 4, hc: 3, exh: 2 };
 const NEXT_BIN_W_V324 = [1.0, 0.5, 0.25];
@@ -395,7 +395,7 @@ export function estimateStar(
     v32_prob_sum,
   ];
 
-  // 3단계: ridge correction (일단 계산만 — v3.2.9 muting 조건부 적용)
+  // 3단계: ridge correction (일단 계산만 — v3.2.10 muting 조건부 적용)
   let correction = 0;
   for (let i = 0; i < RIDGE_COEF.length; i++) correction += RIDGE_COEF[i] * features[i];
 
@@ -439,7 +439,7 @@ export function estimateStar(
     }
   }
 
-  // v3.2.9: bin 보너스 활성 + ridge 음수 → ridge muting
+  // v3.2.10: bin 보너스 활성 + ridge 음수 → ridge muting
   const predRidgeApplied = rawS + correction;
   const binActive = binImplied != null && binImplied.implied > predRidgeApplied;
   const ridgeMuted = binActive && correction < 0;

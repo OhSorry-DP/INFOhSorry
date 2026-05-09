@@ -44,7 +44,16 @@ export interface RecCandidate {
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';
-const STAGE_THRESHOLD: Record<RecStage, number> = { ec: 3, hc: 5, exh: 6 };
+export const STAGE_THRESHOLD: Record<RecStage, number> = { ec: 3, hc: 5, exh: 6 };
+
+// 도전곡 범위 — baseStar 위로 얼마까지 추천할지.
+// 저레벨 (★0.5) 사용자는 +1.2 까지, 고레벨 (★14.0) 사용자는 +0.3 까지. 사이는 선형 보간.
+// 범위 밖은 clamp.
+export function challengeOffset(baseStar: number): number {
+  if (baseStar <= 0.5) return 1.2;
+  if (baseStar >= 14.0) return 0.3;
+  return 1.2 - ((baseStar - 0.5) * 0.9) / 13.5;
+}
 
 function shuffle<T>(arr: T[]): T[] {
   const a = arr.slice();
@@ -59,18 +68,23 @@ function keyOf(r: RecCandidate): string {
   return r.title + '|' + r.slot;
 }
 
-export function buildRecs(
+// 도전곡 10개 + 정리곡 10개 = 총 20곡 샘플링.
+// 그 중 picked 10곡 (도전 6 : 정리 4 비율) 을 화면에 표시, 나머지 10곡은 pool 에 보관.
+// 클리어로 picked 가 줄어들면 pool 에서 보충, picked 가 9 미만으로 떨어지면 RecCard 가
+// "다시 받기" 버튼 표시 (재 reroll 트리거).
+export function buildRecsWithPool(
   matched: RecInputChart[],
   baseStar: number,
   stage: RecStage,
-): RecCandidate[] {
-  if (!Number.isFinite(baseStar)) return [];
+): { picked: RecCandidate[]; pool: RecCandidate[] } {
+  if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
   const threshold = STAGE_THRESHOLD[stage];
+  const offset = challengeOffset(baseStar);
 
   const challenge: RecCandidate[] = [];
   const cleanup: RecCandidate[] = [];
   for (const c of matched) {
-    if (c.lampNum >= threshold) continue; // 이미 그 stage 클리어한 곡은 skip
+    if (c.lampNum >= threshold) continue; // 이미 그 stage 클리어한 곡 skip
     const dv = c[stage];
     if (typeof dv !== 'number') continue;
     const item: RecCandidate = {
@@ -86,7 +100,7 @@ export function buildRecs(
       margin: baseStar - dv,
       category: 'cleanup',
     };
-    if (dv >= baseStar && dv <= baseStar + 0.8) {
+    if (dv >= baseStar && dv <= baseStar + offset) {
       item.category = 'challenge';
       challenge.push(item);
     } else if (dv < baseStar) {
@@ -95,38 +109,48 @@ export function buildRecs(
     }
   }
 
-  const isLowLevel = baseStar < 2.0;
-  const challengeQuota = isLowLevel ? 3 : 6;
-  const cleanupQuota = isLowLevel ? 7 : 4;
-
-  // 풀에서 랜덤 10개 sample
+  // 풀에서 랜덤 10곡씩 샘플링 (총 20곡 후보)
   const challengeRand = shuffle(challenge).slice(0, 10);
   const cleanupRand = shuffle(cleanup).slice(0, 10);
 
+  // picked = 도전 6 + 정리 4, 한 쪽 부족하면 다른 쪽에서 보충해서 총 10
   const used = new Set<string>();
-  let chPick = challengeRand.slice(0, challengeQuota);
+  let chPick = challengeRand.slice(0, 6);
   chPick.forEach((r) => used.add(keyOf(r)));
-  let clPick = cleanupRand.filter((r) => !used.has(keyOf(r))).slice(0, cleanupQuota);
+  let clPick = cleanupRand.filter((r) => !used.has(keyOf(r))).slice(0, 4);
   clPick.forEach((r) => used.add(keyOf(r)));
 
-  // 부족하면 다른 풀에서 채움 (총 10)
-  const totalNow = chPick.length + clPick.length;
-  if (totalNow < 10) {
-    const need = 10 - totalNow;
-    if (clPick.length < cleanupQuota) {
-      const extra = challengeRand.filter((r) => !used.has(keyOf(r))).slice(0, need);
-      chPick = [...chPick, ...extra];
-      extra.forEach((r) => used.add(keyOf(r)));
-    }
-    const stillNeed = 10 - chPick.length - clPick.length;
-    if (stillNeed > 0) {
-      const extra = cleanupRand.filter((r) => !used.has(keyOf(r))).slice(0, stillNeed);
-      clPick = [...clPick, ...extra];
-    }
+  if (chPick.length + clPick.length < 10 && clPick.length < 4) {
+    const extra = challengeRand
+      .filter((r) => !used.has(keyOf(r)))
+      .slice(0, 10 - chPick.length - clPick.length);
+    chPick = [...chPick, ...extra];
+    extra.forEach((r) => used.add(keyOf(r)));
+  }
+  if (chPick.length + clPick.length < 10) {
+    const extra = cleanupRand
+      .filter((r) => !used.has(keyOf(r)))
+      .slice(0, 10 - chPick.length - clPick.length);
+    clPick = [...clPick, ...extra];
+    extra.forEach((r) => used.add(keyOf(r)));
   }
 
-  // 표시 순서: 도전 (★ 높은→낮은) → 정리 (★ 높은→낮은)
+  // 표시 순서: 도전 (★ desc) → 정리 (★ desc)
   chPick.sort((a, b) => b.diffValue - a.diffValue);
   clPick.sort((a, b) => b.diffValue - a.diffValue);
-  return [...chPick, ...clPick];
+  const picked = [...chPick, ...clPick];
+
+  // pool = 샘플된 20곡 - picked 사용분 (최대 10곡, 양쪽 부족 시 더 적음)
+  const pool = [...challengeRand, ...cleanupRand].filter((r) => !used.has(keyOf(r)));
+
+  return { picked, pool };
+}
+
+// 호환용 — picked 만 반환
+export function buildRecs(
+  matched: RecInputChart[],
+  baseStar: number,
+  stage: RecStage,
+): RecCandidate[] {
+  return buildRecsWithPool(matched, baseStar, stage).picked;
 }

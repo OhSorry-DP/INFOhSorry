@@ -5,7 +5,8 @@ import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
 import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
 import {
-  buildRecs,
+  buildRecsWithPool,
+  STAGE_THRESHOLD,
   type RecCandidate,
   type RecInputChart,
   type RecStage,
@@ -250,22 +251,82 @@ export default function App() {
     return estimateStar(dp12StarInputs.fitData, dp12StarInputs.poolCharts);
   }, [dp12StarInputs]);
 
-  // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게)
+  // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
+  // 캐싱 동작:
+  //   - 초기 / reroll 클릭: buildRecsWithPool 로 picked (10개 표시) + pool (보충용 남은 후보) 새로 뽑음
+  //   - tracker.tsv 갱신 (= dp12Match 변경): picked 의 lamp 갱신 + 클리어된 곡 제거 + 풀에서 보충
+  //   - picked 가 9개 미만으로 떨어지면 RecCard 가 "다시 받기" 버튼 표시 (재 reroll 트리거)
+  type RecState = { picked: RecCandidate[]; pool: RecCandidate[] };
   const [rerollEC, setRerollEC] = useState(0);
   const [rerollHC, setRerollHC] = useState(0);
   const [rerollEXH, setRerollEXH] = useState(0);
-  const recsEC = useMemo(
-    () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'ec') : []),
-    [dp12Match, dp12StarResult, rerollEC],
-  );
-  const recsHC = useMemo(
-    () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'hc') : []),
-    [dp12Match, dp12StarResult, rerollHC],
-  );
-  const recsEXH = useMemo(
-    () => (dp12Match && dp12StarResult ? buildRecs(dp12Match.charts, dp12StarResult.star, 'exh') : []),
-    [dp12Match, dp12StarResult, rerollEXH],
-  );
+  const [recsEC, setRecsEC] = useState<RecState>({ picked: [], pool: [] });
+  const [recsHC, setRecsHC] = useState<RecState>({ picked: [], pool: [] });
+  const [recsEXH, setRecsEXH] = useState<RecState>({ picked: [], pool: [] });
+  const lastRerollEC = useRef(-1);
+  const lastRerollHC = useRef(-1);
+  const lastRerollEXH = useRef(-1);
+
+  function refreshRecs(prev: RecState, stage: RecStage, charts: RecInputChart[]): RecState {
+    const threshold = STAGE_THRESHOLD[stage];
+    const map = new Map<string, RecInputChart>();
+    for (const c of charts) map.set(c.title + '|' + c.slot, c);
+    // picked: lamp 갱신 + 클리어 (lampNum >= threshold) 된 곡 제거
+    const updatedPicked: RecCandidate[] = [];
+    for (const r of prev.picked) {
+      const c = map.get(r.title + '|' + r.slot);
+      if (!c) continue;
+      if (c.lampNum >= threshold) continue;
+      updatedPicked.push({ ...r, currentLamp: c.lamp });
+    }
+    // pool: 동일하게 cleared 제거
+    const updatedPool: RecCandidate[] = [];
+    for (const r of prev.pool) {
+      const c = map.get(r.title + '|' + r.slot);
+      if (!c) continue;
+      if (c.lampNum >= threshold) continue;
+      updatedPool.push({ ...r, currentLamp: c.lamp });
+    }
+    // picked 가 10개 미만이면 풀에서 채움
+    while (updatedPicked.length < 10 && updatedPool.length > 0) {
+      const next = updatedPool.shift();
+      if (next) updatedPicked.push(next);
+    }
+    // 표시 순서 유지: 도전 (★ desc) → 정리 (★ desc)
+    updatedPicked.sort((a, b) => {
+      if (a.category !== b.category) return a.category === 'challenge' ? -1 : 1;
+      return b.diffValue - a.diffValue;
+    });
+    return { picked: updatedPicked, pool: updatedPool };
+  }
+
+  useEffect(() => {
+    if (!dp12Match || !dp12StarResult) return;
+    if (lastRerollEC.current !== rerollEC) {
+      lastRerollEC.current = rerollEC;
+      setRecsEC(buildRecsWithPool(dp12Match.charts, dp12StarResult.star, 'ec'));
+    } else {
+      setRecsEC((prev) => refreshRecs(prev, 'ec', dp12Match.charts));
+    }
+  }, [rerollEC, dp12Match, dp12StarResult]);
+  useEffect(() => {
+    if (!dp12Match || !dp12StarResult) return;
+    if (lastRerollHC.current !== rerollHC) {
+      lastRerollHC.current = rerollHC;
+      setRecsHC(buildRecsWithPool(dp12Match.charts, dp12StarResult.star, 'hc'));
+    } else {
+      setRecsHC((prev) => refreshRecs(prev, 'hc', dp12Match.charts));
+    }
+  }, [rerollHC, dp12Match, dp12StarResult]);
+  useEffect(() => {
+    if (!dp12Match || !dp12StarResult) return;
+    if (lastRerollEXH.current !== rerollEXH) {
+      lastRerollEXH.current = rerollEXH;
+      setRecsEXH(buildRecsWithPool(dp12Match.charts, dp12StarResult.star, 'exh'));
+    } else {
+      setRecsEXH((prev) => refreshRecs(prev, 'exh', dp12Match.charts));
+    }
+  }, [rerollEXH, dp12Match, dp12StarResult]);
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
   const dp12Stats = useMemo(() => {
@@ -364,11 +425,11 @@ export default function App() {
                   ereterBusy={ereterBusy}
                   onRefreshEreter={() => refreshEreter(true)}
                 />
-                {dp12StarResult && (recsEC.length > 0 || recsHC.length > 0 || recsEXH.length > 0) && (
+                {dp12StarResult && (recsEC.picked.length > 0 || recsHC.picked.length > 0 || recsEXH.picked.length > 0) && (
                   <Recommendations
-                    recsEC={recsEC}
-                    recsHC={recsHC}
-                    recsEXH={recsEXH}
+                    recsEC={recsEC.picked}
+                    recsHC={recsHC.picked}
+                    recsEXH={recsEXH.picked}
                     baseStar={dp12StarResult.star}
                     onRerollEC={() => setRerollEC((k) => k + 1)}
                     onRerollHC={() => setRerollHC((k) => k + 1)}
@@ -481,6 +542,7 @@ function RecCard({
       {recs.length === 0 ? (
         <div className="rec-empty">현재 ★값 근처의 추천곡이 없습니다.</div>
       ) : (
+        <>
         <ul className="rec-list">
           {recs.map((r) => {
             const ls = lampStyle(r.currentLamp);
@@ -502,13 +564,19 @@ function RecCard({
             );
           })}
         </ul>
+        {recs.length < 9 && (
+          <button className="rec-refill" onClick={onReroll}>
+            ↻ 추천곡 다시 받기
+          </button>
+        )}
+        </>
       )}
     </details>
   );
 }
 
 // ============================================================
-// DP ☆12 별값 결과 패널 (ohSorry v3.2.9 모델)
+// DP ☆12 별값 결과 패널 (ohSorry v3.2.10 모델)
 // ============================================================
 function StarPanel({
   result,
