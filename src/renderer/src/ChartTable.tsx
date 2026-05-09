@@ -79,7 +79,7 @@ export default function ChartTable({ rows, style }: Props) {
   const [activeLevels, setActiveLevels] = useState<Set<number>>(new Set());
   const [activeLamps, setActiveLamps] = useState<Set<string>>(new Set());
   const [hideLocked, setHideLocked] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
+  const [collapsed, setCollapsed] = useState(true);
 
   // 필터 영역도 sticky → thead 의 top 을 필터 높이만큼 내림
   const filtersRef = useRef<HTMLDivElement>(null);
@@ -189,24 +189,53 @@ export default function ChartTable({ rows, style }: Props) {
     });
   }, [charts, sortKey, sortDir, slotIdx]);
 
+  // key 별 기본 정렬 방향 — miss 만 오름차순 우선, 나머지는 내림차순 우선
+  function defaultDirFor(key: SortKey): SortDir {
+    return key === 'miss' ? 'asc' : 'desc';
+  }
+
   function clickSort(key: SortKey | null): void {
     if (key == null) return;
-    // 첫 클릭 desc → 같은 컬럼 클릭 시 asc → 한 번 더 클릭 시 unsorted (default 정렬) 순환
+    const def = defaultDirFor(key);
+    // 첫 클릭 → 기본 방향 / 같은 컬럼 두 번째 → 반대 방향 / 세 번째 → unsorted
     if (sortKey === key) {
-      if (sortDir === 'desc') setSortDir('asc');
+      if (sortDir === def) setSortDir(def === 'desc' ? 'asc' : 'desc');
       else {
         setSortKey(null);
         setSortDir('desc');
       }
     } else {
       setSortKey(key);
-      setSortDir('desc');
+      setSortDir(def);
     }
   }
+
+  // 모바일 정렬 버튼 (CSS 가 데스크탑에서 숨김 처리)
+  const mobileSortKeys: { key: SortKey; label: string }[] = [
+    { key: 'lamp', label: '램프순' },
+    { key: 'level', label: '레벨순' },
+    { key: 'miss', label: '미스순' },
+  ];
 
   return (
     <div className="ct-wrap">
       <div className="ct-filters" ref={filtersRef}>
+        <div className="ct-mobile-sort-row">
+          {mobileSortKeys.map((s) => {
+            const active = sortKey === s.key;
+            const arrow = active ? (sortDir === 'asc' ? ' ▲' : ' ▼') : '';
+            return (
+              <button
+                key={s.key}
+                className={`ct-mobile-sort-btn${active ? ' active' : ''}`}
+                onClick={() => clickSort(s.key)}
+              >
+                {s.label}
+                {arrow}
+              </button>
+            );
+          })}
+        </div>
         <div className="ct-filter-row">
           <input
             type="text"
@@ -305,7 +334,7 @@ function ChartRow({ c }: { c: SongChart }) {
   const played = c.lamp !== 'NP' && !locked;
 
   return (
-    <div className={`ct-tr${locked ? ' locked' : ''}`}>
+    <div className={`ct-tr${locked ? ' locked' : ''}${played ? ' played' : ''}`}>
       <div
         className={`ct-cell ct-lamp${locked ? '' : ` ct-lamp-${c.lamp}`}`}
         title={locked ? '잠김' : ls.label}
@@ -364,9 +393,17 @@ function ChartRow({ c }: { c: SongChart }) {
           <span className="ct-empty rate-empty">-</span>
         )}
       </div>
-      <div className="ct-cell num">{played && c.exScore > 0 ? c.exScore.toLocaleString() : '-'}</div>
       <div className="ct-cell num">
-        {played && c.missCount >= 0 ? c.missCount.toLocaleString() : '-'}
+        <span className="ct-mobile-label">SCORE</span>
+        <span className="ct-mobile-value">
+          {played && c.exScore > 0 ? c.exScore.toLocaleString() : '-'}
+        </span>
+      </div>
+      <div className="ct-cell num">
+        <span className="ct-mobile-label">MISS</span>
+        <span className="ct-mobile-value">
+          {played && c.missCount >= 0 ? c.missCount.toLocaleString() : '-'}
+        </span>
       </div>
     </div>
   );

@@ -17,8 +17,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF Setup 0.0.4.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.4-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF Setup 0.0.5.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.5-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -64,10 +64,19 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.5 — 모바일 페이지 개선
+- **SP / DP 차트 표 2줄 레이아웃** — 한 행을 2줄로 분리. lamp 색박스 / LV 가 2줄 다 차지, 1줄 = title / SCORE 값, 2줄 = rate-bar / MISS 값
+- **SCORE / MISS 라벨 + 값 컬럼 분리** — col 4 라벨, col 5 값 (60px 고정 너비) → 자릿수 무관 우측 끝 정렬
+- **NO PLAY / 잠김 일 때**: SCORE 자리에 lamp 텍스트 ("NO PLAY" / "잠김") 표시
+- **Rate 텍스트 우측 정렬 + 순서 뒤집기** — `(64.70%)B` 형식
+- **모바일 정렬 버튼** — 컬럼 헤더 클릭이 안 되니 [램프순 / 레벨순 / 미스순] 버튼 row 항상 표시. miss 는 오름차순 우선, 나머지는 내림차순 우선
+- **필터 기본 접힌 상태 시작** — 필요할 때만 펼침
+- **추천곡 카드 collapsible** — 모바일은 기본 접힘, 데스크탑은 기본 펼침. summary 클릭으로 토글
+- **DP12 서열표 모바일** — 레벨이 헤더 row, 곡 목록은 3열 균등 grid
+- LV / 색박스 padding 조정으로 행 높이 컴팩트
+
 ### 0.0.4
-- **모바일 반응형** — LAN 모드로 폰 / 태블릿 접속 시 글씨 / 버튼 크기 / 레이아웃 자동 조정 (768px / 480px breakpoint)
-- 헤더 / 탭 / 필터 / 차트 표 / 별값 패널 / 추천곡 / DP12 격자 모두 좁은 화면 대응
-- 480px 이하에서는 차트 표의 MISS / SCORE-letter 컬럼 숨김 (공간 확보)
+- **모바일 반응형 (1차)** — LAN 모드로 폰 / 태블릿 접속 시 글씨 / 버튼 크기 / 레이아웃 자동 조정 (768px / 480px breakpoint)
 - 입력 필드 16px 폰트 — iOS Safari 자동 확대 방지
 - viewport meta 추가
 - **1시간 stale 체크 제거** — Reflux 가 설치돼있으면 앱 시작 시 무조건 자동 실행

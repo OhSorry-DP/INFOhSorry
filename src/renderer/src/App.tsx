@@ -433,14 +433,24 @@ function Recommendations({
 
 function RecCard({ stage, recs }: { stage: RecStage; recs: RecCandidate[] }): JSX.Element {
   const info = STAGE_INFO[stage];
+  // 모바일 (768px 이하) 에서는 기본 접힘, 데스크탑은 기본 펴짐.
+  // 사용자가 토글한 후엔 그 상태 유지 (controlled).
+  const [open, setOpen] = useState(() =>
+    typeof window === 'undefined' ? true : !window.matchMedia('(max-width: 768px)').matches,
+  );
   return (
-    <div className="rec-card" style={{ borderTop: `3px solid ${info.color}` }}>
-      <div className="rec-card-head">
+    <details
+      className="rec-card"
+      open={open}
+      onToggle={(e) => setOpen(e.currentTarget.open)}
+      style={{ borderTop: `3px solid ${info.color}` }}
+    >
+      <summary className="rec-card-head">
         <span className="rec-card-title" style={{ color: info.color }}>
           {info.title}
         </span>
         <span className="rec-card-count">{recs.length}곡</span>
-      </div>
+      </summary>
       {recs.length === 0 ? (
         <div className="rec-empty">추천할 곡 없음 (이미 다 클리어했거나 풀 부족)</div>
       ) : (
@@ -465,7 +475,7 @@ function RecCard({ stage, recs }: { stage: RecStage; recs: RecCandidate[] }): JS
           })}
         </ul>
       )}
-    </div>
+    </details>
   );
 }
 
