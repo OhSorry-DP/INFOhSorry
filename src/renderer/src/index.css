@@ -173,6 +173,17 @@ body {
   /* fixed height — .content 가 overflow:auto 로 스크롤 컨텍스트가 되려면 .app 이 늘어나면 안 됨.
      min-height: 100vh 면 body 가 scroll 되어 .ct-thead 의 sticky 가 동작 X. */
   height: 100vh;
+  width: 100%;
+}
+/* 헤더 제외한 본체 — 가로 1440px 캡 (창 더 커져도 본체는 중앙 정렬) */
+.app-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  max-width: 1440px;
+  width: 100%;
+  margin: 0 auto;
 }
 .app-header {
   display: flex;
@@ -297,9 +308,10 @@ body {
 .app-header .actions .btn-primary:hover:not(:disabled) {
   background: var(--action-primary-hover);
 }
-/* 테마 토글 + Reflux on/off — 아이콘만, 테두리 / 배경 없음 */
+/* 테마 토글 + Reflux on/off + 메모리 스캐너 — 아이콘만, 테두리 / 배경 없음 */
 .app-header .theme-toggle,
-.app-header .reflux-toggle {
+.app-header .reflux-toggle,
+.app-header .ms-toggle {
   width: 30px;
   padding: 4px 0;
   font-size: 16px;
@@ -312,7 +324,8 @@ body {
   border-radius: 4px;
 }
 .app-header .theme-toggle:hover,
-.app-header .reflux-toggle:hover:not(:disabled) {
+.app-header .reflux-toggle:hover:not(:disabled),
+.app-header .ms-toggle:hover {
   background: var(--bg-hover);
 }
 /* Reflux 켜진 상태 — 초록 + 살짝 글로우 */
@@ -1078,6 +1091,7 @@ body {
 
 /* ----- 추천곡 영역 ----- */
 .rec-area {
+  margin-top: 16px;
   margin-bottom: 16px;
 }
 .rec-area-head {
@@ -1616,6 +1630,20 @@ body {
     /* 모바일: 우측 3px (스크롤바 가장자리 살짝 떨어뜨림) */
     padding: 0 3px 12px 12px;
   }
+  /* 프로필: 모바일 padding 만 줄임 (full width 유지) */
+  .profile-card {
+    padding: 10px 12px;
+    gap: 12px;
+  }
+  .profile-card-name {
+    font-size: 16px;
+  }
+  .profile-card-rank {
+    font-size: 13px;
+  }
+  .profile-card-star-value {
+    font-size: 22px;
+  }
 
   /* ----- 차트 표 (SP / DP) — 한 행을 2줄로 (램프 색박스가 2줄 다 차지) ----- */
   /* 헤더는 모바일에서 숨김. 정렬은 추후 dropdown UI 추가 가능. */
@@ -1990,4 +2018,340 @@ body {
   .star-panel {
     padding: 10px 12px;
   }
+}
+
+/* ============================================================
+ * 프로필 카드 (DP RECOMMEND 상단)
+ * ============================================================ */
+.profile-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--bg-card);
+  /* 헤더 / 탭 와 하나처럼 — full width, 하단 구분선 만 */
+  border-bottom: 1px solid var(--border-primary);
+}
+.profile-card-info {
+  flex: 1;
+  min-width: 0;
+}
+/* 한 줄: DJ NAME + SP단위 | DP단위 */
+.profile-card-name-line {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  line-height: 1.2;
+}
+.profile-card-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.profile-card-id {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-top: 3px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.3px;
+}
+.profile-card-ranks {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+.profile-card-rank {
+  white-space: nowrap;
+  font-weight: 700;
+  font-size: 15px;
+}
+.profile-card-rank-label {
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  margin-left: 4px;
+}
+.profile-card-rank-label:first-child {
+  margin-left: 0;
+}
+.profile-card-rank.rank-mid { color: #1971c2; }
+.profile-card-rank.rank-high { color: #dc3545; }
+.profile-card-rank.rank-low { color: var(--text-muted); }
+/* 中伝 (은빛) / 皆伝 (금빛) — 헤더 단위와 동일 그라데이션 (ohSorry 컨벤션) */
+.profile-card-rank.rank-chuden,
+.profile-card-rank.rank-kaiden {
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  background-size: 200% 100%;
+  animation: profile-rank-shimmer 6s linear infinite;
+}
+.profile-card-rank.rank-chuden {
+  background-image: linear-gradient(90deg, #8c95a0 0%, #8c95a0 40%, #c7ccd2 50%, #8c95a0 60%, #8c95a0 100%);
+}
+.profile-card-rank.rank-kaiden {
+  background-image: linear-gradient(90deg, #c8a347 0%, #c8a347 40%, #ead78a 50%, #c8a347 60%, #c8a347 100%);
+}
+.profile-card-rank.rank-chuden b,
+.profile-card-rank.rank-kaiden b {
+  -webkit-text-fill-color: var(--text-muted);
+  color: var(--text-muted);
+}
+@keyframes profile-rank-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.profile-card-star {
+  flex-shrink: 0;
+  text-align: center;
+  padding: 0 8px;
+  min-width: 80px;
+}
+.profile-card-star-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+.profile-card-star-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* ============================================================
+ * 메모리 스캐너 모달
+ * ============================================================ */
+.ms-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  z-index: 999999;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+  overflow-y: auto;
+}
+.ms-modal {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: 8px;
+  box-shadow: var(--shadow-overlay);
+  width: 100%;
+  max-width: 720px;
+  display: flex;
+  flex-direction: column;
+}
+.ms-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border-primary);
+}
+.ms-header h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+.ms-close {
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 22px;
+  line-height: 1;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+}
+.ms-close:hover {
+  color: var(--text-primary);
+}
+.ms-body {
+  padding: 16px 20px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.ms-intro {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.5;
+}
+.ms-field {
+  border: 1px solid var(--border-primary);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.ms-field-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 700;
+}
+.ms-field-hint {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+  line-height: 1.5;
+}
+.ms-saved {
+  background: var(--bg-panel);
+  border: 1px solid var(--border-secondary);
+  border-radius: 4px;
+  padding: 8px 10px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.ms-saved-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ms-saved-label {
+  font-weight: 600;
+}
+.ms-saved-offset {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  flex: 1;
+  color: var(--text-secondary);
+}
+.ms-readback {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--text-muted);
+}
+.ms-readback code {
+  background: var(--bg-muted);
+  padding: 1px 6px;
+  border-radius: 3px;
+  color: var(--text-primary);
+  font-size: 11.5px;
+}
+.ms-input-row {
+  display: flex;
+  gap: 6px;
+}
+.ms-input {
+  flex: 1;
+  padding: 6px 10px;
+  border: 1px solid var(--border-dashed);
+  border-radius: 3px;
+  font-family: inherit;
+  font-size: 12.5px;
+  background: var(--bg-input);
+  color: var(--text-primary);
+  outline: none;
+}
+.ms-input:focus {
+  border-color: var(--action-primary);
+}
+.ms-input::placeholder {
+  color: var(--text-faint);
+}
+.ms-btn-primary {
+  padding: 6px 14px;
+  border: 1px solid var(--action-primary);
+  background: var(--action-primary);
+  color: var(--action-primary-text);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.ms-btn-primary:hover:not(:disabled) {
+  background: var(--action-primary-hover);
+}
+.ms-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.ms-btn-secondary {
+  padding: 4px 10px;
+  border: 1px solid var(--border-dashed);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+.ms-btn-secondary:hover {
+  background: var(--bg-hover);
+}
+.ms-btn-small {
+  padding: 2px 8px;
+  border: 1px solid var(--action-primary);
+  background: var(--action-primary);
+  color: var(--action-primary-text);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 11px;
+}
+.ms-btn-small:hover {
+  background: var(--action-primary-hover);
+}
+.ms-error {
+  color: var(--error-text);
+  font-size: 11.5px;
+  margin-top: 6px;
+}
+.ms-progress {
+  font-size: 11.5px;
+  margin-top: 6px;
+  font-style: italic;
+}
+.ms-muted {
+  color: var(--text-muted);
+}
+.ms-matches {
+  margin-top: 10px;
+  border-top: 1px solid var(--border-secondary);
+  padding-top: 8px;
+}
+.ms-matches-header {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.ms-matches-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11.5px;
+}
+.ms-matches-table th {
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-secondary);
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 10.5px;
+  letter-spacing: 0.3px;
+}
+.ms-matches-table td {
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border-faint);
+}
+.ms-matches-table code {
+  font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+.ms-cutoff {
+  margin-top: 6px;
+  font-size: 11px;
 }

@@ -37,6 +37,53 @@ function configPath(): string {
 function tsvPath(): string {
   return join(workDir(), 'tracker.tsv');
 }
+// Reflux offsets.txt 위치 — 메모리 스캐너가 anchor 로 참조
+function offsetsPath(): string {
+  return join(workDir(), 'offsets.txt');
+}
+
+// offsets.txt 파싱 결과 — 첫 줄 version + key=hex_address pair
+export interface RefluxOffsets {
+  version: string;
+  // 절대 주소 (Reflux 가 preferred base 0x140000_0000 가정으로 기록한 값)
+  // 사용 시 modBase 와 합치려면 (absolute - 0x140000_0000) + currentModBase
+  entries: Record<string, bigint>;
+  // module-base 기준 상대 offset (preferred base 0x140000_0000 가정)
+  relative: Record<string, bigint>;
+  mtime: number; // 파일 수정 시각 (renderer 캐시 무효화용)
+}
+
+const REFLUX_PREFERRED_BASE = 0x140000_0000n;
+
+export async function readRefluxOffsets(): Promise<RefluxOffsets | null> {
+  const p = offsetsPath();
+  if (!existsSync(p)) return null;
+  const stat = await fsp.stat(p);
+  const content = await fsp.readFile(p, 'utf-8');
+  const lines = content.split(/\r?\n/);
+  let version = '';
+  const entries: Record<string, bigint> = {};
+  const relative: Record<string, bigint> = {};
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (line.startsWith('#')) continue;
+    if (!line.includes('=')) {
+      // 첫 줄 (version 헤더) — 예: "P2D:J:B:A:2026042200"
+      if (!version) version = line;
+      continue;
+    }
+    const [key, val] = line.split('=', 2).map((s) => s.trim());
+    try {
+      const abs = BigInt(val);
+      entries[key] = abs;
+      relative[key] = abs - REFLUX_PREFERRED_BASE;
+    } catch {
+      // ignore unparseable
+    }
+  }
+  return { version, entries, relative, mtime: stat.mtimeMs };
+}
 
 // Reflux 가 처음 실행될 때 만들 기본 config — savelocal 필수, livestream 비활성, debug 비활성
 const DEFAULT_CONFIG = `[Update]

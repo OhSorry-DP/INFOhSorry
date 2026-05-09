@@ -10,6 +10,7 @@
 //   4. CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pid) → main 모듈의 base 주소 획득
 //   5. ReadProcessMemory(handle, base + offset, ...) 로 값 읽기
 import koffi from 'koffi';
+import iconv from 'iconv-lite';
 
 // ----- Win32 상수 -----
 const PROCESS_VM_READ = 0x0010;
@@ -145,6 +146,55 @@ export function findProcessId(exeName: string): number {
   return foundPid;
 }
 
+// 프로세스의 모든 로드된 모듈 (.exe + 모든 DLL) 정보
+export interface ModuleInfo {
+  base: bigint;
+  size: number;
+  name: string; // e.g., "bm2dx.exe", "kernel32.dll", "acsl.dll"
+}
+export function listAllModules(pid: number): ModuleInfo[] {
+  const out: ModuleInfo[] = [];
+  const snap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
+  if (isInvalidHandle(snap)) return out;
+  try {
+    const me: {
+      dwSize: number;
+      modBaseAddr: bigint | number;
+      modBaseSize: number;
+      szModule: number[];
+    } = {
+      dwSize: koffi.sizeof(MODULEENTRY32W),
+      th32ModuleID: 0,
+      th32ProcessID: 0,
+      GlblcntUsage: 0,
+      ProccntUsage: 0,
+      modBaseAddr: 0,
+      modBaseSize: 0,
+      hModule: 0,
+      szModule: new Array(256).fill(0),
+      szExePath: new Array(MAX_PATH).fill(0),
+    } as never;
+    let ok = Module32FirstW(snap, me);
+    while (ok) {
+      const name = utf16ToString(me.szModule);
+      const base =
+        typeof me.modBaseAddr === 'bigint' ? me.modBaseAddr : BigInt(me.modBaseAddr);
+      out.push({ base, size: me.modBaseSize, name });
+      ok = Module32NextW(snap, me);
+    }
+  } finally {
+    CloseHandle(snap);
+  }
+  return out;
+}
+// 주어진 주소가 어떤 모듈 안에 있는지 찾기
+export function findModuleContaining(modules: ModuleInfo[], addr: bigint): ModuleInfo | null {
+  for (const m of modules) {
+    if (addr >= m.base && addr < m.base + BigInt(m.size)) return m;
+  }
+  return null;
+}
+
 // 프로세스의 주 모듈 (보통 .exe 자체) 의 base 주소 + 크기 획득
 export function findMainModule(
   pid: number,
@@ -268,4 +318,262 @@ export function readStringA(handle: unknown, addr: bigint | number, maxBytes = 2
 // 핸들 닫기 (필수, 누수 방지)
 export function closeHandle(handle: unknown): void {
   if (handle != null) CloseHandle(handle);
+}
+
+// ============================================================
+// 메모리 스캔 — VirtualQueryEx 로 commit 된 region enumerate 후
+// chunk 단위로 읽으면서 byte pattern 검색
+// ============================================================
+
+// VirtualQueryEx 반환 구조체
+const MEMORY_BASIC_INFORMATION = koffi.struct('MEMORY_BASIC_INFORMATION', {
+  BaseAddress: 'uintptr_t',
+  AllocationBase: 'uintptr_t',
+  AllocationProtect: 'uint32_t',
+  PartitionId: 'uint16_t',
+  __pad: 'uint16_t', // 패딩 (size_t 정렬)
+  RegionSize: 'size_t',
+  State: 'uint32_t',
+  Protect: 'uint32_t',
+  Type: 'uint32_t',
+});
+
+const VirtualQueryEx = kernel32.func(
+  'size_t __stdcall VirtualQueryEx(void* hProcess, uintptr_t lpAddress, _Out_ MEMORY_BASIC_INFORMATION *lpBuffer, size_t dwLength)',
+);
+
+const MEM_COMMIT = 0x1000;
+const PAGE_GUARD = 0x100;
+const PAGE_NOACCESS = 0x01;
+// 읽기 가능한 protect flags (READONLY/READWRITE/EXECUTE_READ/EXECUTE_READWRITE/WRITECOPY/EXECUTE_WRITECOPY)
+const READABLE_MASK = 0x02 | 0x04 | 0x20 | 0x40 | 0x08 | 0x80;
+
+export interface MemoryRegion {
+  base: bigint;
+  size: number;
+  protect: number;
+}
+
+// 프로세스의 commit 된 + 읽기 가능한 메모리 영역 enum (userland 만)
+export function listMemoryRegions(handle: unknown): MemoryRegion[] {
+  const regions: MemoryRegion[] = [];
+  // x64 userland 상한 — 실제로는 0x7FFE_0000 부근까지 들어가지만 충분히 크게.
+  const MAX_ADDR = 0x7fff_ffff_0000n;
+  let addr: bigint = 0n;
+  const mbi: {
+    BaseAddress: bigint | number;
+    AllocationBase: bigint | number;
+    AllocationProtect: number;
+    PartitionId: number;
+    __pad: number;
+    RegionSize: number;
+    State: number;
+    Protect: number;
+    Type: number;
+  } = {
+    BaseAddress: 0n,
+    AllocationBase: 0n,
+    AllocationProtect: 0,
+    PartitionId: 0,
+    __pad: 0,
+    RegionSize: 0,
+    State: 0,
+    Protect: 0,
+    Type: 0,
+  };
+  const mbiSize = koffi.sizeof(MEMORY_BASIC_INFORMATION);
+  while (addr < MAX_ADDR) {
+    const ret = VirtualQueryEx(handle, addr, mbi, mbiSize);
+    if (!ret || ret === 0) break;
+    const baseN =
+      typeof mbi.BaseAddress === 'bigint' ? mbi.BaseAddress : BigInt(mbi.BaseAddress);
+    const size = mbi.RegionSize;
+    const protect = mbi.Protect;
+    const isCommit = mbi.State === MEM_COMMIT;
+    const readable = (protect & READABLE_MASK) !== 0;
+    const blocked = (protect & PAGE_GUARD) !== 0 || (protect & PAGE_NOACCESS) !== 0;
+    if (isCommit && readable && !blocked) {
+      regions.push({ base: baseN, size, protect });
+    }
+    const next = baseN + BigInt(size);
+    if (next <= addr) break; // 안전망 (무한 루프 방지)
+    addr = next;
+  }
+  return regions;
+}
+
+// 패턴 (Buffer) 을 프로세스 메모리 전체에서 찾아 모든 매칭 절대 주소 반환.
+// maxMatches: 매칭 너무 많을 때 cut-off (기본 200, 너무 많으면 false-positive 추측 부담)
+export function scanForBytes(
+  handle: unknown,
+  pattern: Buffer,
+  maxMatches: number = 200,
+): bigint[] {
+  const matches: bigint[] = [];
+  if (pattern.length === 0) return matches;
+  const regions = listMemoryRegions(handle);
+  const CHUNK = 4 * 1024 * 1024; // 4 MB
+  outer: for (const r of regions) {
+    let offset = 0;
+    while (offset < r.size) {
+      const readSize = Math.min(CHUNK, r.size - offset);
+      let buf: Buffer;
+      try {
+        buf = readBytes(handle, r.base + BigInt(offset), readSize);
+      } catch {
+        // 일부 region 은 ReadProcessMemory 가 실패 — skip
+        break;
+      }
+      // 청크 경계에 패턴이 걸치는 경우 대비 — 다음 청크 첫 (pattern.length-1) 바이트와 겹치게 읽음
+      // (이 단순 구현은 그 처리는 안 함 — 4MB chunk 이고 패턴 < 100 바이트라 false negative 확률 낮음)
+      let idx = 0;
+      while (idx < buf.length) {
+        const found = buf.indexOf(pattern, idx);
+        if (found < 0) break;
+        matches.push(r.base + BigInt(offset + found));
+        if (matches.length >= maxMatches) break outer;
+        idx = found + 1;
+      }
+      offset += readSize;
+    }
+  }
+  return matches;
+}
+
+// 지원 인코딩: utf16le (Windows 표준 wide), utf8 (모던 UTF), ascii (Latin-1 호환), shiftjis (일본어, IIDX 의 한자)
+export type StringEncoding = 'utf16le' | 'utf8' | 'ascii' | 'shiftjis';
+
+export function encodeString(text: string, enc: StringEncoding): Buffer {
+  if (enc === 'utf16le') return Buffer.from(text, 'utf16le');
+  if (enc === 'utf8') return Buffer.from(text, 'utf8');
+  if (enc === 'ascii') return Buffer.from(text, 'ascii');
+  // shiftjis — iconv-lite 로 인코딩 (한자 / 가나)
+  return iconv.encode(text, 'shift_jis');
+}
+
+export function decodeString(buf: Buffer, enc: StringEncoding): string {
+  if (enc === 'utf16le') {
+    let s = '';
+    for (let i = 0; i + 1 < buf.length; i += 2) {
+      const c = buf.readUInt16LE(i);
+      if (c === 0) break;
+      s += String.fromCharCode(c);
+    }
+    return s;
+  }
+  // 1바이트 단위 — null terminate
+  const end = buf.indexOf(0);
+  const slice = end >= 0 ? buf.subarray(0, end) : buf;
+  if (enc === 'utf8') return slice.toString('utf8');
+  if (enc === 'ascii') return slice.toString('ascii');
+  // shiftjis
+  return iconv.decode(slice, 'shift_jis');
+}
+
+// 패턴을 여러 인코딩으로 시도해서 하나라도 매칭되는 모든 주소 반환.
+// 각 인코딩별 매칭 그룹화해서 반환.
+export interface ScanResult {
+  encoding: StringEncoding;
+  pattern: Buffer; // 인코딩된 바이트 (디버그/검증용)
+  matches: bigint[];
+}
+
+export function scanString(
+  handle: unknown,
+  text: string,
+  encodings: StringEncoding[] = ['utf16le', 'utf8', 'ascii', 'shiftjis'],
+  maxMatches: number = 200,
+): ScanResult[] {
+  const out: ScanResult[] = [];
+  for (const enc of encodings) {
+    let pattern: Buffer;
+    try {
+      pattern = encodeString(text, enc);
+    } catch {
+      continue;
+    }
+    if (pattern.length === 0) continue;
+    const matches = scanForBytes(handle, pattern, maxMatches);
+    out.push({ encoding: enc, pattern, matches });
+  }
+  return out;
+}
+
+// 특정 범위 [targetMin, targetMax] 의 64-bit pointer 들을 정적 메모리 안에서 찾기.
+// 8-byte aligned 위치만 검사 (정상적인 컴파일러는 pointer 를 8-byte 정렬).
+// 반환: { ptrAddr, targetValue } — pointer 가 위치한 절대 주소 + 그 pointer 가 가리키는 값.
+//
+// 직접 매칭 (target == X) 이 없을 때 "struct base + offset" 패턴 찾는데 씀:
+// targetValue 가 우리 string 보다 약간 앞이면, 그게 struct base 일 가능성 높음.
+// valueOffset = string_addr - targetValue 가 struct 안에서의 string 위치.
+export function scanForPointersInRange(
+  handle: unknown,
+  regionBase: bigint,
+  regionSize: number,
+  targetMin: bigint,
+  targetMax: bigint,
+  maxMatches: number = 50,
+): { ptrAddr: bigint; targetValue: bigint }[] {
+  const matches: { ptrAddr: bigint; targetValue: bigint }[] = [];
+  const CHUNK = 4 * 1024 * 1024;
+  let offset = 0;
+  while (offset < regionSize) {
+    const readSize = Math.min(CHUNK, regionSize - offset);
+    let buf: Buffer;
+    try {
+      buf = readBytes(handle, regionBase + BigInt(offset), readSize);
+    } catch {
+      break;
+    }
+    for (let i = 0; i + 7 < buf.length; i += 8) {
+      const value = buf.readBigUInt64LE(i);
+      if (value >= targetMin && value <= targetMax) {
+        matches.push({
+          ptrAddr: regionBase + BigInt(offset + i),
+          targetValue: value,
+        });
+        if (matches.length >= maxMatches) return matches;
+      }
+    }
+    offset += readSize;
+  }
+  return matches;
+}
+
+// 특정 메모리 region 안에서 64-bit pointer (= target 값) 인 모든 위치 반환.
+// 보통 정적 메모리 (modBase ~ modBase+modSize) 안에서 heap 주소를 찾을 때 쓰임.
+export function scanForPointer(
+  handle: unknown,
+  regionBase: bigint,
+  regionSize: number,
+  target: bigint,
+  maxMatches: number = 100,
+): bigint[] {
+  const matches: bigint[] = [];
+  // target 을 8바이트 LE 로 인코딩
+  const pat = Buffer.alloc(8);
+  pat.writeBigUInt64LE(target, 0);
+  const CHUNK = 4 * 1024 * 1024;
+  let offset = 0;
+  while (offset < regionSize) {
+    const readSize = Math.min(CHUNK, regionSize - offset);
+    let buf: Buffer;
+    try {
+      buf = readBytes(handle, regionBase + BigInt(offset), readSize);
+    } catch {
+      break;
+    }
+    let idx = 0;
+    while (idx < buf.length - 7) {
+      const found = buf.indexOf(pat, idx);
+      if (found < 0) break;
+      // 8바이트 정렬 권장 (대부분의 컴파일러는 pointer 를 8 바이트 정렬)
+      // 정렬 안 된 매치도 일단 포함 (필요 시 필터)
+      matches.push(regionBase + BigInt(offset + found));
+      if (matches.length >= maxMatches) return matches;
+      idx = found + 1;
+    }
+    offset += readSize;
+  }
+  return matches;
 }

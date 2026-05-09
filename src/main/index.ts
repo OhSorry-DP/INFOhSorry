@@ -1,8 +1,20 @@
 import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron';
 import { join } from 'path';
 import { readTsv } from './tsv';
-import { findInfinitas, closeHandle } from './memory';
-import { RefluxManager } from './reflux';
+import {
+  findInfinitas,
+  closeHandle,
+  scanString,
+  scanForPointer,
+  scanForPointersInRange,
+  listAllModules,
+  findModuleContaining,
+  readBytes,
+  readPointer,
+  decodeString,
+  type StringEncoding,
+} from './memory';
+import { RefluxManager, readRefluxOffsets } from './reflux';
 import {
   getEreterData,
   getCacheStatus as getEreterCacheStatus,
@@ -117,6 +129,207 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     if (!path) return { ok: false };
     shell.showItemInFolder(path);
     return { ok: true };
+  },
+
+  // Reflux offsets.txt 파싱 — anchor (playData 등) 의 현재 module-base 기준 상대 offset 반환
+  // 게임 패치로 Reflux 가 offsets.txt 갱신되면 자동 반영
+  'reflux:offsets': async () => {
+    const r = await readRefluxOffsets();
+    if (!r) return { ok: false, error: 'offsets.txt 없음 (Reflux 한 번이라도 실행 후 다시 시도)' };
+    // bigint → string (JSON 호환)
+    const entries: Record<string, string> = {};
+    const relative: Record<string, string> = {};
+    for (const k of Object.keys(r.entries)) entries[k] = r.entries[k].toString();
+    for (const k of Object.keys(r.relative)) relative[k] = r.relative[k].toString();
+    return { ok: true, version: r.version, entries, relative, mtime: r.mtime };
+  },
+
+  // 메모리 스캔 — INFINITAS 프로세스에서 주어진 문자열 (UTF-16LE + ASCII 둘 다)
+  // 검색해서 매칭되는 모든 절대 주소 + module base 기준 상대 offset 반환
+  // ASLR 대응 — 다음 실행에선 새 base + 저장된 offset 으로 읽음
+  'memory:scan': async (...args: never[]) => {
+    const exeName = (args[0] as string) || 'bm2dx.exe';
+    const text = args[1] as string;
+    if (!text) return { ok: false, error: '검색할 문자열이 비어있음' };
+    const found = findInfinitas(exeName);
+    if (!found) {
+      return { ok: false, error: `프로세스 "${exeName}" 못 찾음 (게임 실행 중인지 확인)` };
+    }
+    try {
+      const results = scanString(found.handle, text);
+      const flat = results.flatMap((r) =>
+        r.matches.map((abs) => ({
+          encoding: r.encoding,
+          absolute: '0x' + abs.toString(16),
+          // base 기준 상대 offset (음수 가능 — 모듈 밖 메모리)
+          relative:
+            (abs >= found.modBaseAddr ? '+0x' : '-0x') +
+            (abs >= found.modBaseAddr
+              ? abs - found.modBaseAddr
+              : found.modBaseAddr - abs
+            ).toString(16),
+          // bigint 직렬화 어려워서 string 으로
+          relativeRaw:
+            abs >= found.modBaseAddr
+              ? (abs - found.modBaseAddr).toString()
+              : '-' + (found.modBaseAddr - abs).toString(),
+        })),
+      );
+      return {
+        ok: true,
+        modBase: '0x' + found.modBaseAddr.toString(16),
+        modSize: found.modBaseSize,
+        results: flat,
+      };
+    } finally {
+      closeHandle(found.handle);
+    }
+  },
+
+  // 주어진 heap 주소를 가리키는 static pointer 들 찾기 + 가장 가까운 Reflux anchor 와의 delta 계산.
+  // 1차: 직접 매칭 (pointer value == heapAddr) — 이상적 케이스, valueOffset = 0
+  // 2차 (fallback): pointer 가 [heapAddr - 0x1000, heapAddr] 범위 (struct base) 를 가리킴
+  //   → valueOffset = heapAddr - pointerTarget = struct 안의 string 위치
+  // 저장된 (anchor, delta, valueOffset) 로 다음 실행에서 자동 따라감
+  'memory:find-anchor': async (...args: never[]) => {
+    const exeName = (args[0] as string) || 'bm2dx.exe';
+    const heapAddrStr = args[1] as string;
+    if (!heapAddrStr) return { ok: false, error: 'heap address 비어있음' };
+    const found = findInfinitas(exeName);
+    if (!found) return { ok: false, error: '프로세스 못 찾음' };
+    try {
+      const heapAddr = BigInt(heapAddrStr);
+
+      // 1차: 직접 매칭
+      const directPtrs = scanForPointer(
+        found.handle,
+        found.modBaseAddr,
+        found.modBaseSize,
+        heapAddr,
+      );
+      // (ptr 위치, struct base = ptr 가리키는 값, valueOffset = heapAddr - struct base)
+      let pointerHits: { ptrAddr: bigint; targetValue: bigint; valueOffset: bigint }[] =
+        directPtrs.map((p) => ({ ptrAddr: p, targetValue: heapAddr, valueOffset: 0n }));
+
+      // 2차: 직접 매칭 0개면 struct base 추정 (앞 4096 바이트까지 거슬러)
+      if (pointerHits.length === 0) {
+        const STRUCT_LOOKBACK = 0x1000n;
+        const ranged = scanForPointersInRange(
+          found.handle,
+          found.modBaseAddr,
+          found.modBaseSize,
+          heapAddr - STRUCT_LOOKBACK,
+          heapAddr,
+        );
+        pointerHits = ranged.map((r) => ({
+          ptrAddr: r.ptrAddr,
+          targetValue: r.targetValue,
+          valueOffset: heapAddr - r.targetValue,
+        }));
+      }
+
+      if (pointerHits.length === 0) {
+        return {
+          ok: false,
+          error:
+            '정적 영역에서 이 heap 주소 (또는 그 근처 4KB) 를 가리키는 pointer 못 찾음. 다른 매칭으로 시도해주세요',
+        };
+      }
+
+      // Reflux offsets 로드 → 가장 가까운 anchor 와 delta 계산
+      const refluxOff = await readRefluxOffsets();
+      const candidates = pointerHits.map((h) => {
+        const ptrRel = h.ptrAddr - found.modBaseAddr;
+        let bestAnchor: { name: string; delta: bigint } | null = null;
+        if (refluxOff) {
+          for (const [name, anchorRel] of Object.entries(refluxOff.relative)) {
+            const delta = ptrRel - anchorRel;
+            if (
+              !bestAnchor ||
+              (delta < 0n ? -delta : delta) <
+                (bestAnchor.delta < 0n ? -bestAnchor.delta : bestAnchor.delta)
+            ) {
+              bestAnchor = { name, delta };
+            }
+          }
+        }
+        return {
+          pointerAbs: '0x' + h.ptrAddr.toString(16),
+          pointerRel: ptrRel.toString(),
+          anchorName: bestAnchor?.name ?? null,
+          anchorDelta: bestAnchor?.delta.toString() ?? null,
+          valueOffset: h.valueOffset.toString(), // struct base → string 안의 위치
+        };
+      });
+
+      return {
+        ok: true,
+        modBase: '0x' + found.modBaseAddr.toString(16),
+        candidates,
+        refluxVersion: refluxOff?.version ?? null,
+        // 디버그용: 직접 매칭 / 범위 매칭 각각 몇 개였나
+        directHits: directPtrs.length,
+      };
+    } finally {
+      closeHandle(found.handle);
+    }
+  },
+
+  // 저장된 (anchor, delta, valueOffset) 로 string 읽기:
+  //   1. modBase + (anchor 의 현재 relative) + delta = static pointer 위치
+  //   2. *pointer = struct base (heap)
+  //   3. struct base + valueOffset = string 시작 위치
+  //   4. 그 위치에서 encoding 에 맞춰 read
+  'memory:read-via-anchor': async (...args: never[]) => {
+    const exeName = (args[0] as string) || 'bm2dx.exe';
+    const anchorName = args[1] as string;
+    const deltaStr = args[2] as string;
+    const encoding = (args[3] as 'utf16le' | 'ascii') || 'utf16le';
+    const maxBytes = (args[4] as number) || 64;
+    const valueOffsetStr = (args[5] as string) || '0';
+    const refluxOff = await readRefluxOffsets();
+    if (!refluxOff || !(anchorName in refluxOff.relative)) {
+      return { ok: false, error: `Reflux offsets 에 "${anchorName}" 없음` };
+    }
+    const found = findInfinitas(exeName);
+    if (!found) return { ok: false, error: '프로세스 못 찾음' };
+    try {
+      const anchorRel = refluxOff.relative[anchorName];
+      const delta = BigInt(deltaStr);
+      const valueOffset = BigInt(valueOffsetStr);
+      const pointerLoc = found.modBaseAddr + anchorRel + delta;
+      const structBase = readPointer(found.handle, pointerLoc);
+      if (structBase === 0n) return { ok: false, error: 'pointer 가 null' };
+      const valueAddr = structBase + valueOffset;
+      const buf = readBytes(found.handle, valueAddr, maxBytes);
+      const text = decodeString(buf, encoding as StringEncoding);
+      return { ok: true, text };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    } finally {
+      closeHandle(found.handle);
+    }
+  },
+
+  // 저장된 offset 으로 문자열 읽기 — module base 다시 찾고 + offset 더해서 read
+  'memory:read-string': async (...args: never[]) => {
+    const exeName = (args[0] as string) || 'bm2dx.exe';
+    const relativeOffset = args[1] as string; // bigint string
+    const encoding = (args[2] as StringEncoding) || 'utf16le';
+    const maxBytes = (args[3] as number) || 64;
+    const found = findInfinitas(exeName);
+    if (!found) return { ok: false, error: '프로세스 못 찾음' };
+    try {
+      const offset = BigInt(relativeOffset);
+      const addr = found.modBaseAddr + offset;
+      const buf = readBytes(found.handle, addr, maxBytes);
+      const text = decodeString(buf, encoding);
+      return { ok: true, text };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    } finally {
+      closeHandle(found.handle);
+    }
   },
 
   // 진단

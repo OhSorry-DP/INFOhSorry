@@ -20,6 +20,15 @@ const api = {
     stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('reflux:stop'),
     getState: (): Promise<RefluxState> => ipcRenderer.invoke('reflux:state'),
     getTsvPath: (): Promise<string> => ipcRenderer.invoke('reflux:tsvPath'),
+    // offsets.txt 파싱 — anchor 절대주소 + module-base 기준 상대 offset
+    getOffsets: (): Promise<{
+      ok: boolean;
+      error?: string;
+      version?: string;
+      entries?: Record<string, string>;
+      relative?: Record<string, string>;
+      mtime?: number;
+    }> => ipcRenderer.invoke('reflux:offsets'),
     onState: (cb: (s: RefluxState) => void): (() => void) => {
       const listener = (_evt: unknown, state: RefluxState): void => cb(state);
       ipcRenderer.on('reflux:state', listener);
@@ -51,6 +60,61 @@ const api = {
 
   // 진단용 (현재 미사용, 나중에 INFINITAS 실행 감지에 활용)
   probe: (exeName: string): Promise<ProbeResult> => ipcRenderer.invoke('memory:probe', exeName),
+
+  // 메모리 스캐너 (DJ NAME / IIDX ID offset 찾기 + 저장된 offset 으로 읽기)
+  memory: {
+    scan: (
+      exeName: string,
+      text: string,
+    ): Promise<{
+      ok: boolean;
+      error?: string;
+      modBase?: string;
+      modSize?: number;
+      results?: { encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis'; absolute: string; relative: string; relativeRaw: string }[];
+    }> => ipcRenderer.invoke('memory:scan', exeName, text),
+    readString: (
+      exeName: string,
+      relativeOffset: string,
+      encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
+      maxBytes?: number,
+    ): Promise<{ ok: boolean; text?: string; error?: string }> =>
+      ipcRenderer.invoke('memory:read-string', exeName, relativeOffset, encoding, maxBytes),
+    findAnchor: (
+      exeName: string,
+      heapAddr: string,
+    ): Promise<{
+      ok: boolean;
+      error?: string;
+      modBase?: string;
+      candidates?: {
+        pointerAbs: string;
+        pointerRel: string;
+        anchorName: string | null;
+        anchorDelta: string | null;
+        valueOffset: string;
+      }[];
+      refluxVersion?: string | null;
+      directHits?: number;
+    }> => ipcRenderer.invoke('memory:find-anchor', exeName, heapAddr),
+    readViaAnchor: (
+      exeName: string,
+      anchorName: string,
+      delta: string,
+      encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
+      maxBytes?: number,
+      valueOffset?: string,
+    ): Promise<{ ok: boolean; text?: string; error?: string }> =>
+      ipcRenderer.invoke(
+        'memory:read-via-anchor',
+        exeName,
+        anchorName,
+        delta,
+        encoding,
+        maxBytes,
+        valueOffset,
+      ),
+  },
 
   // 셸 액션
   shell: {

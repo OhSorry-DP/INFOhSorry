@@ -15,6 +15,17 @@ import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
 import Dp12Table from './Dp12Table';
 import { ThemeToggle, WindowControls } from './theme';
+import { MemoryScanner } from './MemoryScanner';
+import { ProfileCard } from './ProfileCard';
+import { useProfile } from './useProfile';
+import { uploadProfile } from './supabaseSync';
+import { IS_BROWSER_REMOTE } from './api';
+
+// 빌드 시 package.json 의 version 으로 채워짐 (electron-vite define 또는 hardcode 갱신)
+const APP_VERSION = '0.0.10';
+// Supabase 자동 업로드 주기 — 값 바뀔때마다 하면 트래픽/노이즈 부담이라 3분에 한 번.
+// 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
+const SUPABASE_INTERVAL_MS = 3 * 60 * 1000;
 
 type Tab = 'sp' | 'dp' | 'dp12';
 
@@ -43,6 +54,20 @@ export default function App() {
   });
   const [rows, setRows] = useState<SongRow[]>([]);
   const [tab, setTab] = useState<Tab>('dp');
+  const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
+  // 개발 모드 — 호스트 (Electron) 에서만 콘솔에 startdev() 노출. PC2 (브라우저 원격) 에선 비활성.
+  // 활성 시 Reflux 토글 / 프로필 스캐너 / StarPanel 등 디버그 요소 표시.
+  const [devMode, setDevMode] = useState(false);
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
+    (window as unknown as { startdev?: () => void }).startdev = () => {
+      setDevMode(true);
+      console.log('[dev] startdev() — Reflux 토글 / 프로필 스캐너 / StarPanel 활성');
+    };
+    return () => {
+      delete (window as unknown as { startdev?: () => void }).startdev;
+    };
+  }, []);
   const [tsvPath, setTsvPath] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -348,6 +373,63 @@ export default function App() {
     return estimateStar(dp12StarInputs.fitData, dp12StarInputs.poolCharts);
   }, [dp12StarInputs]);
 
+  // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
+  const profile = useProfile(refluxState);
+
+  // Supabase 자동 업로드 — 10분 간격 + 콘솔에서 수동 호출 (window.updateSupabase()).
+  // 값 바뀔때마다 올리면 dp12 데이터 갱신마다 디비 hit 라 부담 → 주기 호출로 변경.
+  // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
+  // 최신 profile / star / match 는 ref 로 추적 — 매 interval 시 최신 값 사용.
+  const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match });
+  uploadStateRef.current = { profile, dp12StarResult, dp12Match };
+
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
+
+    const tryUpload = (trigger: 'auto' | 'manual'): void => {
+      const { profile: p, dp12StarResult: s, dp12Match: m } = uploadStateRef.current;
+      const tag = trigger === 'manual' ? '[supabase:manual]' : '[supabase:auto]';
+      if (!p.iidxId || !p.djName) {
+        console.log(`${tag} skip: 프로필 미로드`, { iidxId: p.iidxId, djName: p.djName });
+        return;
+      }
+      if (!/^[A-Z]\d{12}$/.test(p.iidxId)) {
+        console.log(`${tag} skip: IIDX ID 형식 불일치 —`, p.iidxId);
+        return;
+      }
+      if (!s) {
+        console.log(`${tag} skip: ★ 추정 결과 없음`);
+        return;
+      }
+      if (!m) {
+        console.log(`${tag} skip: dp12Match 없음`);
+        return;
+      }
+      console.log(`${tag} 업로드 시작 → iidxId:`, p.iidxId, 'star:', s.star.toFixed(2));
+      void uploadProfile({
+        appVersion: APP_VERSION,
+        profile: p,
+        starResult: s,
+        charts: m.charts,
+      }).then((r) => {
+        if (r.ok) console.log(`${tag} 업로드 성공`);
+        else console.warn(`${tag} upsert 실패:`, r.error);
+      });
+    };
+
+    // 콘솔 수동 호출 — updateSupabase()
+    (window as unknown as { updateSupabase: () => void }).updateSupabase = (): void =>
+      tryUpload('manual');
+
+    const interval = window.setInterval(() => tryUpload('auto'), SUPABASE_INTERVAL_MS);
+    console.log(`[supabase] 자동 업로드 활성화 — ${SUPABASE_INTERVAL_MS / 60000}분 간격, 수동: updateSupabase()`);
+
+    return (): void => {
+      window.clearInterval(interval);
+      delete (window as unknown as { updateSupabase?: () => void }).updateSupabase;
+    };
+  }, []);
+
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:
   //   - 초기 / reroll 클릭: buildRecsWithPool 로 picked (10개 표시) + pool (보충용 남은 후보) 새로 뽑음
@@ -495,7 +577,18 @@ export default function App() {
           <div className="header-cluster">
             {/* 탭이 안 보일 때 (초기 로딩) 만 헤더에 — 탭 등장하면 탭 line 으로 이동 */}
             {rows.length === 0 && <StageSpinner state={refluxState} />}
-            {(() => {
+            {!IS_BROWSER_REMOTE && devMode && (
+              <button
+                type="button"
+                className="ms-toggle"
+                onClick={() => setMemoryScannerOpen(true)}
+                title="프로필 스캐너 (DJ NAME / IIDX ID) — dev 모드"
+                aria-label="프로필 스캐너"
+              >
+                🔍
+              </button>
+            )}
+            {!IS_BROWSER_REMOTE && devMode && (() => {
               const isRunning =
                 refluxState.stage !== 'idle' && refluxState.stage !== 'error';
               // 다운로드 중일 때만 비활성 — hooking(대기) / starting / hooked / ready 는 모두 끌 수 있음
@@ -519,6 +612,9 @@ export default function App() {
         <WindowControls />
       </header>
 
+      {memoryScannerOpen && <MemoryScanner onClose={() => setMemoryScannerOpen(false)} />}
+
+      <div className="app-body">
       <RefluxLog state={refluxState} />
 
       {error && <div className="error">에러: {error}</div>}
@@ -534,6 +630,7 @@ export default function App() {
 
       {rows.length > 0 && (
         <>
+          <ProfileCard profile={profile} starResult={dp12StarResult} />
           <nav className="tabs">
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
               DP
@@ -564,19 +661,21 @@ export default function App() {
           <main className="content">
             {tab === 'dp12' ? (
               <>
-                <StarPanel
-                  result={dp12StarResult}
-                  matched={dp12Match?.matched ?? 0}
-                  unmatched={dp12Match?.unmatched ?? 0}
-                  fitDataCount={dp12StarInputs?.fitData.length ?? 0}
-                  matchedNonNp={dp12Match?.charts.filter((c) => c.lampNum > 0).length ?? 0}
-                  ereterReady={!!ereterData}
-                  unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
-                  unmatchedAll={dp12Match?.unmatchedAll ?? []}
-                  ereterStatus={ereterStatus}
-                  ereterBusy={ereterBusy}
-                  onRefreshEreter={() => refreshEreter(true)}
-                />
+                {!IS_BROWSER_REMOTE && devMode && (
+                  <StarPanel
+                    result={dp12StarResult}
+                    matched={dp12Match?.matched ?? 0}
+                    unmatched={dp12Match?.unmatched ?? 0}
+                    fitDataCount={dp12StarInputs?.fitData.length ?? 0}
+                    matchedNonNp={dp12Match?.charts.filter((c) => c.lampNum > 0).length ?? 0}
+                    ereterReady={!!ereterData}
+                    unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
+                    unmatchedAll={dp12Match?.unmatchedAll ?? []}
+                    ereterStatus={ereterStatus}
+                    ereterBusy={ereterBusy}
+                    onRefreshEreter={() => refreshEreter(true)}
+                  />
+                )}
                 {dp12StarResult && (recsEC.picked.length > 0 || recsHC.picked.length > 0 || recsEXH.picked.length > 0) && (
                   <Recommendations
                     recsEC={recsEC.picked}
@@ -596,6 +695,7 @@ export default function App() {
           </main>
         </>
       )}
+      </div>
     </div>
   );
 }

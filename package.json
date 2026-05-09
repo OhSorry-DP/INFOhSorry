@@ -1,6 +1,6 @@
 {
   "name": "infohsorry",
-  "version": "0.0.9",
+  "version": "0.0.10",
   "description": "ohSorryScoreINF",
   "productName": "ohSorryScoreINF",
   "main": "./out/main/index.js",
@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "html2canvas": "^1.4.1",
+    "iconv-lite": "^0.7.2",
     "koffi": "^2.16.0",
     "node-html-parser": "^7.1.0"
   },

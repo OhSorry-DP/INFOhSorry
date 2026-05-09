@@ -85,6 +85,7 @@ if (!IS_HOST) {
       stop: () => callIpc('reflux:stop') as ReturnType<Window['infohsorry']['reflux']['stop']>,
       getState: () => callIpc('reflux:state') as Promise<RefluxState>,
       getTsvPath: () => callIpc('reflux:tsvPath') as Promise<string>,
+      getOffsets: () => callIpc('reflux:offsets') as ReturnType<Window['infohsorry']['reflux']['getOffsets']>,
       onState,
     },
     ereter: {
@@ -100,6 +101,35 @@ if (!IS_HOST) {
     },
     saveImage: browserDownloadPng,
     probe: (exeName: string) => callIpc('memory:probe', exeName) as Promise<ProbeResult>,
+    memory: {
+      scan: (exeName: string, text: string) =>
+        callIpc('memory:scan', exeName, text) as ReturnType<Window['infohsorry']['memory']['scan']>,
+      readString: (exeName: string, off: string, enc: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis', maxBytes?: number) =>
+        callIpc('memory:read-string', exeName, off, enc, maxBytes) as ReturnType<
+          Window['infohsorry']['memory']['readString']
+        >,
+      findAnchor: (exeName: string, heapAddr: string) =>
+        callIpc('memory:find-anchor', exeName, heapAddr) as ReturnType<
+          Window['infohsorry']['memory']['findAnchor']
+        >,
+      readViaAnchor: (
+        exeName: string,
+        anchor: string,
+        delta: string,
+        enc: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
+        maxBytes?: number,
+        valueOffset?: string,
+      ) =>
+        callIpc(
+          'memory:read-via-anchor',
+          exeName,
+          anchor,
+          delta,
+          enc,
+          maxBytes,
+          valueOffset,
+        ) as ReturnType<Window['infohsorry']['memory']['readViaAnchor']>,
+    },
     shell: {
       showInFolder: (path: string) =>
         callIpc('shell:showInFolder', path) as Promise<{ ok: boolean }>,

@@ -1,0 +1,89 @@
+// Supabase user_profiles upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
+// ohSorry 와 같은 DB / 같은 RPC (upsert_user_profile) 를 사용해서 통합 추적.
+//
+// 차이점:
+//   - iidx_id 형식: ohSorry 는 8자리 숫자 (xxxx-xxxx 의 하이픈 제거),
+//                    INFOhSorry 는 "C293036891870" (C + 12자리)
+//   - version 필드: 'INFv0.0.9' 등으로 ohSorry / INFOhSorry 구분
+//   - series 필드: 'INF' (INFINITAS)
+//   - charts_json: INFOhSorry 의 dp12 charts (slot 정보 포함)
+//
+// fire-and-forget — 실패해도 사용자 경험에 영향 X.
+import type { ProfileInfo } from './useProfile';
+import type { StarResult } from '../../shared/star-estimator';
+import type { RecInputChart } from '../../shared/recommend';
+
+const SUPABASE_URL = 'https://ryesiijulrlmstmhzpnv.supabase.co';
+// Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
+const SUPABASE_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJ5ZXNpaWp1bHJsbXN0bWh6cG52Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgxNzAxNDAsImV4cCI6MjA5Mzc0NjE0MH0.KaKa241XpXbRkdM0C3euyUM3jOX673ijd319HFFFxwA';
+
+export interface UploadInput {
+  appVersion: string; // package.json version, e.g. '0.0.9'
+  profile: ProfileInfo;
+  starResult: StarResult;
+  charts: RecInputChart[]; // dp12Match.charts (★11.6~12.7 ereter 매칭된 차트)
+  // 선택: ereter 매핑 있으면 함께 (대개 INF ID 는 ereter 에 없어 null)
+  ereterStar?: number | null;
+}
+
+export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; error?: string }> {
+  const { appVersion, profile, starResult, charts, ereterStar } = input;
+
+  // iidx_id 정규화 — 하이픈 제거 (게임 메모리에 이미 하이픈 없는 형식이라 그대로지만 안전망)
+  const rawId = profile.iidxId;
+  if (!rawId) return { ok: false, error: 'iidx_id 없음' };
+  const iidxIdNorm = rawId.replace(/-/g, '');
+
+  // ☆12 lamp 통계
+  let nPlayedLv12 = 0;
+  let nClearedLv12 = 0;
+  let hcCount = 0;
+  let exhCount = 0;
+  let fcCount = 0;
+  for (const c of charts) {
+    if (c.lampNum > 0) nPlayedLv12++;
+    if (c.lampNum >= 3) nClearedLv12++;
+    if (c.lampNum >= 5) hcCount++;
+    if (c.lampNum >= 6) exhCount++;
+    if (c.lampNum === 7) fcCount++;
+  }
+
+  const payload = {
+    iidx_id: iidxIdNorm,
+    dj_name: profile.djName ?? null,
+    star_estimate: Number(starResult.star.toFixed(4)),
+    ereter_star: ereterStar != null ? Number(ereterStar) : null,
+    raw_s: Number(starResult.raw.toFixed(4)),
+    version: `INFv${appVersion}`,
+    sp_rank: profile.spRank ?? null,
+    dp_rank: profile.dpRank ?? null,
+    n_cleared: nClearedLv12,
+    n_played_lv12: nPlayedLv12,
+    fc_count: fcCount,
+    hc_count: hcCount,
+    exh_count: exhCount,
+    level_filter: 'lv12',
+    series: 'INF',
+    charts_json: charts,
+  };
+
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_profile`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+      },
+      body: JSON.stringify({ p: payload }),
+    });
+    if (!res.ok) {
+      const errText = await res.text().catch(() => '');
+      return { ok: false, error: `HTTP ${res.status} ${errText}` };
+    }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
