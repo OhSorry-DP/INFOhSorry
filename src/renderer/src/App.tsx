@@ -217,6 +217,9 @@ export default function App() {
           ec: e.ec,
           hc: e.hc,
           exh: e.exh,
+          ec_n: e.ec_n,
+          hc_n: e.hc_n,
+          exh_n: e.exh_n,
         });
       }
     }

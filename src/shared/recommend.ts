@@ -27,6 +27,9 @@ export interface RecInputChart {
   ec: number | null;
   hc: number | null;
   exh: number | null;
+  ec_n: number | null; // 해당 stage 클리어 인구수 (이레터넷의 ec_count)
+  hc_n: number | null;
+  exh_n: number | null;
 }
 
 export interface RecCandidate {
@@ -38,7 +41,11 @@ export interface RecCandidate {
   ec: number | null;
   hc: number | null;
   exh: number | null;
+  ec_n: number | null;
+  hc_n: number | null;
+  exh_n: number | null;
   diffValue: number; // 해당 stage 의 ★
+  diffCount: number; // 해당 stage 의 클리어 인구수 (정렬용)
   margin: number; // baseStar - diffValue (음수면 도전, 양수면 정리)
   category: 'challenge' | 'cleanup';
 }
@@ -80,6 +87,8 @@ export function buildRecsWithPool(
   if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
   const threshold = STAGE_THRESHOLD[stage];
   const offset = challengeOffset(baseStar);
+  // stage 별 클리어 인구수 필드
+  const countField = (stage + '_n') as 'ec_n' | 'hc_n' | 'exh_n';
 
   const challenge: RecCandidate[] = [];
   const cleanup: RecCandidate[] = [];
@@ -87,6 +96,7 @@ export function buildRecsWithPool(
     if (c.lampNum >= threshold) continue; // 이미 그 stage 클리어한 곡 skip
     const dv = c[stage];
     if (typeof dv !== 'number') continue;
+    const dn = c[countField];
     const item: RecCandidate = {
       title: c.title,
       slot: c.slot,
@@ -96,7 +106,11 @@ export function buildRecsWithPool(
       ec: c.ec,
       hc: c.hc,
       exh: c.exh,
+      ec_n: c.ec_n,
+      hc_n: c.hc_n,
+      exh_n: c.exh_n,
       diffValue: dv,
+      diffCount: typeof dn === 'number' ? dn : 0,
       margin: baseStar - dv,
       category: 'cleanup',
     };
@@ -109,9 +123,18 @@ export function buildRecsWithPool(
     }
   }
 
-  // 풀에서 랜덤 10곡씩 샘플링 (총 20곡 후보)
-  const challengeRand = shuffle(challenge).slice(0, 10);
-  const cleanupRand = shuffle(cleanup).slice(0, 10);
+  // 도전곡 / 정리곡 후보 각 10곡 = 카운트 많은 순 5 + 순 랜덤 5 (중복 제거).
+  // 합친 10곡을 다시 셔플 → picked 선택 시 순서 무관해짐 (표시는 후에 ★ desc 정렬).
+  const sample10ByCountAndRandom = (pool: RecCandidate[]): RecCandidate[] => {
+    const byCount = [...pool].sort((a, b) => b.diffCount - a.diffCount);
+    const top5 = byCount.slice(0, 5);
+    const usedKeys = new Set(top5.map(keyOf));
+    const rest = pool.filter((r) => !usedKeys.has(keyOf(r)));
+    const rand5 = shuffle(rest).slice(0, 5);
+    return shuffle([...top5, ...rand5]);
+  };
+  const challengeRand = sample10ByCountAndRandom(challenge);
+  const cleanupRand = sample10ByCountAndRandom(cleanup);
 
   // picked = 도전 6 + 정리 4, 한 쪽 부족하면 다른 쪽에서 보충해서 총 10
   const used = new Set<string>();
