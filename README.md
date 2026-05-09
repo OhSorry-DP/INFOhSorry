@@ -1,6 +1,6 @@
-# IIDX INFINITAS DP Play Data Viewer
+# IIDX INFINITAS DP Play Data Viewer - by오소리
 
-일렉트론 데스크탑 앱 — INFINITAS 의 메모리에서 플레이 데이터를 추출 (Reflux 활용) 하고, ereter.net 의 ★ 데이터와 매칭해서 DP ☆12 별값 추정 / 추천곡 분석을 보여줍니다.
+IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. INFINITAS 의 메모리에서 플레이 데이터를 추출 (Reflux 활용) 하고, ereter.net 의 ★ 데이터와 매칭해서 DP ☆12 별값 추정 / 추천곡 분석을 보여줍니다.
 
 ## 주요 기능
 
@@ -17,8 +17,8 @@
 
 | 파일 | 설명 |
 |---|---|
-| `IIDX INFINITAS DP Play Data Viewer Setup 0.0.2.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `IIDX-INFINITAS-DP-Viewer-0.0.2-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF Setup 0.0.3.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.3-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -29,13 +29,11 @@
 3. 게임에서 **곡 선택 화면 한 번 진입** → tracker.tsv 자동 dump → 표 자동 표시
 4. 이후 곡 선택 갈 때마다 자동 갱신
 
-## LAN 원격 제어
+## LAN 원격 제어(투컴 방송용)
 
-PC1 (호스트) 에서 앱 실행 → 콘솔에 표시되는 `http://192.168.x.x:3000` 을 PC2 의 Chrome 으로 접속.
+PC1 (호스트, 게임실항하는 PC) 에서 앱 실행 → 콘솔에 표시되는 `http://192.168.x.x:3000` 을 PC2 의 Chrome 으로 접속.
 
 PC2 의 화면이 PC1 과 같고, 모든 버튼 (데이터 불러오기 / ereter 갱신 / 캡처 등) 이 PC1 에서 실행됩니다. PC2 는 단순 원격 클라이언트.
-
-> **주의**: production 빌드 (`.exe`) 에서만 동작. dev 모드 (`npm run dev`) 는 vite 만 띄우고 LAN 서버 X.
 
 ## 데이터 저장 위치
 
@@ -66,7 +64,6 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 라이선스 + 크레딧
 
-- 본 프로젝트 코드: 비공개
 - [olji/Reflux](https://github.com/olji/Reflux) (MIT) — INFINITAS 메모리 리더 / tracker.tsv 출처
 - [ereter.net](https://ereter.net/) — ★ 데이터 출처
 - ohSorry — 별값 추정 / 추천곡 모델 (v3.2.9) 의 원본 (e-amusement 아케이드 IIDX 도구)

@@ -55,6 +55,7 @@ export default function App() {
   const [ereterData, setEreterData] = useState<EreterData | null>(null);
 
   // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
+  // 추가: tracker.tsv 가 1시간 이상 지났으면 자동으로 Reflux 재실행해서 갱신.
   // browser 모드 (LAN) 에서는 window.infohsorry 가 HTTP bridge 로 자동 patch (api.ts).
   useEffect(() => {
     const off = window.infohsorry.reflux.onState((s) => setRefluxState(s));
@@ -69,6 +70,13 @@ export default function App() {
         if (r.mtime) {
           lastLoadedMtime.current = r.mtime;
           setTsvMtime(r.mtime);
+        }
+        // 캐시된 tsv 가 1시간 이상 지났고, Reflux 가 아직 안 떠 있으면 자동 시작.
+        // (Reflux 가 hook 후 게임에서 곡 선택 화면 진입하면 새 tsv 가 dump 됨)
+        const STALE_MS = 60 * 60 * 1000;
+        const tsvAge = r.mtime ? Date.now() - r.mtime : Infinity;
+        if (tsvAge > STALE_MS && !state.spawned) {
+          void window.infohsorry.reflux.start();
         }
       }
     })();
@@ -139,14 +147,6 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }
-
-  // 수동 TSV 선택 (디버깅 / 다른 위치의 TSV 파일 보고 싶을 때)
-  async function pickAndLoad(): Promise<void> {
-    const picked = await window.infohsorry.pickTsv();
-    if (!picked) return;
-    setTsvPath(picked);
-    await loadTsv(picked);
   }
 
   // SP/DP 탭의 통계
@@ -299,22 +299,14 @@ export default function App() {
           </h1>
         </div>
         <div className="actions">
-          <button className="btn-primary" onClick={startReflux} disabled={busy}>
-            데이터 불러오기
-          </button>
-          <button onClick={pickAndLoad} disabled={busy} title="다른 TSV 파일 직접 선택">
-            TSV 직접 선택
-          </button>
-          <button
-            onClick={() => void window.infohsorry.reflux.openDir()}
-            title="Reflux 작업 폴더를 탐색기로 열기"
-          >
-            폴더 열기
-          </button>
+          <StageSpinner state={refluxState} />
+          {(rows.length === 0 || !refluxState.installed) && (
+            <button className="btn-primary" onClick={startReflux} disabled={busy}>
+              데이터 불러오기
+            </button>
+          )}
         </div>
       </header>
-
-      <ProgressBar state={refluxState} />
 
       <RefluxLog state={refluxState} />
 
@@ -651,62 +643,38 @@ function RefluxLog({ state }: { state: RefluxState }): JSX.Element | null {
 }
 
 // ============================================================
-// 단계별 진행 상태 표시
+// 단계별 진행 상태 — 데이터 불러오기 버튼 옆에 인라인 스피너 + 한 줄 텍스트
 // ============================================================
-function ProgressBar({ state }: { state: RefluxState }): JSX.Element | null {
-  // idle / ready 일 때는 진행바 숨김 — idle 은 시작 전, ready 는 완료 후라 둘 다 방해 X
-  if (state.stage === 'idle' || state.stage === 'ready') return null;
-
-  const steps = [
-    {
-      key: 'install',
-      label: 'Reflux 다운로드',
-      status: state.installed ? 'done' : state.stage === 'downloading' ? 'active' : 'pending',
-    },
-    {
-      key: 'spawn',
-      label: 'Reflux 실행',
-      status: state.spawned ? 'done' : state.stage === 'starting' ? 'active' : 'pending',
-    },
-    {
-      key: 'hook',
-      label: 'INFINITAS hook',
-      status: ['hooked', 'ready'].includes(state.stage)
-        ? 'done'
-        : state.stage === 'hooking'
-        ? 'active'
-        : 'pending',
-    },
-    {
-      key: 'dump',
-      label: '첫 데이터 dump',
-      // 'ready' 일 때는 위에서 early return 으로 진행바 자체가 숨겨짐 — 여기 도달하면 항상 pending
-      status: 'pending' as const,
-    },
-  ];
-
+function StageSpinner({ state }: { state: RefluxState }): JSX.Element | null {
+  let text: string | null = null;
+  switch (state.stage) {
+    case 'downloading': {
+      const dl = state.download;
+      if (dl && dl.total > 0) {
+        const mb = (dl.bytes / 1024 / 1024).toFixed(1);
+        const total = (dl.total / 1024 / 1024).toFixed(1);
+        text = `Reflux 다운로드 ${mb} / ${total} MB`;
+      } else {
+        text = 'Reflux 다운로드 중';
+      }
+      break;
+    }
+    case 'starting':
+      text = 'Reflux 실행 중';
+      break;
+    case 'hooking':
+      text = 'INFINITAS 대기 중';
+      break;
+    case 'hooked':
+      text = '곡 선택 화면 진입 대기';
+      break;
+    default:
+      return null;
+  }
   return (
-    <div className="progress">
-      {steps.map((s) => (
-        <div key={s.key} className={`step step-${s.status}`}>
-          <span className="step-mark">
-            {s.status === 'done' ? 'O' : s.status === 'active' ? '...' : '-'}
-          </span>
-          <span className="step-label">{s.label}</span>
-        </div>
-      ))}
-      {state.stage === 'downloading' && state.download && (
-        <div className="dl-progress">
-          {(state.download.bytes / 1024 / 1024).toFixed(1)} /{' '}
-          {(state.download.total / 1024 / 1024).toFixed(1)} MB
-        </div>
-      )}
-      {state.stage === 'hooking' && (
-        <div className="hint-line">INFINITAS 가 켜져있는지 확인해주세요.</div>
-      )}
-      {state.stage === 'hooked' && (
-        <div className="hint-line">게임의 곡 선택 화면에 한 번 가시면 데이터가 옵니다.</div>
-      )}
-    </div>
+    <span className="stage-spinner">
+      <span className="spinner" aria-hidden="true" />
+      <span>{text}</span>
+    </span>
   );
 }

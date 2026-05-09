@@ -9,8 +9,7 @@ import type {
 } from '../shared/types';
 
 const api = {
-  // TSV (수동 파일 선택 / 직접 읽기 — Reflux 외 다른 TSV 도 OK)
-  pickTsv: (): Promise<string | null> => ipcRenderer.invoke('tsv:pick'),
+  // TSV 직접 읽기
   readTsv: (path: string): Promise<TsvReadResult> => ipcRenderer.invoke('tsv:read', path),
 
   // Reflux 관리
@@ -19,7 +18,6 @@ const api = {
     stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('reflux:stop'),
     getState: (): Promise<RefluxState> => ipcRenderer.invoke('reflux:state'),
     getTsvPath: (): Promise<string> => ipcRenderer.invoke('reflux:tsvPath'),
-    openDir: (): Promise<string> => ipcRenderer.invoke('reflux:openDir'),
     onState: (cb: (s: RefluxState) => void): (() => void) => {
       const listener = (_evt: unknown, state: RefluxState): void => cb(state);
       ipcRenderer.on('reflux:state', listener);

@@ -1,8 +1,8 @@
 {
   "name": "infohsorry",
-  "version": "0.0.2",
-  "description": "IIDX INFINITAS DP Play Data Viewer",
-  "productName": "IIDX INFINITAS DP Play Data Viewer",
+  "version": "0.0.3",
+  "description": "ohSorryScoreINF",
+  "productName": "ohSorryScoreINF",
   "main": "./out/main/index.js",
   "private": true,
   "scripts": {
@@ -35,7 +35,7 @@
   },
   "build": {
     "appId": "com.yenkara.infohsorry",
-    "productName": "IIDX INFINITAS DP Play Data Viewer",
+    "productName": "ohSorryScoreINF",
     "directories": {
       "output": "release"
     },
@@ -70,10 +70,10 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "shortcutName": "IIDX INFINITAS DP Play Data Viewer"
+      "shortcutName": "ohSorryScoreINF"
     },
     "portable": {
-      "artifactName": "IIDX-INFINITAS-DP-Viewer-${version}-portable.exe"
+      "artifactName": "ohSorryScoreINF-${version}-portable.exe"
     }
   }
 }

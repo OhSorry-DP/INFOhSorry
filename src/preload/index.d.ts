@@ -11,14 +11,12 @@ import type {
 declare global {
   interface Window {
     infohsorry: {
-      pickTsv: () => Promise<string | null>;
       readTsv: (path: string) => Promise<TsvReadResult>;
       reflux: {
         start: () => Promise<RefluxStartResult>;
         stop: () => Promise<{ ok: boolean }>;
         getState: () => Promise<RefluxState>;
         getTsvPath: () => Promise<string>;
-        openDir: () => Promise<string>;
         onState: (cb: (s: RefluxState) => void) => () => void;
       };
       ereter: {

@@ -12,12 +12,15 @@
 //   - hook 되면 곡 선택 화면 진입할 때마다 tracker.tsv dump
 //   - INFINITAS 종료되면 다시 hook 대기
 import { app } from 'electron';
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, spawn, exec } from 'child_process';
 import { promises as fsp, createWriteStream, existsSync, watch as fsWatch, FSWatcher } from 'fs';
 import { join } from 'path';
 import { request as httpsRequest } from 'https';
 import { EventEmitter } from 'events';
+import { promisify } from 'util';
 import type { RefluxState } from '../shared/types';
+
+const execAsync = promisify(exec);
 
 const RELEASES_API = 'https://api.github.com/repos/olji/Reflux/releases/latest';
 
@@ -169,6 +172,9 @@ export class RefluxManager extends EventEmitter {
   // Reflux 가 출력한 최근 stdout/stderr 라인 (디버깅용, UI 에도 노출)
   private recentLines: string[] = [];
   private static readonly MAX_RECENT = 30;
+  // health check — Reflux.exe 가 hang/crash 했는지 5분마다 확인 후 재시작
+  private healthCheckTimer: NodeJS.Timeout | null = null;
+  private static readonly HEALTH_CHECK_INTERVAL_MS = 5 * 60 * 1000;
 
   getState(): RefluxState {
     return { ...this.state, recentLines: [...this.recentLines] };
@@ -191,7 +197,7 @@ export class RefluxManager extends EventEmitter {
     this.emit('state', this.getState());
   }
 
-  // 한 번에 다 진행: 설치 (필요 시) → config 생성 → spawn → tsv watch
+  // 한 번에 다 진행: 설치 (필요 시) → config 생성 → spawn → tsv watch + health check
   async startAll(): Promise<void> {
     try {
       if (!existsSync(exePath())) {
@@ -203,9 +209,52 @@ export class RefluxManager extends EventEmitter {
       await this.ensureOffsets();
       await this.spawnReflux();
       this.watchTsv();
+      this.startHealthCheck();
     } catch (e) {
       this.setState({ stage: 'error', error: (e as Error).message });
       throw e;
+    }
+  }
+
+  // ============================================================
+  // Health check — Reflux.exe 살아있는지 5분마다 확인, 죽으면 자동 재시작
+  // ============================================================
+  private startHealthCheck(): void {
+    if (this.healthCheckTimer) return;
+    this.healthCheckTimer = setInterval(() => {
+      void this.healthCheck();
+    }, RefluxManager.HEALTH_CHECK_INTERVAL_MS);
+  }
+
+  private stopHealthCheck(): void {
+    if (this.healthCheckTimer) {
+      clearInterval(this.healthCheckTimer);
+      this.healthCheckTimer = null;
+    }
+  }
+
+  // tasklist 로 Reflux.exe 가 떠 있는지 확인. 매치 있으면 stdout 에 "Reflux.exe" 행 포함.
+  private async isRefluxAlive(): Promise<boolean> {
+    if (process.platform !== 'win32') return false;
+    try {
+      const { stdout } = await execAsync('tasklist /FI "IMAGENAME eq Reflux.exe" /NH');
+      return stdout.toLowerCase().includes('reflux.exe');
+    } catch {
+      return false;
+    }
+  }
+
+  private async healthCheck(): Promise<void> {
+    // 사용자가 명시적으로 stop 했으면 (spawned=false) skip
+    if (!this.state.spawned) return;
+    const alive = await this.isRefluxAlive();
+    if (alive) return;
+    this.addLine('(Reflux 죽음 감지 — 자동 재시작)');
+    this.setState({ spawned: false, stage: 'starting' });
+    try {
+      await this.spawnReflux();
+    } catch (e) {
+      console.warn('[reflux] 자동 재시작 실패:', (e as Error).message);
     }
   }
 
@@ -344,6 +393,7 @@ export class RefluxManager extends EventEmitter {
   // `cmd /c start` 방식이라 child.pid 는 cmd 의 것. Reflux 본체는 별도 프로세스로 살아있음.
   // 이름으로 종료: taskkill /F /IM Reflux.exe /T (모든 Reflux.exe 인스턴스 종료)
   async stop(): Promise<void> {
+    this.stopHealthCheck();
     if (this.tsvWatcher) {
       this.tsvWatcher.close();
       this.tsvWatcher = null;

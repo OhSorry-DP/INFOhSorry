@@ -1,4 +1,4 @@
-import { app, BrowserWindow, Menu, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain } from 'electron';
 import { join } from 'path';
 import { readTsv } from './tsv';
 import { findInfinitas, closeHandle } from './memory';
@@ -31,11 +31,6 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     return { ok: true };
   },
   'reflux:tsvPath': async () => RefluxManager.tsvFilePath,
-  'reflux:openDir': async () => {
-    const dir = RefluxManager.workDirectory;
-    await shell.openPath(dir);
-    return dir;
-  },
 
   // Image (캡처)
   'image:save': async (...args: never[]) => {
@@ -76,19 +71,6 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   'ereter:dataPath': async () => getEreterDataPath(),
 
   // TSV
-  'tsv:pick': async () => {
-    if (!mainWindow) return null;
-    const r = await dialog.showOpenDialog(mainWindow, {
-      title: 'Reflux TSV 파일 선택',
-      properties: ['openFile'],
-      filters: [
-        { name: 'TSV 파일', extensions: ['tsv', 'txt'] },
-        { name: '모든 파일', extensions: ['*'] },
-      ],
-    });
-    if (r.canceled || r.filePaths.length === 0) return null;
-    return r.filePaths[0];
-  },
   'tsv:read': async (...args: never[]) => {
     const path = args[0] as string;
     try {
@@ -133,7 +115,7 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
     height: 800,
-    title: 'IIDX INFINITAS DP Play Data Viewer',
+    title: 'ohSorryScoreINF',
     icon: join(__dirname, '../../ohsorry.ico'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),

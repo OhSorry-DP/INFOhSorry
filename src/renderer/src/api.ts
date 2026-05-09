@@ -77,14 +77,12 @@ if (!IS_HOST) {
   // Browser 환경 — window.infohsorry 를 HTTP bridge 로 polyfill
   const onState = makeRefluxStatePoller();
   const bridge: Window['infohsorry'] = {
-    pickTsv: () => callIpc('tsv:pick') as Promise<string | null>,
     readTsv: (path: string) => callIpc('tsv:read', path) as Promise<TsvReadResult>,
     reflux: {
       start: () => callIpc('reflux:start') as ReturnType<Window['infohsorry']['reflux']['start']>,
       stop: () => callIpc('reflux:stop') as ReturnType<Window['infohsorry']['reflux']['stop']>,
       getState: () => callIpc('reflux:state') as Promise<RefluxState>,
       getTsvPath: () => callIpc('reflux:tsvPath') as Promise<string>,
-      openDir: () => callIpc('reflux:openDir') as Promise<string>,
       onState,
     },
     ereter: {
