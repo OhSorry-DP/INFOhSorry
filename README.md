@@ -17,8 +17,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF Setup 0.0.3.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.3-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF Setup 0.0.4.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.4-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -61,6 +61,25 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **node-html-parser** — ereter.net HTML 파싱
 - **html2canvas** — DP RECOMMEND 탭 격자 PNG 캡처
 - **electron-builder 24** — Windows 배포 빌드
+
+## 변경 이력
+
+### 0.0.4
+- **모바일 반응형** — LAN 모드로 폰 / 태블릿 접속 시 글씨 / 버튼 크기 / 레이아웃 자동 조정 (768px / 480px breakpoint)
+- 헤더 / 탭 / 필터 / 차트 표 / 별값 패널 / 추천곡 / DP12 격자 모두 좁은 화면 대응
+- 480px 이하에서는 차트 표의 MISS / SCORE-letter 컬럼 숨김 (공간 확보)
+- 입력 필드 16px 폰트 — iOS Safari 자동 확대 방지
+- viewport meta 추가
+
+### 0.0.3
+- productName 통일 — `ohSorryScoreINF`
+- 캐시된 tracker.tsv 가 1시간 이상 지났으면 앱 시작 시 자동 Reflux 시작
+- 5분 주기 health check — Reflux.exe 가 죽으면 자동 재시작
+- 4단계 진행 바 → 인라인 스피너 + 한 줄 상태 텍스트로 단순화
+- "TSV 직접 선택" / "폴더 열기" 버튼 제거. "데이터 불러오기" 버튼은 데이터 없거나 미설치일 때만 표시
+
+### 0.0.2
+- 초기 안정 릴리즈
 
 ## 라이선스 + 크레딧
 

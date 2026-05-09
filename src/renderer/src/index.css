@@ -1132,3 +1132,204 @@ body {
   margin: 2px;
   justify-content: center;
 }
+
+/* ============================================================
+ * 모바일 반응형 (LAN 모드로 폰 / 태블릿 접속 시)
+ * 가로 너비 768px 이하에서 적용
+ * ============================================================ */
+@media (max-width: 768px) {
+  body {
+    font-size: 14px;
+  }
+
+  /* ----- 헤더: 제목 + 액션 줄바꿈 ----- */
+  .app-header {
+    padding: 10px 12px;
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+  .app-header .title {
+    flex: 1 1 100%;
+  }
+  .app-header h1 {
+    font-size: 16px;
+  }
+  .app-header h1 .by-author {
+    font-size: 10px;
+  }
+  .app-header .actions {
+    width: 100%;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .app-header .actions button {
+    padding: 10px 14px;
+    font-size: 14px;
+    min-height: 40px;
+  }
+  .stage-spinner {
+    font-size: 13px;
+    flex: 1 1 100%;
+  }
+
+  /* ----- 탭 ----- */
+  .tabs {
+    padding: 0 12px;
+    overflow-x: auto;
+    white-space: nowrap;
+    -webkit-overflow-scrolling: touch;
+  }
+  .tab {
+    padding: 12px 14px;
+    font-size: 14px;
+    flex-shrink: 0;
+  }
+  .tab-stats {
+    display: none;
+  }
+
+  /* ----- 콘텐츠 ----- */
+  .content {
+    padding: 0 12px 12px;
+  }
+
+  /* ----- 차트 표 (SP / DP) — 가로 스크롤 + 살짝 압축 ----- */
+  .ct-table {
+    --ct-cols: 10px 34px 220px 64px 90px 120px 60px 50px;
+  }
+  .ct-th,
+  .ct-tr > .ct-cell {
+    padding: 8px 6px;
+    font-size: 13px;
+  }
+  .ct-tr > .ct-cell.num {
+    padding-right: 10px;
+  }
+  .ct-level {
+    font-size: 22px;
+    padding: 2px 4px !important;
+  }
+  .ct-cell.ct-rate-bar .rate-text {
+    font-size: 12px;
+    padding-left: 6px;
+  }
+
+  /* ----- 필터 — 터치 친화 ----- */
+  .ct-filters {
+    padding: 10px 0;
+  }
+  .ct-search {
+    width: 100%;
+    font-size: 16px; /* iOS 자동 줌 방지 (16px 미만이면 줌인 됨) */
+    padding: 9px 12px;
+  }
+  .ct-filter-toggle,
+  .ct-filter-clear {
+    padding: 8px 12px;
+    font-size: 13px;
+    min-height: 36px;
+  }
+  .ct-filter-btn {
+    padding: 8px 12px;
+    font-size: 13px;
+    min-height: 36px;
+    min-width: 38px;
+  }
+  .ct-filter-label {
+    width: auto;
+    font-size: 12px;
+  }
+  .ct-checkbox {
+    font-size: 13px;
+    padding: 6px 0;
+    min-height: 32px;
+  }
+
+  /* ----- 별값 패널 ----- */
+  .star-panel {
+    padding: 12px 14px;
+  }
+  .star-value {
+    font-size: 24px;
+  }
+  .star-detail {
+    gap: 8px;
+    font-size: 12px;
+  }
+
+  /* ----- 추천곡 카드 — 768px 이하에서도 1열 (기존 1100px breakpoint 와 동일 효과) ----- */
+  .rec-row {
+    grid-template-columns: 14px 1fr 18px 44px 60px;
+    font-size: 12px;
+  }
+
+  /* ----- DP12 격자 ----- */
+  .dp12-group {
+    grid-template-columns: 56px 1fr;
+  }
+  .dp12-level {
+    font-size: 12px;
+  }
+  .dp12-songs {
+    grid-template-columns: 1fr;
+  }
+  .dp12-song {
+    font-size: 13px;
+    min-height: 34px;
+  }
+  .dp12-sort {
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+  .dp12-sort-btn {
+    font-size: 14px;
+    padding: 4px 0;
+  }
+  .dp12-capture-btn {
+    margin-left: auto;
+    padding: 8px 14px;
+    font-size: 13px;
+    min-height: 36px;
+  }
+
+  /* ----- ereter 띠 ----- */
+  .ereter-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+    font-size: 12px;
+  }
+  .ereter-bar button {
+    padding: 6px 12px;
+    font-size: 12px;
+    min-height: 32px;
+  }
+
+  /* ----- empty state ----- */
+  .empty-state {
+    padding: 30px 14px;
+    font-size: 14px;
+  }
+  .empty-state .hint {
+    font-size: 13px;
+  }
+}
+
+/* 더 좁은 폰 (가로 480px 이하) — 컬럼 6개로 압축, MISS / SCORE-letter 숨김 */
+@media (max-width: 480px) {
+  .ct-table {
+    --ct-cols: 8px 32px 1fr 50px 80px 100px;
+  }
+  .ct-th:nth-child(7),
+  .ct-th:nth-child(8),
+  .ct-tr > .ct-cell:nth-child(7),
+  .ct-tr > .ct-cell:nth-child(8) {
+    display: none;
+  }
+  .star-value {
+    font-size: 22px;
+  }
+  .star-panel {
+    padding: 10px 12px;
+  }
+}
