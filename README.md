@@ -6,7 +6,7 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 - **Reflux 자동 통합** — 처음 실행 시 [olji/Reflux](https://github.com/olji/Reflux) 를 자동 다운로드. 메모리 리딩 + tracker.tsv dump 까지 백그라운드에서 처리
 - **SP / DP 곡 표** — 차트 단위 (한 row = 한 난이도)로 LAMP / LV / 곡명 / NOTES / RATE 시각화 / SCORE / MISS
-- **DP RECOMMEND 탭** — ereter ★11.6~12.7 매칭 + ohSorry v3.2.10 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리)
+- **DP RECOMMEND 탭** — ereter넷 리코멘드 매칭 + ohSorry v3.2.10 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리), DP12렙 서열표 표시 및 저장
 - **ereter 데이터 자동 갱신** — 24h TTL 캐시. 만료되면 자동 fetch (수동 갱신 버튼도 있음)
 - **LAN 원격 제어** — 같은 네트워크의 다른 PC 의 Chrome 으로 접속하면 같은 화면 + 모든 기능 사용 가능 (HTTP RPC bridge)
 - **곡 목록 필터** — 검색 / LAMP / LV / 잠긴 차트 숨김 / sticky 헤더 + 필터
@@ -79,7 +79,7 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-vite 3** + **Electron 28** + **React 18** + **TypeScript**
 - **koffi** — Win32 API 호출 (메모리 진단용, prebuilt 바이너리)
 - **node-html-parser** — ereter.net HTML 파싱
-- **html2canvas** — DP RECOMMEND 탭 격자 PNG 캡처
+- **html2canvas** — DP RECOMMEND 탭 서열표 이미지 저장
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
