@@ -4,10 +4,12 @@
 // 출력 형식은 ohSorry 의 ereter-data.json 과 동일 — 향후 ohSorry 의 별값 추정 모델
 // 그대로 적용 가능.
 //
+// 폴백 체인 (우선순위):
+//   1. ereter.net 직접 HTML scraping (authoritative)
+//   2. ohSorry gist 의 ereter-data.json (admin 수동 갱신본 — ereter.net 다운 대응)
+//   3. 로컬 stale 캐시 (네트워크 자체 안 될 때 최후)
+//
 // 캐시: userData/ereter-data.json, TTL 24h.
-//   - 24h 안의 캐시면 그대로 반환
-//   - 없거나 expired 면 fetch + 저장
-//   - 사용자가 force=true 로 강제 새로고침 가능
 import { app } from 'electron';
 import { promises as fsp, existsSync, statSync } from 'fs';
 import { join } from 'path';
@@ -15,6 +17,8 @@ import { parse } from 'node-html-parser';
 
 export const TTL_MS = 24 * 60 * 60 * 1000;
 const PERLEVEL_URL = 'https://ereter.net/iidxsongs/analytics/perlevel/';
+const ERETER_GIST_URL =
+  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/ereter-data.json';
 
 export interface EreterChart {
   title: string;
@@ -42,13 +46,13 @@ function dataPath(): string {
 // HTTPS GET 헬퍼 (Node 18+ global fetch 사용)
 async function fetchHtml(url: string): Promise<string> {
   const res = await fetch(url, {
-    headers: { 'User-Agent': 'INFOhSorry (+https://github.com/yenkara/INFOhSorry)' },
+    headers: { 'User-Agent': 'INFOhSorry (+https://github.com/OhSorry-DP/INFOhSorry)' },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.text();
 }
 
-// perlevel 페이지에서 차트별 EC/HC/EXH ★ diff 추출
+// perlevel 페이지에서 차트별 EC/HC/EXH ★ diff 추출 (1순위 — authoritative)
 async function fetchPerlevel(): Promise<EreterChart[]> {
   const html = await fetchHtml(PERLEVEL_URL);
   const root = parse(html);
@@ -73,11 +77,9 @@ async function fetchPerlevel(): Promise<EreterChart[]> {
     const cells = row.querySelectorAll('td');
     if (cells.length < 5) continue;
 
-    // td[0]: ☆12.3 → 12.3
     const level = parseFloat(cells[0].text.trim().replace(/[☆\s]/g, ''));
     if (!Number.isFinite(level)) continue;
 
-    // td[1]: 곡명 + <span> (차트 종류)
     const titleCell = cells[1];
     const chartSpan = titleCell.querySelector('span');
     let chartType = '';
@@ -86,7 +88,6 @@ async function fetchPerlevel(): Promise<EreterChart[]> {
     if (chartSpan) title = title.replace(chartSpan.text, '');
     title = title.trim();
 
-    // td[2,3,4]: EC/HC/EXH diff (sort-value 속성에 정확한 값)
     const getDiff = (idx: number): number | null => {
       const sv = cells[idx]?.getAttribute('sort-value');
       const v = sv != null ? parseFloat(sv) : NaN;
@@ -96,7 +97,6 @@ async function fetchPerlevel(): Promise<EreterChart[]> {
     const hc = getDiff(3);
     const exh = getDiff(4);
 
-    // td[5,6,7]: 클리어 인구수 (정수)
     const getCount = (idx: number): number | null => {
       const t = cells[idx]?.text.trim();
       const v = parseInt(t || '', 10);
@@ -119,7 +119,26 @@ async function fetchPerlevel(): Promise<EreterChart[]> {
   return charts;
 }
 
-// 캐시 + fetch — force=false 면 24h 안 캐시 우선, force=true 면 무조건 fetch
+// gist fallback — admin 이 이미 정제해서 push 한 JSON. ereter.net 다운 시 사용.
+// 반환은 EreterData 통째 (extractedAt 도 gist 의 것 사용).
+async function fetchFromGist(): Promise<EreterData> {
+  const url = `${ERETER_GIST_URL}?t=${Date.now()}`;
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'INFOhSorry (+https://github.com/OhSorry-DP/INFOhSorry)' },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = (await res.json()) as Partial<EreterData>;
+  if (!Array.isArray(json.charts)) throw new Error('gist JSON 의 charts 배열 없음');
+  return {
+    extractedAt: json.extractedAt || new Date().toISOString(),
+    source: ERETER_GIST_URL,
+    count: json.count ?? json.charts.length,
+    charts: json.charts,
+  };
+}
+
+// 캐시 + fetch — force=false 면 24h 안 캐시 우선, force=true 면 무조건 fetch.
+// 폴백: ereter.net 실패 → gist → stale 캐시 → throw.
 export async function getEreterData(force = false): Promise<EreterData> {
   const path = dataPath();
   if (!force && existsSync(path)) {
@@ -132,7 +151,42 @@ export async function getEreterData(force = false): Promise<EreterData> {
       // 손상된 캐시 — 다시 fetch
     }
   }
-  const charts = await fetchPerlevel();
+  // 1순위: ereter.net 직접 fetch
+  let charts: EreterChart[] | null = null;
+  let fetchErr: Error | null = null;
+  try {
+    charts = await fetchPerlevel();
+  } catch (e) {
+    fetchErr = e as Error;
+    console.warn(`[ereter] ereter.net fetch 실패 → gist fallback 시도: ${fetchErr.message}`);
+  }
+  // 2순위: ereter.net 실패면 gist fallback
+  if (!charts) {
+    try {
+      const gistData = await fetchFromGist();
+      console.warn(
+        `[ereter] gist fallback 사용 (${gistData.extractedAt} 추출본). ereter.net 복구 시 다시 직접 fetch.`,
+      );
+      await fsp.writeFile(path, JSON.stringify(gistData), 'utf-8');
+      return gistData;
+    } catch (gistErr) {
+      console.warn(`[ereter] gist fallback 도 실패: ${(gistErr as Error).message}`);
+      // 3순위: stale 캐시
+      if (existsSync(path)) {
+        try {
+          const text = await fsp.readFile(path, 'utf-8');
+          const cached: EreterData = JSON.parse(text);
+          console.warn(
+            `[ereter] stale 캐시 fallback (${cached.extractedAt} 추출본).`,
+          );
+          return cached;
+        } catch {
+          /* 손상된 캐시 */
+        }
+      }
+      throw fetchErr ?? (gistErr as Error);
+    }
+  }
   const data: EreterData = {
     extractedAt: new Date().toISOString(),
     source: PERLEVEL_URL,

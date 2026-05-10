@@ -56,9 +56,26 @@ export async function getRatingData(force = false): Promise<RatingData> {
       // 손상된 캐시 — 다시 fetch
     }
   }
-  const data = await fetchRaw();
-  await fsp.writeFile(path, JSON.stringify(data), 'utf-8');
-  return data;
+  // gist fetch — 실패 시 stale 캐시 fallback (gist 다운 대응)
+  try {
+    const data = await fetchRaw();
+    await fsp.writeFile(path, JSON.stringify(data), 'utf-8');
+    return data;
+  } catch (e) {
+    if (existsSync(path)) {
+      try {
+        const text = await fsp.readFile(path, 'utf-8');
+        const cached: RatingData = JSON.parse(text);
+        console.warn(
+          `[rating] gist fetch 실패 → stale 캐시 fallback (${cached.generatedAt} 추출본): ${(e as Error).message}`,
+        );
+        return cached;
+      } catch {
+        /* 손상된 캐시는 fallback 으로도 못 씀 */
+      }
+    }
+    throw e;
+  }
 }
 
 export interface RatingCacheStatus {
