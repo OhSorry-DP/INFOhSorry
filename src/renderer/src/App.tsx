@@ -108,8 +108,10 @@ export default function App() {
           setTsvMtime(r.mtime);
         }
       }
-      // 설치돼있으면 자동 시작. spawnReflux 가 이미 살아있는 Reflux.exe 감지 시 중복 spawn 안 함.
-      if (state.installed && !state.spawned) {
+      // v0.0.15+: 설치 여부 무관 자동 시작 — 미설치면 startAll 안에서 자동 다운로드 + 설치 후 spawn.
+      // spawnReflux 가 이미 살아있는 Reflux.exe 감지 시 중복 spawn 안 함.
+      // "데이터 불러오기" 버튼은 다운로드 실패 시 retry 용도로 유지.
+      if (!state.spawned) {
         void window.infohsorry.reflux.start();
       }
     })();
