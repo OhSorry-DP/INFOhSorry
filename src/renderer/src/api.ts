@@ -99,6 +99,12 @@ if (!IS_HOST) {
         callIpc('zasa:get', force) as ReturnType<Window['infohsorry']['zasa']['get']>,
       status: () => callIpc('zasa:status') as ReturnType<Window['infohsorry']['zasa']['status']>,
     },
+    rating: {
+      get: (force?: boolean) =>
+        callIpc('rating:get', force) as ReturnType<Window['infohsorry']['rating']['get']>,
+      status: () =>
+        callIpc('rating:status') as ReturnType<Window['infohsorry']['rating']['status']>,
+    },
     saveImage: browserDownloadPng,
     probe: (exeName: string) => callIpc('memory:probe', exeName) as Promise<ProbeResult>,
     memory: {

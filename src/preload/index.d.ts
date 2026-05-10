@@ -8,6 +8,8 @@ import type {
   EreterCacheStatus,
   ZasaGetResult,
   ZasaCacheStatus,
+  RatingGetResult,
+  RatingCacheStatus,
 } from '../shared/types';
 
 declare global {
@@ -37,6 +39,10 @@ declare global {
       zasa: {
         get: (force?: boolean) => Promise<ZasaGetResult>;
         status: () => Promise<ZasaCacheStatus>;
+      };
+      rating: {
+        get: (force?: boolean) => Promise<RatingGetResult>;
+        status: () => Promise<RatingCacheStatus>;
       };
       saveImage: (
         data: ArrayBuffer | string,

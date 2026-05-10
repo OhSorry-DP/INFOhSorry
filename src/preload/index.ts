@@ -8,6 +8,8 @@ import type {
   EreterCacheStatus,
   ZasaGetResult,
   ZasaCacheStatus,
+  RatingGetResult,
+  RatingCacheStatus,
 } from '../shared/types';
 
 const api = {
@@ -49,6 +51,13 @@ const api = {
   zasa: {
     get: (force = false): Promise<ZasaGetResult> => ipcRenderer.invoke('zasa:get', force),
     status: (): Promise<ZasaCacheStatus> => ipcRenderer.invoke('zasa:status'),
+  },
+
+  // ohSorryRating (ereter 미등록 lv11/lv12 차트 추정값 — 추천 풀 fallback)
+  // 우선순위: ereter > rating. rating 은 ereter 매칭 실패 시에만 사용.
+  rating: {
+    get: (force = false): Promise<RatingGetResult> => ipcRenderer.invoke('rating:get', force),
+    status: (): Promise<RatingCacheStatus> => ipcRenderer.invoke('rating:status'),
   },
 
   // 캡처 이미지 자동 저장 (사진 폴더 / INFOhSorry / *.png)

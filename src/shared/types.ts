@@ -176,3 +176,36 @@ export interface ZasaCacheStatus {
   isStale: boolean;
   exists: boolean;
 }
+
+// ohSorryRating — ohSorry 가 모은 ereter 미등록 lv11/lv12 차트의 EC/HC/EXH ★ 추정값.
+// 추천 풀의 fallback (ereter 매칭 실패 시) — 이레터 데이터 우선, ratingMap 은 보조.
+export interface RatingChart {
+  title: string;
+  diff: string;
+  gameLevel: number; // 11 or 12
+  zasaLevel: number;
+  estEc: number | null;
+  estHc: number | null;
+  estExh?: number | null;
+  nEcCleared?: number | null;
+  nHcCleared?: number | null;
+  nPlayed?: number | null;
+}
+
+export interface RatingData {
+  generatedAt: string;
+  source: string;
+  ratings: RatingChart[];
+}
+
+export interface RatingGetResult {
+  ok: boolean;
+  error?: string;
+  data?: RatingData;
+}
+
+export interface RatingCacheStatus {
+  mtime: number | null;
+  isStale: boolean;
+  exists: boolean;
+}

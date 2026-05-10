@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { EreterCacheStatus, EreterData, RefluxState, SongRow, ZasaData } from '../../shared/types';
+import type { EreterCacheStatus, EreterData, RatingData, RefluxState, SongRow, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
@@ -85,6 +85,10 @@ export default function App() {
   // zasa 보충 데이터 (DP12 격자 미분류 fallback)
   const [zasaData, setZasaData] = useState<ZasaData | null>(null);
 
+  // ohSorryRating — ereter 미등록 lv11/lv12 차트 추정값 (추천 풀 fallback)
+  // 우선순위: ereter > rating. ereter 매칭 곡은 절대 rating 으로 덮지 않음.
+  const [ratingData, setRatingData] = useState<RatingData | null>(null);
+
   // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
   // Reflux 가 설치돼있으면 무조건 자동 시작 (5분 health check 가 떴는지 계속 확인).
   // 미설치면 "데이터 불러오기" 버튼으로 사용자가 직접 install 트리거.
@@ -132,6 +136,18 @@ export default function App() {
       try {
         const r = await window.infohsorry.zasa.get(false);
         if (r.ok && r.data) setZasaData(r.data);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
+  // 마운트 시 ohSorryRating 자동 fetch (실패해도 무시 — 추천 풀 fallback 만 영향)
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await window.infohsorry.rating.get(false);
+        if (r.ok && r.data) setRatingData(r.data);
       } catch {
         /* ignore */
       }
@@ -248,14 +264,28 @@ export default function App() {
     });
   }, [rows, ereterData, zasaData]);
 
-  // INFINITAS DP 차트 + ereter ★ 매칭 (★11.6~12.7 = LEVEL 12 만)
-  // 별값 추정 / 추천곡의 단일 source.
+  // INFINITAS DP 차트 + ereter ★ 매칭 (LEVEL 11 + LEVEL 12 모두 대상, ★11.6 하한 없음)
+  //
+  // 우선순위: ereter > ratingMap.
+  // - ereter 매칭 곡 → 그 값 그대로 (matched 카운트, gameLevel 필드 없음)
+  // - ereter 없을 때만 ratingMap fallback (gameLevel 필드 11/12 표시 → UI 색상 구분)
+  // - 둘 다 없으면 unmatched (skip)
+  //
+  // 별값 추정 input 은 LEVEL 12 ★11.6~12.7 만 (matched ereter 곡들에서 따로 필터),
+  // 추천 풀은 lv11+lv12 전곡 (이 charts 배열 그대로) — ohSorry v3.3.3 와 동일.
   const dp12Match = useMemo(() => {
     if (!ereterData) return null;
     const idx = buildEreterIndex(ereterData.charts).index;
+    const ratingIdx = new Map<string, RatingData['ratings'][number]>();
+    if (ratingData) {
+      for (const rt of ratingData.ratings) {
+        ratingIdx.set(norm(rt.title) + '|' + rt.diff, rt);
+      }
+    }
     const charts: RecInputChart[] = [];
     let matched = 0;
     let unmatched = 0;
+    let ratingFallbackCount = 0;
     const unmatchedSamples: string[] = [];
     const unmatchedAll: {
       title: string;
@@ -276,47 +306,76 @@ export default function App() {
       for (const slot of DP_SLOTS) {
         const c = r.charts[slot];
         if (!c) continue;
-        // INFINITAS LEVEL 12 만 대상 — LEVEL 1~11 차트는 ereter 매칭 시도조차 X
-        if (c.level !== 12) continue;
+        // LEVEL 11 + LEVEL 12 모두 대상 (ohSorry v3.3.3 와 동일하게 추천 풀 확장)
+        if (c.level !== 11 && c.level !== 12) continue;
         const diff = slotToDiff(slot);
         const normKey = norm(r.title) + '|' + diff;
         const e = idx.get(normKey);
-        if (!e) {
-          if (c.unlocked && c.lamp !== 'NP') {
-            unmatched++;
-            const titleK = norm(r.title);
-            unmatchedAll.push({
-              title: r.title,
-              diff,
-              lamp: c.lamp,
-              normKey,
-              ereterCandidates: ereterByTitleNorm.get(titleK) ?? [],
-            });
-            if (unmatchedSamples.length < 10) {
-              unmatchedSamples.push(`${r.title} [${diff}] (lamp=${c.lamp})`);
-            }
-          }
+        if (e) {
+          // ereter 매칭 — 우선순위 최상. ratingMap 안 봄.
+          if (e.level > 12.7) continue;
+          matched++;
+          charts.push({
+            title: r.title,
+            slot,
+            diff,
+            level: e.level,
+            lamp: c.lamp,
+            lampNum: lampNum(c.lamp),
+            djLevel: c.letter || null,
+            missCount: typeof c.missCount === 'number' ? c.missCount : null,
+            ec: e.ec,
+            hc: e.hc,
+            exh: e.exh,
+            ec_n: e.ec_n,
+            hc_n: e.hc_n,
+            exh_n: e.exh_n,
+            // gameLevel 필드 안 채움 (이레터 매칭 곡은 색상 표시 X)
+          });
           continue;
         }
-        if (e.level < 11.6 || e.level > 12.7) continue;
-        matched++;
-        charts.push({
-          title: r.title,
-          slot,
-          diff,
-          level: e.level,
-          lamp: c.lamp,
-          lampNum: lampNum(c.lamp),
-          djLevel: c.letter || null,
-          missCount: typeof c.missCount === 'number' ? c.missCount : null,
-          ec: e.ec,
-          hc: e.hc,
-          exh: e.exh,
-          ec_n: e.ec_n,
-          hc_n: e.hc_n,
-          exh_n: e.exh_n,
-        });
+        // ereter 매칭 실패 — ratingMap fallback 시도
+        const rt = ratingIdx.get(normKey);
+        if (rt && typeof rt.zasaLevel === 'number' && rt.zasaLevel <= 12.7) {
+          ratingFallbackCount++;
+          charts.push({
+            title: r.title,
+            slot,
+            diff,
+            level: rt.zasaLevel,
+            lamp: c.lamp,
+            lampNum: lampNum(c.lamp),
+            djLevel: c.letter || null,
+            missCount: typeof c.missCount === 'number' ? c.missCount : null,
+            ec: typeof rt.estEc === 'number' ? rt.estEc : null,
+            hc: typeof rt.estHc === 'number' ? rt.estHc : null,
+            exh: typeof rt.estExh === 'number' ? rt.estExh : null,
+            ec_n: typeof rt.nEcCleared === 'number' ? rt.nEcCleared : null,
+            hc_n: typeof rt.nHcCleared === 'number' ? rt.nHcCleared : null,
+            exh_n: 0,
+            gameLevel: rt.gameLevel ?? null, // UI 색상 구분
+          });
+          continue;
+        }
+        // 둘 다 없음 — unmatched
+        if (c.unlocked && c.lamp !== 'NP') {
+          unmatched++;
+          const titleK = norm(r.title);
+          unmatchedAll.push({
+            title: r.title,
+            diff,
+            lamp: c.lamp,
+            normKey,
+            ereterCandidates: ereterByTitleNorm.get(titleK) ?? [],
+          });
+          if (unmatchedSamples.length < 10) {
+            unmatchedSamples.push(`${r.title} [${diff}] (lamp=${c.lamp})`);
+          }
+        }
       }
+    }
+    if (ratingFallbackCount > 0) {
+      console.log(`[dp12Match] ratingMap fallback: ${ratingFallbackCount}곡 (ereter 미등록 lv11/lv12 추정)`);
     }
     // dev 디버그: 미매칭 곡 전체 목록 + ereter 의 norm 키 후보 console 출력
     if (unmatchedAll.length > 0) {
@@ -345,7 +404,7 @@ export default function App() {
       (window as unknown as { __dp_unmatched: typeof unmatchedAll }).__dp_unmatched = unmatchedAll;
     }
     return { charts, matched, unmatched, unmatchedSamples, unmatchedAll };
-  }, [rows, ereterData]);
+  }, [rows, ereterData, ratingData]);
 
   // 별값 추정 input — dp12Match 에서 derive
   const dp12StarInputs = useMemo(() => {
@@ -361,7 +420,9 @@ export default function App() {
         hc: c.hc,
         exh: c.exh,
       });
-      if (c.lampNum > 0) {
+      // 별값 추정 input 은 ★11.6~12.7 만 (ohSorry v3.3.3 와 동일).
+      // 추천 풀에 들어간 lv11 lower-tier (zasa < 11.6) charts 는 fitData 에서 제외.
+      if (c.lampNum > 0 && c.level >= 11.6 && c.level <= 12.7) {
         if (typeof c.ec === 'number') fitData.push({ d: c.ec, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
         if (typeof c.hc === 'number') fitData.push({ d: c.hc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
         if (typeof c.exh === 'number') fitData.push({ d: c.exh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
@@ -819,6 +880,14 @@ function RecCard({
         <ul className="rec-list">
           {recs.map((r) => {
             const ls = lampStyle(r.currentLamp);
+            // ratingMap fallback 곡 색상 구분: lv11 → 진한 연두 (#9ccc65) / lv12 → 하늘색 (#87ceeb)
+            // ereter 매칭 곡은 gameLevel 비어있어서 기본 색.
+            const titleColor =
+              r.gameLevel === 11 ? '#9ccc65' :
+              r.gameLevel === 12 ? '#87ceeb' : undefined;
+            const titleTooltip =
+              r.gameLevel === 11 ? 'ohSorry 추정 ★ (게임 LEVEL 11, ereter 미등록)' :
+              r.gameLevel === 12 ? 'ohSorry 추정 ★ (게임 LEVEL 12, ereter 미등록)' : undefined;
             return (
               <li key={`${r.title}|${r.slot}`} className={`rec-row rec-${r.category}`}>
                 <span
@@ -835,7 +904,13 @@ function RecCard({
                 >
                   {r.category === 'exh-near' ? '⚡' : r.category === 'cleanup' ? '↓' : '↑'}
                 </span>
-                <span className="rec-title">{r.title}</span>
+                <span
+                  className="rec-title"
+                  style={titleColor ? { color: titleColor } : undefined}
+                  title={titleTooltip}
+                >
+                  {r.title}
+                </span>
                 <span className="rec-diff" style={{ color: DIFF_COLOR[r.diff] || '#888' }}>
                   {r.diff[0]}
                 </span>

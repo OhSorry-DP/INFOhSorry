@@ -6,8 +6,9 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 - **Reflux 자동 통합** — 처음 실행 시 [olji/Reflux](https://github.com/olji/Reflux) 를 자동 다운로드. 메모리 리딩 + tracker.tsv dump 까지 백그라운드에서 처리
 - **SP / DP 곡 표** — 차트 단위 (한 row = 한 난이도)로 LAMP / LV / 곡명 / NOTES / RATE 시각화 / SCORE / MISS
-- **DP RECOMMEND 탭** — ereter넷 리코멘드 매칭 + ohSorry v3.2.10 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리), DP12렙 서열표 표시 및 저장
+- **DP RECOMMEND 탭** — ereter넷 리코멘드 매칭 + ohSorry v3.3.3 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리), DP12렙 서열표 표시 및 저장
 - **ereter 데이터 자동 갱신** — 24h TTL 캐시. 만료되면 자동 fetch (수동 갱신 버튼도 있음)
+- **ohSorryRating fallback** — ereter 미등록 lv11/lv12 차트는 ohSorry 가 모은 추정값 (ohSorryRating.json) 으로 추천 풀 보강. lv11 추정 곡명은 진한 연두색, lv12 추정은 하늘색.
 - **LAN 원격 제어** — 같은 네트워크의 다른 PC 의 Chrome 으로 접속하면 같은 화면 + 모든 기능 사용 가능 (HTTP RPC bridge)
 - **곡 목록 필터** — 검색 / LAMP / LV / 잠긴 차트 숨김 / sticky 헤더 + 필터
 
@@ -29,25 +30,19 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 3. 게임에서 **곡 선택 화면 한 번 진입** → tracker.tsv 자동 dump → 표 자동 표시
 4. 이후 곡 선택 갈 때마다 자동 갱신
 
-## 추천곡 로직
+## 추천곡 로직 (ohSorry v3.3.3 호환)
 
-**도전곡 범위** — 사용자 ★실력에 따라 위로 얼마까지 추천할지 동적으로 결정 (선형 보간):
+**도전곡 범위** — 사용자 ★실력에 따라 위로 얼마까지 추천할지 동적으로 결정 (선형 보간, ★0.5 → +1.0, ★14.0 → +0.3)
 
-| baseStar | offset | 도전곡 ★ 범위 |
-|---|---|---|
-| ★0.5 | +1.2 | ★0.50 ~ ★1.70 |
-| ★3.0 | +1.03 | ★3.00 ~ ★4.03 |
-| ★5.0 | +0.9 | ★5.00 ~ ★5.90 |
-| ★7.0 | +0.77 | ★7.00 ~ ★7.77 |
-| ★10.0 | +0.57 | ★10.00 ~ ★10.57 |
-| ★12.0 | +0.43 | ★12.00 ~ ★12.43 |
-| ★14.0 | +0.3 | ★14.00 ~ ★14.30 |
+**정리곡** — `★0 ~ baseStar` 범위에서 추천 단계 (EC / HC / EXH) 미만 lamp 인 곡 (NO PLAY 포함). EC 정리곡은 HC 난이도가 baseStar - 3 미만인 곡은 제외 (시간 낭비 방지).
 
-**정리곡** — `★0 ~ baseStar` 범위에서 추천 단계 (EC / HC / EXH) 미만 lamp 인 곡 (NO PLAY 포함)
+**비율** — 하드 도전 2 + 약 도전 5 + 정리 3 = 총 10곡. 한 쪽 부족하면 다른 풀에서 보충.
 
-**비율** — 도전 6 + 정리 4 = 총 10곡. 한 쪽 부족하면 다른 쪽에서 보충
+**샘플링** — 각 풀에서 클리어 인구수 desc top 10 + 순 랜덤 5 = 후보 15곡. 셔플 → 풀별 N개 pick → ★ asc 통합 정렬.
 
-**샘플링** — 도전 / 정리 각 풀에서 클리어 인구수 desc top 5 + 순 랜덤 5 = 후보 10곡. 합쳐 셔플 → picked 6:4 + pool 10 보관 → 추천곡 클리어 시 pool 에서 자동 보충 (최대 10 유지)
+**추천 풀 데이터 출처** (우선순위):
+1. **ereter (이레터넷)** — 매칭되면 그 값 그대로
+2. **ohSorryRating fallback** — ereter 미등록 lv11/lv12 차트는 ohSorry 가 모은 추정값으로 보강 (lv11 곡명 진한 연두 / lv12 곡명 하늘색 표시)
 
 ## LAN 원격 제어(투컴 방송용)
 

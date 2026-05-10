@@ -21,6 +21,7 @@ import {
   getDataPath as getEreterDataPath,
 } from './ereter';
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
+import { getRatingData, getRatingCacheStatus } from './rating';
 import { startHttpServer } from './http-server';
 
 let mainWindow: BrowserWindow | null = null;
@@ -82,6 +83,18 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   },
   'ereter:status': async () => getEreterCacheStatus(),
   'ereter:dataPath': async () => getEreterDataPath(),
+
+  // ohSorryRating (ereter 미등록 lv11/lv12 차트 추정값 — 추천 풀 fallback)
+  'rating:get': async (...args: never[]) => {
+    const force = (args[0] as boolean | undefined) ?? false;
+    try {
+      const data = await getRatingData(force);
+      return { ok: true, data };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  },
+  'rating:status': async () => getRatingCacheStatus(),
 
   // zasa (보충용 ☆12 난이도표 — DP12 격자 표 미분류 곡 fallback 매칭)
   'zasa:get': async (...args: never[]) => {

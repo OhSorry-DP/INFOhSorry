@@ -16,11 +16,16 @@
 import type { ChartSlot, Lamp } from './types';
 
 // 추천곡의 input — 매칭된 차트 (★ EC/HC/EXH 다 있어야 의미 있음)
+//
+// 우선순위: ereter > ratingMap.
+// - ereter 매칭 → 그 값 그대로 사용 (gameLevel === undefined / null)
+// - ereter 없을 때만 ratingMap fallback 사용 → gameLevel 11 또는 12 로 표시
+//   (UI 색상 구분: lv11 추정 → 진한 연두, lv12 추정 → 하늘색)
 export interface RecInputChart {
   title: string;
   slot: ChartSlot;
   diff: string; // 'NORMAL' / 'HYPER' / 'ANOTHER' / 'LEGGENDARIA'
-  level: number; // ereter ★ (소수)
+  level: number; // ereter ★ (소수) 또는 rating zasaLevel
   lamp: Lamp;
   lampNum: number;
   djLevel: string | null; // DJ Level (AAA/AA/A/B/C/D/E/F) — v3.2.6 djLevel boost 에 사용
@@ -31,6 +36,7 @@ export interface RecInputChart {
   ec_n: number | null; // 해당 stage 클리어 인구수 (이레터넷의 ec_count)
   hc_n: number | null;
   exh_n: number | null;
+  gameLevel?: number | null; // ratingMap fallback 시 11 / 12. ereter 매칭 곡은 null/undefined.
 }
 
 export interface RecCandidate {
@@ -50,6 +56,7 @@ export interface RecCandidate {
   diffCount: number; // 해당 stage 의 클리어 인구수 (정렬용)
   margin: number; // baseStar - diffValue (음수면 도전, 양수면 정리)
   category: 'challenge-hard' | 'challenge-easy' | 'cleanup' | 'exh-near';
+  gameLevel?: number | null; // ratingMap fallback 시 11 / 12. UI 색상 구분용.
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';
@@ -151,6 +158,7 @@ export function buildRecsWithPool(
       diffValue: dv,
       diffCount: typeof dn === 'number' ? dn : 0,
       margin: baseStar - dv,
+      gameLevel: c.gameLevel ?? null,
     };
     // 하드 우선 (overlap 시 약 도전과 중복 방지)
     if (dv >= hardMin && dv <= hardMax && dv > easyMax) {
@@ -162,6 +170,8 @@ export function buildRecsWithPool(
       // 이 분기는 dv > easyMax 가 false 인 hard 케이스 처리 — 즉 hard 와 easy 모두 매치.
       // easy 로 이미 가있으니 여기는 unreachable. 안전을 위해 패스.
     } else if (dv < baseStar) {
+      // EC 정리곡: 하드클 난이도가 baseStar - 3 미만이면 너무 쉬워서 제외 (시간 낭비 방지)
+      if (stage === 'ec' && typeof c.hc === 'number' && c.hc < baseStar - 3) continue;
       cleanupPool.push({ ...baseItem, category: 'cleanup' });
     }
   }
@@ -252,6 +262,7 @@ export function buildExhRecs(
       diffCount: typeof c.exh_n === 'number' ? c.exh_n : 0,
       margin: baseStar - c.exh,
       category: 'exh-near',
+      gameLevel: c.gameLevel ?? null,
     });
   }
   // 1. EXH ★ 낮은 순 → top 30
