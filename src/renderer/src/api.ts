@@ -114,6 +114,14 @@ if (!IS_HOST) {
     memory: {
       scan: (exeName: string, text: string) =>
         callIpc('memory:scan', exeName, text) as ReturnType<Window['infohsorry']['memory']['scan']>,
+      refineScan: (
+        exeName: string,
+        text: string,
+        prev: { encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis'; absolute: string }[],
+      ) =>
+        callIpc('memory:refine-scan', exeName, text, prev) as ReturnType<
+          Window['infohsorry']['memory']['refineScan']
+        >,
       readString: (exeName: string, off: string, enc: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis', maxBytes?: number) =>
         callIpc('memory:read-string', exeName, off, enc, maxBytes) as ReturnType<
           Window['infohsorry']['memory']['readString']

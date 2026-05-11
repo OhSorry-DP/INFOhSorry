@@ -69,6 +69,22 @@ declare global {
             relativeRaw: string;
           }[];
         }>;
+        refineScan: (
+          exeName: string,
+          text: string,
+          prev: { encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis'; absolute: string }[],
+        ) => Promise<{
+          ok: boolean;
+          error?: string;
+          modBase?: string;
+          modSize?: number;
+          results?: {
+            encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis';
+            absolute: string;
+            relative: string;
+            relativeRaw: string;
+          }[];
+        }>;
         readString: (
           exeName: string,
           relativeOffset: string,

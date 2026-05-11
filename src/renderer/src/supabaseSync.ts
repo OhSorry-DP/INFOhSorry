@@ -56,8 +56,9 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     ereter_star: ereterStar != null ? Number(ereterStar) : null,
     raw_s: Number(starResult.raw.toFixed(4)),
     version: `INFv${appVersion}`,
-    sp_rank: profile.spRank ?? null,
-    dp_rank: profile.dpRank ?? null,
+    // 단위는 메모리 read 신뢰성 문제로 일단 빈칸 (UI 표시도 제거)
+    sp_rank: null,
+    dp_rank: null,
     n_cleared: nClearedLv12,
     n_played_lv12: nPlayedLv12,
     fc_count: fcCount,

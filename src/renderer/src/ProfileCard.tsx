@@ -59,7 +59,7 @@ export function ProfileCard({
   starResult,
   secondHighest,
 }: ProfileCardProps): JSX.Element | null {
-  const { djName, iidxId, iidxIdFormatted, spRank, dpRank } = profile;
+  const { djName, iidxId, iidxIdFormatted } = profile;
 
   // 메모리 read 가 한 번도 성공 X (게임 로그인 전 등) → 카드 자체 숨김
   if (!djName && !iidxId && !starResult) return null;
@@ -78,14 +78,6 @@ export function ProfileCard({
       <div className="profile-card-info">
         <div className="profile-card-name-line">
           <span className="profile-card-name">{djName || '(DJ NAME 미확인)'}</span>
-          {(spRank || dpRank) && (
-            <span className="profile-card-ranks">
-              <span className="profile-card-rank-label">SP</span>
-              <span className={`profile-card-rank ${rankClass(spRank)}`}>{spRank || '-'}</span>
-              <span className="profile-card-rank-label">DP</span>
-              <span className={`profile-card-rank ${rankClass(dpRank)}`}>{dpRank || '-'}</span>
-            </span>
-          )}
         </div>
         {iidxId && <div className="profile-card-id">{iidxIdFormatted || iidxId}</div>}
       </div>

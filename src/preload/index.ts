@@ -88,6 +88,18 @@ const api = {
       modSize?: number;
       results?: { encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis'; absolute: string; relative: string; relativeRaw: string }[];
     }> => ipcRenderer.invoke('memory:scan', exeName, text),
+    // refine scan — 이전 매치 목록의 각 주소에서 새 값과 일치하는 것만 keep (Cheat Engine 의 next scan)
+    refineScan: (
+      exeName: string,
+      text: string,
+      prev: { encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis'; absolute: string }[],
+    ): Promise<{
+      ok: boolean;
+      error?: string;
+      modBase?: string;
+      modSize?: number;
+      results?: { encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis'; absolute: string; relative: string; relativeRaw: string }[];
+    }> => ipcRenderer.invoke('memory:refine-scan', exeName, text, prev),
     readString: (
       exeName: string,
       relativeOffset: string,

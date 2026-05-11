@@ -13,7 +13,7 @@
 //   - INFINITAS 종료되면 다시 hook 대기
 import { app } from 'electron';
 import { ChildProcess, spawn, exec } from 'child_process';
-import { promises as fsp, createWriteStream, existsSync, watch as fsWatch, FSWatcher } from 'fs';
+import { promises as fsp, createWriteStream, existsSync, rmSync, watch as fsWatch, FSWatcher } from 'fs';
 import { join } from 'path';
 import { request as httpsRequest } from 'https';
 import { EventEmitter } from 'events';
@@ -250,7 +250,7 @@ export class RefluxManager extends EventEmitter {
     this.emit('state', this.getState());
   }
 
-  // 한 번에 다 진행: 설치 (필요 시) → config 생성 → spawn → tsv watch + health check
+  // 한 번에 다 진행: 설치 (필요 시) → config 생성 → 기존 Reflux 종료 + 세션 정리 → spawn → tsv watch + health check
   async startAll(): Promise<void> {
     try {
       if (!existsSync(exePath())) {
@@ -260,6 +260,7 @@ export class RefluxManager extends EventEmitter {
       }
       await this.ensureConfig();
       await this.ensureOffsets();
+      // kill + cleanup 은 spawnReflux 안에서 매번 수행됨 (startAll / health check 재spawn 모두)
       await this.spawnReflux();
       this.watchTsv();
       this.startHealthCheck();
@@ -383,16 +384,47 @@ export class RefluxManager extends EventEmitter {
   //     안 돌리는 가정).
   //   - stdout 도 캡처 안 됨. UI 의 recentLines / hooking stage 매칭 비활성.
   //   - 그래도 tracker.tsv watch 만으로 'ready' 신호 감지 가능 — 핵심 흐름은 동작.
+  // Reflux 시작 전 이전 세션 잔여물 정리 — tracker.tsv / tracker.db / sessions/ 삭제.
+  private cleanupPreviousSession(): void {
+    const dir = workDir();
+    const targets = [join(dir, 'tracker.tsv'), join(dir, 'tracker.db'), join(dir, 'sessions')];
+    for (const p of targets) {
+      try {
+        rmSync(p, { recursive: true, force: true });
+        this.addLine(`(이전 세션 정리: ${p})`);
+      } catch (e) {
+        this.addLine(`(정리 실패 ${p}: ${(e as Error).message})`);
+      }
+    }
+  }
+
+  // 모든 Reflux.exe 프로세스 강제 종료 (file lock 해제 + 깨끗한 새 spawn 준비)
+  private async killAllRefluxProcesses(): Promise<void> {
+    if (process.platform !== 'win32') return;
+    await new Promise<void>((resolve) => {
+      const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+      const taskkillExe = `${winDir}\\System32\\taskkill.exe`;
+      const k = spawn(taskkillExe, ['/F', '/T', '/IM', 'Reflux.exe'], { windowsHide: true });
+      const t = setTimeout(() => resolve(), 3000);
+      k.on('exit', () => {
+        clearTimeout(t);
+        resolve();
+      });
+      k.on('error', () => {
+        clearTimeout(t);
+        resolve();
+      });
+    });
+  }
+
   private async spawnReflux(): Promise<void> {
     if (this.child) return;
-    // 이미 Reflux.exe 가 떠 있으면 중복 spawn 안 함 (이전 세션에서 살아남은 인스턴스 등).
-    // health check 가 이후 죽음 감지하면 재시작.
-    if (await this.isRefluxAlive()) {
-      this.addLine('(기존 Reflux.exe 감지 — spawn 생략)');
-      this.setState({ spawned: true, stage: 'hooking' });
-      return;
-    }
     this.setState({ stage: 'starting', spawned: false });
+
+    // 매 spawn 마다 깨끗한 시작 보장: 기존 Reflux 모두 kill + 세션 잔여물 정리
+    // startAll / health check 자동 재spawn 둘 다 적용 — zombie / file lock / stale 데이터 방지
+    await this.killAllRefluxProcesses();
+    this.cleanupPreviousSession();
 
     // PowerShell Start-Process -WindowStyle Hidden — 콘솔창 작업표시줄에도 안 보임.
     // Reflux 는 hidden 콘솔에서 attach 받음 → Console.Clear 동작.

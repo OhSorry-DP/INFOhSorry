@@ -25,6 +25,39 @@ const STORAGE_KEY: Record<FieldKey, string> = {
   dpRank: 'infohsorry-scanner-dprank-v2',
 };
 
+// 발견한 매치 결과 자체를 영속화 — 스캐너 창 닫았다 열어도 유지, "결과 지우기" 누를 때만 비움
+const MATCHES_KEY: Record<FieldKey, string> = {
+  djName: 'infohsorry-scanner-djname-matches-v1',
+  iidxId: 'infohsorry-scanner-iidxid-matches-v1',
+  spRank: 'infohsorry-scanner-sprank-matches-v1',
+  dpRank: 'infohsorry-scanner-dprank-matches-v1',
+};
+
+function loadMatches(key: FieldKey): ScanMatch[] {
+  try {
+    const raw = localStorage.getItem(MATCHES_KEY[key]);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr.filter(
+      (m: unknown): m is ScanMatch =>
+        !!m &&
+        typeof (m as { encoding?: unknown }).encoding === 'string' &&
+        typeof (m as { absolute?: unknown }).absolute === 'string' &&
+        typeof (m as { relative?: unknown }).relative === 'string' &&
+        typeof (m as { relativeRaw?: unknown }).relativeRaw === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveMatches(key: FieldKey, m: ScanMatch[]): void {
+  try {
+    localStorage.setItem(MATCHES_KEY[key], JSON.stringify(m));
+  } catch {}
+}
+
 // 사용자 저장값 → 없으면 프로젝트 기본 offset 사용 (있을 때만)
 function getEffectiveSlot(key: FieldKey, saved: SavedSlot | null): SavedSlot | null {
   if (saved) return saved;
@@ -131,10 +164,57 @@ function FieldPanel({
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [matches, setMatches] = useState<ScanMatch[]>([]);
+  const [matches, setMatches] = useState<ScanMatch[]>(() => loadMatches(fieldKey));
+  const [page, setPage] = useState(0);
+  const [matchReadbacks, setMatchReadbacks] = useState<Record<string, string>>({});
+  const PAGE_SIZE = 10;
   const [saved, setSaved] = useState<SavedSlot | null>(loadSaved(fieldKey));
   const [readback, setReadback] = useState<string | null>(null);
   const [readbackErr, setReadbackErr] = useState<string | null>(null);
+
+  // matches 변경 시 페이지 0 으로 리셋 + readback 캐시 초기화 + localStorage 영속화
+  useEffect(() => {
+    setPage(0);
+    setMatchReadbacks({});
+    saveMatches(fieldKey, matches);
+  }, [matches, fieldKey]);
+
+  // 현재 페이지의 매치들에 대해 각 주소의 현재 메모리 값 fetch
+  useEffect(() => {
+    if (matches.length === 0) return;
+    const totalPages = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
+    const safePage = Math.min(page, totalPages - 1);
+    const start = safePage * PAGE_SIZE;
+    const end = Math.min(start + PAGE_SIZE, matches.length);
+    const slice = matches.slice(start, end);
+    if (slice.length === 0) return;
+    let cancelled = false;
+    Promise.all(
+      slice.map(async (m) => {
+        try {
+          const r = await window.infohsorry.memory.readString(
+            EXE_NAME,
+            m.relativeRaw,
+            m.encoding,
+            defaultMaxBytes,
+          );
+          return { addr: m.absolute, value: r.ok ? r.text || '' : `<${r.error || '읽기 실패'}>` };
+        } catch (e) {
+          return { addr: m.absolute, value: `<${(e as Error).message}>` };
+        }
+      }),
+    ).then((results) => {
+      if (cancelled) return;
+      setMatchReadbacks((prev) => {
+        const next = { ...prev };
+        for (const { addr, value } of results) next[addr] = value;
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [matches, page, defaultMaxBytes]);
 
   // 사용자 저장값 OR 프로젝트 기본 offset 으로 readback
   useEffect(() => {
@@ -235,11 +315,6 @@ function FieldPanel({
         return;
       }
       const found = r.results || [];
-      setMatches(found);
-      if (found.length === 0) {
-        setError('매칭 없음 — 게임에 그 값이 떠있는지 / 인코딩 확인');
-        return;
-      }
       // 정적 매칭 (양수 offset) 을 우선 — cross-restart 안정성 더 높음
       const sorted = [...found].sort((a, b) => {
         const aStat = !a.relativeRaw.startsWith('-');
@@ -248,6 +323,11 @@ function FieldPanel({
         if (!aStat && bStat) return 1;
         return 0;
       });
+      setMatches(sorted);
+      if (sorted.length === 0) {
+        setError('매칭 없음 — 게임에 그 값이 떠있는지 / 인코딩 확인');
+        return;
+      }
       for (let i = 0; i < sorted.length; i++) {
         setProgress(
           `${i + 1} / ${sorted.length} 시도 중... (${sorted[i].encoding}, ${
@@ -259,7 +339,7 @@ function FieldPanel({
           saveSlot(fieldKey, slot);
           setSaved(slot);
           setProgress(null);
-          setMatches([]);
+          // 찾은 매치 목록은 유지 (사용자가 다른 매치도 비교/확인할 수 있게)
           return;
         }
       }
@@ -278,7 +358,7 @@ function FieldPanel({
     setScanning(true);
     setError(null);
     setMatches([]);
-    setProgress(null);
+    setProgress('메모리 스캔 중...');
     try {
       const r = await window.infohsorry.memory.scan(EXE_NAME, input);
       if (!r.ok) {
@@ -286,7 +366,7 @@ function FieldPanel({
         return;
       }
       const found = r.results || [];
-      // 정적 매칭 (양수 offset) 우선 정렬 — UI 에서 위쪽에 표시
+      // 정적 (양수 offset) 우선 정렬 — 위쪽에 표시되되 음수 (heap) 도 같이 보임
       const sorted = [...found].sort((a, b) => {
         const aStat = !a.relativeRaw.startsWith('-');
         const bStat = !b.relativeRaw.startsWith('-');
@@ -300,17 +380,54 @@ function FieldPanel({
       setError((e as Error).message);
     } finally {
       setScanning(false);
+      setProgress(null);
+    }
+  }
+
+  // "이전 결과에서 다시 찾기" — Cheat Engine 의 next scan
+  //   현재 matches 의 각 주소에서 새 input 으로 다시 검증 → 일치하는 것만 keep
+  //   화면 바꿔 값 변경 후 좁힐 때 유용 (위치 고정 + 값만 다른 경우)
+  //   input 이 빈 문자열이면: 현재 메모리 값이 빈 (NULL 시작) 매치만 좁힘
+  async function onRefineScan(): Promise<void> {
+    if (matches.length === 0) return;
+    setScanning(true);
+    setError(null);
+    setProgress(`이전 매치 ${matches.length}개 좁히는 중...`);
+    try {
+      const prev = matches.map((m) => ({ encoding: m.encoding, absolute: m.absolute }));
+      const r = await window.infohsorry.memory.refineScan(EXE_NAME, input, prev);
+      if (!r.ok) {
+        setError(r.error || 'refine scan 실패');
+        return;
+      }
+      const found = r.results || [];
+      const sorted = [...found].sort((a, b) => {
+        const aStat = !a.relativeRaw.startsWith('-');
+        const bStat = !b.relativeRaw.startsWith('-');
+        if (aStat && !bStat) return -1;
+        if (!aStat && bStat) return 1;
+        return 0;
+      });
+      setMatches(sorted);
+      if (sorted.length === 0) {
+        setError(`이전 ${prev.length}개 모두 새 값과 불일치 — 입력값/인코딩 확인 후 다시 시도`);
+      }
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setScanning(false);
+      setProgress(null);
     }
   }
 
   // 수동 fallback — 자동이 실패할 때 매치 리스트에서 사용자가 직접 저장 시도
+  // 저장 성공해도 매치 목록은 유지 (다른 매치와 비교/확인 위해)
   async function onSaveMatch(m: ScanMatch): Promise<void> {
     setError(null);
     const slot = await tryMatch(m, input);
     if (slot) {
       saveSlot(fieldKey, slot);
       setSaved(slot);
-      setMatches([]);
       return;
     }
     setError('이 매치도 검증 실패 — 다른 매치 시도');
@@ -405,59 +522,117 @@ function FieldPanel({
           disabled={scanning || !input.trim()}
           title="스캔만 — 매치 목록만 표시 (자동 저장 X)"
         >
-          찾기만
+          {scanning ? '스캔 중...' : '찾기만'}
         </button>
+        {matches.length > 0 && (
+          <button
+            type="button"
+            className="ms-btn-secondary"
+            onClick={() => void onRefineScan()}
+            disabled={scanning}
+            title={`이전 매치 ${matches.length}개 중 새 값과 일치하는 것만 keep (입력 비어있으면 현재 빈 값인 매치만)`}
+          >
+            {scanning ? '좁히는 중...' : `이전 결과에서 다시 (${matches.length})`}
+          </button>
+        )}
       </div>
 
       {progress && <div className="ms-muted ms-progress">{progress}</div>}
       {error && <div className="ms-error">{error}</div>}
 
-      {matches.length > 0 && (
-        <div className="ms-matches">
-          <div className="ms-matches-header">
-            자동 검증 실패 — 매칭 {matches.length}개에서 수동 시도 가능 (정답 모르면 위 입력값 확인 후 다시 "찾기")
-          </div>
-          <table className="ms-matches-table">
-            <thead>
-              <tr>
-                <th>인코딩</th>
-                <th>주소 (절대)</th>
-                <th>offset (base 기준)</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              {matches.slice(0, 50).map((m, i) => (
-                <tr key={`${m.absolute}-${i}`}>
-                  <td>
-                    <code>{m.encoding}</code>
-                  </td>
-                  <td>
-                    <code>{m.absolute}</code>
-                  </td>
-                  <td>
-                    <code>{m.relative}</code>
-                  </td>
-                  <td>
-                    <button
-                      type="button"
-                      className="ms-btn-small"
-                      onClick={() => void onSaveMatch(m)}
-                    >
-                      저장
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {matches.length > 50 && (
-            <div className="ms-muted ms-cutoff">
-              {matches.length} 중 처음 50개만 표시 — 더 구체적으로 입력해서 좁히세요
+      {matches.length > 0 && (() => {
+        const totalPages = Math.max(1, Math.ceil(matches.length / PAGE_SIZE));
+        const safePage = Math.min(page, totalPages - 1);
+        const start = safePage * PAGE_SIZE;
+        const end = Math.min(start + PAGE_SIZE, matches.length);
+        const slice = matches.slice(start, end);
+        return (
+          <div className="ms-matches">
+            <div className="ms-matches-header">
+              <span>
+                매칭 {matches.length}개 — 수동으로 저장 시도 가능. "이전 결과에서 다시" 로 좁히거나 입력값 변경 후 "찾기" 로 새로 검색
+              </span>
+              <button
+                type="button"
+                className="ms-btn-small"
+                onClick={() => {
+                  setMatches([]);
+                  setError(null);
+                }}
+                title="발견된 매치 결과 모두 지움"
+              >
+                결과 지우기
+              </button>
             </div>
-          )}
-        </div>
-      )}
+            <table className="ms-matches-table">
+              <thead>
+                <tr>
+                  <th>인코딩</th>
+                  <th>주소 (절대)</th>
+                  <th>offset (base 기준)</th>
+                  <th>현재 값</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {slice.map((m, i) => {
+                  const rb = matchReadbacks[m.absolute];
+                  return (
+                    <tr key={`${m.absolute}-${start + i}`}>
+                      <td>
+                        <code>{m.encoding}</code>
+                      </td>
+                      <td>
+                        <code>{m.absolute}</code>
+                      </td>
+                      <td>
+                        <code>{m.relative}</code>
+                      </td>
+                      <td>
+                        {rb === undefined ? (
+                          <span className="ms-muted">읽는 중...</span>
+                        ) : (
+                          <code className="ms-match-value">{rb || '(빈 문자열)'}</code>
+                        )}
+                      </td>
+                      <td>
+                        <button
+                          type="button"
+                          className="ms-btn-small"
+                          onClick={() => void onSaveMatch(m)}
+                        >
+                          저장
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <div className="ms-pagination">
+              <button
+                type="button"
+                className="ms-btn-small"
+                onClick={() => setPage(Math.max(0, safePage - 1))}
+                disabled={safePage === 0}
+              >
+                ◀ 이전
+              </button>
+              <span className="ms-muted ms-page-info">
+                {safePage + 1} / {totalPages} 페이지 ({start + 1}~{end} / {matches.length})
+              </span>
+              <button
+                type="button"
+                className="ms-btn-small"
+                onClick={() => setPage(Math.min(totalPages - 1, safePage + 1))}
+                disabled={safePage >= totalPages - 1}
+              >
+                다음 ▶
+              </button>
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
@@ -489,20 +664,6 @@ export function MemoryScanner({ onClose }: { onClose: () => void }): JSX.Element
             label="INFINITAS ID"
             hint='형식: "C-2930-3689-1870" (대문자 + 3 × 4자리 숫자 + 하이픈). 하이픈 포함해서 그대로 입력. 매칭 안 되면 하이픈 빼고 시도'
             defaultMaxBytes={64}
-          />
-          <FieldPanel
-            fieldKey="spRank"
-            label="SP 단위"
-            hint='게임에 보이는 그대로 입력. 9급~1급 / 1단~10단 / 중전 / 개전. 미취득(-)은 스캔 불가. 게임 안에서 사용된 한자 그대로 (예: "中伝", "1단", "9級")'
-            defaultMaxBytes={32}
-            directOnly
-          />
-          <FieldPanel
-            fieldKey="dpRank"
-            label="DP 단위"
-            hint="DP 단위 — SP 와 같은 형식. 미취득은 스캔 불가"
-            defaultMaxBytes={32}
-            directOnly
           />
         </div>
       </div>

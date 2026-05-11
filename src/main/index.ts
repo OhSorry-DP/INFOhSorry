@@ -12,6 +12,7 @@ import {
   readBytes,
   readPointer,
   decodeString,
+  encodeString,
   type StringEncoding,
 } from './memory';
 import { RefluxManager, readRefluxOffsets } from './reflux';
@@ -192,6 +193,78 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
               : '-' + (found.modBaseAddr - abs).toString(),
         })),
       );
+      return {
+        ok: true,
+        modBase: '0x' + found.modBaseAddr.toString(16),
+        modSize: found.modBaseSize,
+        results: flat,
+      };
+    } finally {
+      closeHandle(found.handle);
+    }
+  },
+
+  // refine scan — 이전 매치 목록의 각 주소에서 새 값과 일치하는 것만 keep (Cheat Engine 의 next scan).
+  // 동작:
+  //   1. 새 text 가 빈 문자열 ("") 이면: 인코딩별 첫 char size 만큼 read 해서 NULL byte 면 keep
+  //      (= 그 주소가 디코딩 시 빈 문자열로 나오는 매치만 — "현재는 안 보이는 상태")
+  //   2. 새 text 가 있으면: encode 한 byte 와 정확히 일치하는 것만 keep
+  // 화면 바꿔 값이 변할 때 같은 위치의 새 값으로 좁힐 때 유용.
+  'memory:refine-scan': async (...args: never[]) => {
+    const exeName = (args[0] as string) || 'bm2dx.exe';
+    const text = (args[1] as string) ?? '';
+    const prev = args[2] as Array<{ encoding: StringEncoding; absolute: string }>;
+    if (!Array.isArray(prev) || prev.length === 0) {
+      return { ok: false, error: '이전 매치 목록 없음' };
+    }
+    const found = findInfinitas(exeName);
+    if (!found) {
+      return { ok: false, error: `프로세스 "${exeName}" 못 찾음 (게임 실행 중인지 확인)` };
+    }
+    try {
+      // 빈 문자열 검색은 NULL 매치 (인코딩별 첫 char 가 0x00) 확인
+      const isEmptySearch = text === '';
+      // encoding 별 needle (encoded bytes 또는 NULL probe size) 미리 계산
+      const needleByEnc = new Map<StringEncoding, Buffer>();
+      const nullSizeByEnc: Record<StringEncoding, number> = {
+        utf16le: 2,
+        utf8: 1,
+        ascii: 1,
+        shiftjis: 1,
+      };
+      const kept: Array<{ encoding: StringEncoding; absolute: string }> = [];
+      for (const m of prev) {
+        try {
+          const addr = BigInt(m.absolute);
+          if (isEmptySearch) {
+            const size = nullSizeByEnc[m.encoding] ?? 1;
+            const actual = readBytes(found.handle, addr, size);
+            // 첫 char 가 모두 NULL byte 면 디코딩 시 "" → keep
+            if (actual.every((b) => b === 0)) kept.push(m);
+          } else {
+            let needle = needleByEnc.get(m.encoding);
+            if (!needle) {
+              needle = encodeString(text, m.encoding);
+              needleByEnc.set(m.encoding, needle);
+            }
+            const actual = readBytes(found.handle, addr, needle.length);
+            if (actual.equals(needle)) kept.push(m);
+          }
+        } catch {
+          // 읽기 실패 (메모리 unmap 등) → drop
+        }
+      }
+      const flat = kept.map((m) => {
+        const abs = BigInt(m.absolute);
+        const isAbove = abs >= found.modBaseAddr;
+        const diff = isAbove ? abs - found.modBaseAddr : found.modBaseAddr - abs;
+        return {
+          encoding: m.encoding,
+          absolute: m.absolute,
+          relative: (isAbove ? '+0x' : '-0x') + diff.toString(16),
+          relativeRaw: isAbove ? diff.toString() : '-' + diff.toString(),
+        };
+      });
       return {
         ok: true,
         modBase: '0x' + found.modBaseAddr.toString(16),
