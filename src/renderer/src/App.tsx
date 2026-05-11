@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { EreterCacheStatus, EreterData, RatingData, RefluxState, SongRow, ZasaData } from '../../shared/types';
+import type { EreterCacheStatus, EreterData, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
@@ -22,11 +22,16 @@ import { useProfile } from './useProfile';
 import { uploadProfile } from './supabaseSync';
 import { IS_BROWSER_REMOTE } from './api';
 
-// 빌드 시 package.json 의 version 으로 채워짐 (electron-vite define 또는 hardcode 갱신)
-const APP_VERSION = '0.0.12';
-// Supabase 자동 업로드 주기 — 값 바뀔때마다 하면 트래픽/노이즈 부담이라 3분에 한 번.
+// 빌드 시 electron-vite 의 define 으로 package.json 의 version 자동 주입.
+// 이전엔 하드코드 (0.0.12) 라 v0.0.13~v0.0.15 풀 때 supabase 업로드 버전이 옛 값으로 남음.
+declare const __APP_VERSION__: string;
+const APP_VERSION = __APP_VERSION__;
+// 실력값 추정 + Supabase 업로드 주기 — 1분에 한 번.
+// 이전엔 Reflux 의 tracker.tsv mtime 변경 (이벤트 기반) 으로만 추정 trigger 했는데,
+// 계정 전환 후 Reflux 가 한참 dump 안 하면 stale 한 채로 머묾 → 분리해서 strict 1분 주기.
+// 1분마다: tracker.tsv 강제 재읽기 → rows 업데이트 → dp12StarResult 자동 재계산 → upload.
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
-const SUPABASE_INTERVAL_MS = 3 * 60 * 1000;
+const STAR_REFRESH_INTERVAL_MS = 60 * 1000;
 
 type Tab = 'sp' | 'dp' | 'dp12';
 
@@ -88,6 +93,10 @@ export default function App() {
   // ohSorryRating — ereter 미등록 lv11/lv12 차트 추정값 (추천 풀 fallback)
   // 우선순위: ereter > rating. ereter 매칭 곡은 절대 rating 으로 덮지 않음.
   const [ratingData, setRatingData] = useState<RatingData | null>(null);
+
+  // GitHub 최신 릴리즈 체크 결과 — 새 버전 있으면 헤더 배너 노출.
+  // 사용자가 "이번 버전 보지 않기" 클릭 시 localStorage 에 dismissed 버전 저장.
+  const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
 
   // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
   // Reflux 가 설치돼있으면 무조건 자동 시작 (5분 health check 가 떴는지 계속 확인).
@@ -156,6 +165,27 @@ export default function App() {
     })();
   }, []);
 
+  // 마운트 시 GitHub 최신 릴리즈 체크 (5초 지연 후 — 초기 로딩 우선).
+  // 실패 / 네트워크 끊김 / 같은 버전이면 배너 안 뜸.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      void (async () => {
+        try {
+          const info = await window.infohsorry.update.check();
+          if (info.hasUpdate && info.latestVersion) {
+            const dismissed = localStorage.getItem('infohsorry.update.dismissed');
+            if (dismissed !== info.latestVersion) {
+              setUpdateInfo(info);
+            }
+          }
+        } catch {
+          /* ignore */
+        }
+      })();
+    }, 5000);
+    return () => clearTimeout(t);
+  }, []);
+
   // ereter 갱신 — force=true 면 24h 안 지났어도 강제 갱신
   async function refreshEreter(force: boolean): Promise<void> {
     setEreterBusy(true);
@@ -172,14 +202,8 @@ export default function App() {
     }
   }
 
-  // Reflux 가 새 dump 를 신호하면 (stage='ready' + lastTsvMtime 갱신) 자동 reload
-  useEffect(() => {
-    const m = refluxState.lastTsvMtime ?? 0;
-    if (refluxState.stage === 'ready' && m && m !== lastLoadedMtime.current && tsvPath) {
-      lastLoadedMtime.current = m;
-      void loadTsv(tsvPath);
-    }
-  }, [refluxState, tsvPath]);
+  // (이전: Reflux 의 lastTsvMtime 변화 감지 → 자동 reload. 제거됨.)
+  // 실력값 추정 + tsv 재읽기는 별도 1분 timer 로만 trigger (Reflux 이벤트 안 받음).
 
   async function loadTsv(path: string): Promise<void> {
     setError(null);
@@ -409,9 +433,18 @@ export default function App() {
   }, [rows, ereterData, ratingData]);
 
   // 별값 추정 input — dp12Match 에서 derive
+  // v3.3.3: 4종 fitData scope 동시 수집 (ohSorry 와 동일).
+  //   ereter 매칭 곡 → c.gameLevel 안 채움 (모두 lv12)
+  //   ratingMap fallback → c.gameLevel = 11 / 12
+  //
+  //   - fitDataEreterOnly: 이레터 매칭 (gameLevel == null) 곡만
+  //   - fitDataLv12Only:   이레터 + ratingMap gameLevel === 12 (= 모든 lv12)
+  //   - fitDataAll:        이레터 + ratingMap 모두 (lv11+lv12 통합 = 11.6+ 전체)
   const dp12StarInputs = useMemo(() => {
     if (!dp12Match) return null;
-    const fitData: FitDatum[] = [];
+    const fitDataEreterOnly: FitDatum[] = [];
+    const fitDataLv12Only: FitDatum[] = [];
+    const fitDataAll: FitDatum[] = [];
     const poolCharts: PoolChart[] = [];
     for (const c of dp12Match.charts) {
       poolCharts.push({
@@ -423,37 +456,92 @@ export default function App() {
         exh: c.exh,
       });
       // 별값 추정 input 은 ★11.6~12.7 만 (ohSorry v3.3.3 와 동일).
-      // 추천 풀에 들어간 lv11 lower-tier (zasa < 11.6) charts 는 fitData 에서 제외.
       if (c.lampNum > 0 && c.level >= 11.6 && c.level <= 12.7) {
-        if (typeof c.ec === 'number') fitData.push({ d: c.ec, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
-        if (typeof c.hc === 'number') fitData.push({ d: c.hc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
-        if (typeof c.exh === 'number') fitData.push({ d: c.exh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
+        const items: FitDatum[] = [];
+        if (typeof c.ec === 'number') items.push({ d: c.ec, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
+        if (typeof c.hc === 'number') items.push({ d: c.hc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
+        if (typeof c.exh === 'number') items.push({ d: c.exh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
+        const isEreter = c.gameLevel == null;
+        const isLv12 = c.gameLevel == null || c.gameLevel === 12;
+        fitDataAll.push(...items);
+        if (isLv12) fitDataLv12Only.push(...items);
+        if (isEreter) fitDataEreterOnly.push(...items);
       }
     }
-    return { fitData, poolCharts };
+    // useOnlyLv12 분기 — LEVEL 12 (이레터 + lv12 rating) 플레이 ≥ 30
+    const nLv12Played = dp12Match.charts.filter(
+      (c) => (c.gameLevel == null || c.gameLevel === 12) && c.lampNum > 0,
+    ).length;
+    const useOnlyLv12 = nLv12Played >= 30;
+    return {
+      fitDataEreterOnly,
+      fitDataLv12Only,
+      fitDataAll,
+      poolCharts,
+      useOnlyLv12,
+      nLv12Played,
+    };
   }, [dp12Match]);
 
-  const dp12StarResult = useMemo(() => {
+  // v3.3.3: 4번 호출 (primary + 3 secondary) → max 채택, 2nd 도 별도 보관.
+  // primary 는 useOnlyLv12 분기 결과지만 어차피 max 로 다시 정해지므로 사실상 식별용 라벨.
+  const dp12StarAll = useMemo(() => {
     if (!dp12StarInputs) return null;
-    return estimateStar(dp12StarInputs.fitData, dp12StarInputs.poolCharts);
+    const primaryFit = dp12StarInputs.useOnlyLv12
+      ? dp12StarInputs.fitDataLv12Only
+      : dp12StarInputs.fitDataAll;
+    return [
+      { name: 'primary' as const, res: estimateStar(primaryFit, dp12StarInputs.poolCharts) },
+      {
+        name: 'ereter-only' as const,
+        res: estimateStar(dp12StarInputs.fitDataEreterOnly, dp12StarInputs.poolCharts),
+      },
+      {
+        name: 'lv12-only' as const,
+        res: estimateStar(dp12StarInputs.fitDataLv12Only, dp12StarInputs.poolCharts),
+      },
+      {
+        name: 'all-11.6+' as const,
+        res: estimateStar(dp12StarInputs.fitDataAll, dp12StarInputs.poolCharts),
+      },
+    ];
   }, [dp12StarInputs]);
+
+  // max-of-4 채택 — 저렙 fallback (★0.01) 자동 보완. dp12StarResult 는 max 결과.
+  const dp12StarResult = useMemo(() => {
+    if (!dp12StarAll) return null;
+    const valid = dp12StarAll.filter((x) => x.res != null);
+    if (valid.length === 0) return null;
+    valid.sort((a, b) => (b.res!.star ?? 0) - (a.res!.star ?? 0));
+    return valid[0].res;
+  }, [dp12StarAll]);
+
+  // 2nd 채택 — 3 unique scope (이레터 / lv12 / all-11.6+) 중 두번째로 큰 값.
+  // primary 는 위 3개 중 하나의 복사이므로 dedup 위해 제외.
+  const dp12StarSecond = useMemo(() => {
+    if (!dp12StarAll) return null;
+    const scopes = dp12StarAll.filter((x) => x.name !== 'primary' && x.res != null);
+    if (scopes.length < 2) return null;
+    scopes.sort((a, b) => (b.res!.star ?? 0) - (a.res!.star ?? 0));
+    return { name: scopes[1].name, result: scopes[1].res };
+  }, [dp12StarAll]);
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
 
-  // Supabase 자동 업로드 — 10분 간격 + 콘솔에서 수동 호출 (window.updateSupabase()).
-  // 값 바뀔때마다 올리면 dp12 데이터 갱신마다 디비 hit 라 부담 → 주기 호출로 변경.
+  // 실력값 추정 + Supabase 업로드 — 1분 주기 (이전엔 Reflux mtime 이벤트 + 3분 upload).
+  // 새 동작: 1분마다 tracker.tsv 강제 재읽기 → rows 갱신 → dp12StarResult 자동 재계산 → upload.
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
-  // 최신 profile / star / match 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match });
-  uploadStateRef.current = { profile, dp12StarResult, dp12Match };
+  // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
+  const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match, tsvPath });
+  uploadStateRef.current = { profile, dp12StarResult, dp12Match, tsvPath };
 
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
 
-    const tryUpload = (trigger: 'auto' | 'manual'): void => {
+    const tryUpload = (trigger: 'auto' | 'manual' | 'initial'): void => {
       const { profile: p, dp12StarResult: s, dp12Match: m } = uploadStateRef.current;
-      const tag = trigger === 'manual' ? '[supabase:manual]' : '[supabase:auto]';
+      const tag = `[supabase:${trigger}]`;
       if (!p.iidxId || !p.djName) {
         console.log(`${tag} skip: 프로필 미로드`, { iidxId: p.iidxId, djName: p.djName });
         return;
@@ -486,14 +574,39 @@ export default function App() {
     (window as unknown as { updateSupabase: () => void }).updateSupabase = (): void =>
       tryUpload('manual');
 
-    const interval = window.setInterval(() => tryUpload('auto'), SUPABASE_INTERVAL_MS);
-    console.log(`[supabase] 자동 업로드 활성화 — ${SUPABASE_INTERVAL_MS / 60000}분 간격, 수동: updateSupabase()`);
+    // 1분마다: tsv 강제 재읽기 → 500ms 뒤 (useMemo 재계산 시간) 업로드
+    const interval = window.setInterval(() => {
+      const path = uploadStateRef.current.tsvPath;
+      if (path) void loadTsv(path);
+      setTimeout(() => tryUpload('auto'), 500);
+    }, STAR_REFRESH_INTERVAL_MS);
+    console.log(`[supabase] 실력값 추정 + 업로드 활성화 — ${STAR_REFRESH_INTERVAL_MS / 1000}초 간격, 수동: updateSupabase()`);
+
+    // 노출 — 새 useEffect 에서 초기 업로드 트리거할 수 있도록
+    (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial = (): void =>
+      tryUpload('initial');
 
     return (): void => {
       window.clearInterval(interval);
       delete (window as unknown as { updateSupabase?: () => void }).updateSupabase;
+      delete (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial;
     };
   }, []);
+
+  // 초기 한 번만 — profile / star / match 모두 준비됨 감지하면 즉시 supabase 업로드
+  // (auto 3분 interval 첫 트리거를 기다리지 않고 데이터 로딩 끝나는 즉시 한 번)
+  const initialUploadDoneRef = useRef(false);
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
+    if (initialUploadDoneRef.current) return;
+    if (!profile.iidxId || !profile.djName) return;
+    if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return;
+    if (!dp12StarResult) return;
+    if (!dp12Match) return;
+    initialUploadDoneRef.current = true;
+    const fn = (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial;
+    if (fn) fn();
+  }, [profile, dp12StarResult, dp12Match]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:
@@ -638,6 +751,54 @@ export default function App() {
 
   return (
     <div className="app">
+      {updateInfo && updateInfo.hasUpdate && updateInfo.latestVersion && updateInfo.htmlUrl && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '8px 16px',
+            background: '#dcaf45',
+            color: '#212529',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <span>
+            🆕 새 버전 <b>v{updateInfo.latestVersion}</b> 있음 (현재 v{updateInfo.currentVersion})
+          </span>
+          <a
+            href={updateInfo.htmlUrl}
+            target="_blank"
+            rel="noreferrer"
+            style={{ color: '#212529', textDecoration: 'underline' }}
+          >
+            다운로드 페이지 열기 →
+          </a>
+          <button
+            type="button"
+            onClick={() => {
+              if (updateInfo.latestVersion) {
+                localStorage.setItem('infohsorry.update.dismissed', updateInfo.latestVersion);
+              }
+              setUpdateInfo(null);
+            }}
+            style={{
+              marginLeft: 'auto',
+              background: 'transparent',
+              border: '1px solid #212529',
+              color: '#212529',
+              padding: '2px 8px',
+              fontSize: 11,
+              cursor: 'pointer',
+              borderRadius: 4,
+            }}
+            title="이번 버전 알림 끄기"
+          >
+            이 버전 안 보기
+          </button>
+        </div>
+      )}
       <header className="app-header">
         <div className="title">
           <h1>
@@ -709,7 +870,11 @@ export default function App() {
 
       {rows.length > 0 && (
         <>
-          <ProfileCard profile={profile} starResult={dp12StarResult} />
+          <ProfileCard
+            profile={profile}
+            starResult={dp12StarResult}
+            secondHighest={dp12StarSecond}
+          />
           <nav className="tabs">
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
               DP
@@ -743,9 +908,10 @@ export default function App() {
                 {!IS_BROWSER_REMOTE && devMode && (
                   <StarPanel
                     result={dp12StarResult}
+                    allScopes={dp12StarAll}
                     matched={dp12Match?.matched ?? 0}
                     unmatched={dp12Match?.unmatched ?? 0}
-                    fitDataCount={dp12StarInputs?.fitData.length ?? 0}
+                    fitDataCount={dp12StarInputs?.fitDataAll.length ?? 0}
                     matchedNonNp={dp12Match?.charts.filter((c) => c.lampNum > 0).length ?? 0}
                     ereterReady={!!ereterData}
                     unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
@@ -946,6 +1112,7 @@ function RecCard({
 // ============================================================
 function StarPanel({
   result,
+  allScopes,
   matched,
   unmatched,
   fitDataCount,
@@ -958,6 +1125,7 @@ function StarPanel({
   onRefreshEreter,
 }: {
   result: ReturnType<typeof estimateStar>;
+  allScopes: { name: string; res: ReturnType<typeof estimateStar> }[] | null;
   matched: number;
   unmatched: number;
   fitDataCount: number;
@@ -1017,6 +1185,30 @@ function StarPanel({
       <details className="star-debug">
         <summary>모델 내부 (디버그)</summary>
         <ul>
+          {allScopes && (
+            <li>
+              <b>4종 scope 결과 (max 채택):</b>
+              <ul style={{ marginTop: 4, paddingLeft: 16 }}>
+                {allScopes.map((s) => {
+                  const isMax = s.res != null && result != null && s.res.star === result.star;
+                  return (
+                    <li
+                      key={s.name}
+                      style={{
+                        color: isMax ? '#0d5fbe' : 'var(--text-secondary, #555)',
+                        fontWeight: isMax ? 600 : 400,
+                      }}
+                    >
+                      {s.name}: {s.res
+                        ? `★${s.res.star.toFixed(2)} (raw=${s.res.raw.toFixed(2)}, n=${s.res.fitDataCount}, validStages=${s.res.validStages.join('/') || '비어있음'}${s.res.isEcOnlyValid ? ', EC-only' : ''}${s.res.ecOnlyApplied ? '+보정' : ''})`
+                        : 'N/A (표본 부족)'}
+                      {isMax && ' ← max'}
+                    </li>
+                  );
+                })}
+              </ul>
+            </li>
+          )}
           <li>
             ridge 보정: {result.ridgeCorrection >= 0 ? '+' : ''}
             {result.ridgeCorrection.toFixed(3)}

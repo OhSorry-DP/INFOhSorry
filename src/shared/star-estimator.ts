@@ -1,6 +1,13 @@
-// ohSorry v3.2.10 별값 추정 모델 — INFOhSorry 용 포팅
+// ohSorry v3.3.3 별값 추정 모델 — INFOhSorry 용 포팅
 //
-// 원본: d:\work\ohSorry\2-calc-score.js (v3.2.10 / 2026-05-08 기준)
+// 원본: d:\work\ohSorry\2-calc-score.js (v3.3.3 / 2026-05-10 기준)
+//
+// v3.3.x 변경사항:
+//   v3.3.1: 추정 하한 0.5 → 0.01 (LOW_FALLBACK + RAW_BOUNDS)
+//   v3.3.2: EC-only 사용자 (HC/EXH 클리어 < 10) 에 raw + max_clear 기반 선형 보정
+//           true ≈ -0.158 + 0.761·raw_s + 0.250·fEc.max_clear (16명 fit, MAE 41% 감소)
+//   v3.3.3: caller 가 4종 fitData scope 동시 계산해서 max 채택 (이 파일은 단일 호출만 처리,
+//           multi-scope 처리는 App.tsx 에서)
 //
 // 단계:
 //   1. raw S grid search (logistic NLL, alpha = quadratic of S)
@@ -50,6 +57,8 @@ export interface StarResult {
   djBoost: number;
   djBoostInfo: { djLevel: string; gap: number; curveW: number } | null;
   binImplied: { stage: string; implied: number; bonus: number } | null;
+  isEcOnlyValid: boolean; // v3.3.2: HC/EXH 클리어 < 10 → EC 만 유효
+  ecOnlyApplied: boolean; // v3.3.2: 실제 EC-only 보정이 starEstimate 를 끌어올렸는지
 }
 
 // ============================================================
@@ -82,8 +91,13 @@ const SIGMA_PROB = 1.0;
 const PROB_NOISE_THRESHOLD = 0.99;
 const MARGIN_TH = 1.3;
 const MIN_CLEAR_PER_LAMP = 10;
-const LOW_FALLBACK = 0.5;
-const RAW_BOUNDS: [number, number] = [0.5, 14.5];
+const LOW_FALLBACK = 0.01; // v3.3.1+: 0.5 → 0.01
+const RAW_BOUNDS: [number, number] = [0.01, 14.5]; // v3.3.1+
+
+// v3.3.2: EC-only 보정 계수
+const EC_ONLY_INTERCEPT = -0.158;
+const EC_ONLY_RAW_COEF = 0.761;
+const EC_ONLY_MAXCLEAR_COEF = 0.25;
 const Z_CLAMP = 50;
 
 // v3.2.4 + v3.2.7 + v3.2.10 — bin post-correction
@@ -140,6 +154,9 @@ export function estimateStar(
     (st) => clearCounts[st] >= MIN_CLEAR_PER_LAMP,
   );
 
+  // v3.3.2: EC-only 사용자 식별 (HC/EXH 클리어 < 10)
+  const isEcOnlyValid = validStages.length === 1 && validStages[0] === 'ec';
+
   if (validStages.length === 0) {
     // 모든 lamp 에서 클리어 < 10 — 저렙 fallback
     return {
@@ -155,6 +172,8 @@ export function estimateStar(
       djBoost: 0,
       djBoostInfo: null,
       binImplied: null,
+      isEcOnlyValid: false,
+      ecOnlyApplied: false,
     };
   }
 
@@ -479,6 +498,19 @@ export function estimateStar(
 
   starEstimate = Math.max(0.0, Math.min(15.0, starEstimate));
 
+  // v3.3.2: EC-only 사용자 (HC/EXH 클리어 < 10) 에 raw + max_clear 기반 선형 보정.
+  // 16명 EC-only 샘플 fit: true ≈ -0.158 + 0.761·raw_s + 0.250·fEc.max_clear (MAE 41% 감소).
+  // 정상 starEstimate 와 보정값 중 더 큰 쪽 채택 — collapse 방지 + 시스템 underestimate 보상.
+  let ecOnlyApplied = false;
+  if (isEcOnlyValid) {
+    const ecCorrected =
+      EC_ONLY_INTERCEPT + EC_ONLY_RAW_COEF * rawS + EC_ONLY_MAXCLEAR_COEF * fEc.max_clear;
+    const adjusted = Math.max(starEstimate, ecCorrected);
+    const clamped = Math.max(0.01, Math.min(15.0, adjusted));
+    if (Math.abs(clamped - starEstimate) > 0.005) ecOnlyApplied = true;
+    starEstimate = clamped;
+  }
+
   return {
     star: starEstimate,
     raw: rawS,
@@ -494,5 +526,7 @@ export function estimateStar(
     binImplied: binImplied
       ? { stage: binImplied.stage, implied: binImplied.implied, bonus: binImplied.bonus }
       : null,
+    isEcOnlyValid,
+    ecOnlyApplied,
   };
 }

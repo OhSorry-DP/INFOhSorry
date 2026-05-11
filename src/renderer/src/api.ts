@@ -105,6 +105,10 @@ if (!IS_HOST) {
       status: () =>
         callIpc('rating:status') as ReturnType<Window['infohsorry']['rating']['status']>,
     },
+    update: {
+      check: () =>
+        callIpc('update:check') as ReturnType<Window['infohsorry']['update']['check']>,
+    },
     saveImage: browserDownloadPng,
     probe: (exeName: string) => callIpc('memory:probe', exeName) as Promise<ProbeResult>,
     memory: {

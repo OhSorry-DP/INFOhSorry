@@ -10,6 +10,7 @@ import type {
   ZasaCacheStatus,
   RatingGetResult,
   RatingCacheStatus,
+  UpdateInfo,
 } from '../shared/types';
 
 const api = {
@@ -58,6 +59,11 @@ const api = {
   rating: {
     get: (force = false): Promise<RatingGetResult> => ipcRenderer.invoke('rating:get', force),
     status: (): Promise<RatingCacheStatus> => ipcRenderer.invoke('rating:status'),
+  },
+
+  // GitHub 최신 릴리즈 체크 — 알림 전용 (자동 다운로드 X)
+  update: {
+    check: (): Promise<UpdateInfo> => ipcRenderer.invoke('update:check'),
   },
 
   // 캡처 이미지 자동 저장 (사진 폴더 / INFOhSorry / *.png)

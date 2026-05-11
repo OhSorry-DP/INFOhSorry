@@ -10,6 +10,7 @@ import type {
   ZasaCacheStatus,
   RatingGetResult,
   RatingCacheStatus,
+  UpdateInfo,
 } from '../shared/types';
 
 declare global {
@@ -43,6 +44,9 @@ declare global {
       rating: {
         get: (force?: boolean) => Promise<RatingGetResult>;
         status: () => Promise<RatingCacheStatus>;
+      };
+      update: {
+        check: () => Promise<UpdateInfo>;
       };
       saveImage: (
         data: ArrayBuffer | string,

@@ -13,8 +13,13 @@
 //             hover title 에 lamp / EX / rate / miss / notes 표시
 import { useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
-import type { ChartSlot, SongChart } from '../../shared/types';
+import type { ChartSlot, Lamp, SongChart } from '../../shared/types';
 import { lampNum } from '../../shared/match';
+import { lampStyle } from './lampStyle';
+
+// 스택드 바 segment 표시 순서 (좋은 → 나쁜).
+// P-FC 는 F-COMBO 에 통합 (별도 segment 없음, lampStack 집계 시 FC 로 합산).
+const LAMP_BAR_ORDER: Lamp[] = ['FC', 'EX', 'HC', 'NC', 'EC', 'AC', 'F', 'NP'];
 
 interface Props {
   charts: SongChart[];
@@ -136,39 +141,88 @@ export default function Dp12Table({ charts }: Props) {
     return sorted;
   }, [charts, sortBy]);
 
+  // 표 전체 lamp 분포 — 스택드 바용. P-FC 는 F-COMBO 에 합산.
+  const lampStack = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const c of charts) {
+      const key = c.lamp === 'PFC' ? 'FC' : c.lamp;
+      counts[key] = (counts[key] || 0) + 1;
+    }
+    const total = charts.length;
+    return LAMP_BAR_ORDER
+      .map((lamp) => ({ lamp, count: counts[lamp] || 0 }))
+      .filter((s) => s.count > 0)
+      .map((s) => ({ ...s, pct: (s.count / total) * 100 }));
+  }, [charts]);
+
   if (groups.length === 0) {
     return <div className="dp12-empty">매칭된 DP ☆12 곡이 없습니다.</div>;
   }
 
   return (
     <div>
-      <div className="dp12-sort">
-        <button
-          className={`dp12-sort-btn${sortBy === 'title' ? ' active' : ''}`}
-          onClick={() => setSortBy('title')}
-        >
-          곡명 순
-        </button>
-        <span className="dp12-sort-sep">|</span>
-        <button
-          className={`dp12-sort-btn${sortBy === 'lamp' ? ' active' : ''}`}
-          onClick={() => setSortBy('lamp')}
-        >
-          램프 순
-        </button>
-        <button
-          className="dp12-capture-btn"
-          onClick={captureGrid}
-          disabled={capturing}
-          title="격자 영역을 PNG 이미지로 저장"
-        >
-          {capturing ? '캡처 중...' : '캡처'}
-        </button>
+      <div className="dp12-toolbar">
+        <div className="dp12-bar-group">
+          {/* 색상 박스 범례 — 위 */}
+          <div className="dp12-lamp-legend">
+            {LAMP_BAR_ORDER.map((lamp) => {
+              const ls = lampStyle(lamp);
+              return (
+                <div key={lamp} className="dp12-lamp-legend-item">
+                  <span className={`dp12-lamp-legend-swatch lamp-box lamp-${lamp}`} />
+                  <span>{ls.label}</span>
+                </div>
+              );
+            })}
+          </div>
+          {/* 스택드 바 — 아래 */}
+          {lampStack.length > 0 && (
+            <div className="dp12-stackbar">
+              {lampStack.map(({ lamp, count, pct }) => {
+                return (
+                  <div
+                    key={lamp}
+                    className={`dp12-stackbar-seg lamp-box lamp-${lamp}`}
+                    style={{ flexBasis: `${pct}%` }}
+                  >
+                    {count}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        <div className="dp12-sort">
+          <button
+            className={`dp12-sort-btn${sortBy === 'title' ? ' active' : ''}`}
+            onClick={() => setSortBy('title')}
+          >
+            곡명 순
+          </button>
+          <span className="dp12-sort-sep">|</span>
+          <button
+            className={`dp12-sort-btn${sortBy === 'lamp' ? ' active' : ''}`}
+            onClick={() => setSortBy('lamp')}
+          >
+            램프 순
+          </button>
+          <button
+            className="dp12-capture-btn"
+            onClick={captureGrid}
+            disabled={capturing}
+            title="격자 영역을 PNG 이미지로 저장"
+          >
+            {capturing ? '캡처 중...' : '캡처'}
+          </button>
+        </div>
       </div>
       <div className="dp12-grid" ref={gridRef}>
           {groups.map(([level, list]) => (
           <div key={level} className="dp12-group">
-            <div className="dp12-level">{level === -1 ? '미분류' : level.toFixed(1)}</div>
+            <div className="dp12-level">
+              {level === -1 ? '미분류' : level.toFixed(1)}
+              <span className="dp12-level-count">{list.length}곡</span>
+            </div>
             <div className="dp12-songs">
               {list.map((c, i) => (
                 <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} />

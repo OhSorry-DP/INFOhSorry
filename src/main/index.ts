@@ -22,6 +22,7 @@ import {
 } from './ereter';
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
 import { getRatingData, getRatingCacheStatus } from './rating';
+import { checkForUpdate } from './updateCheck';
 import { startHttpServer } from './http-server';
 
 let mainWindow: BrowserWindow | null = null;
@@ -95,6 +96,9 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
   'rating:status': async () => getRatingCacheStatus(),
+
+  // GitHub 최신 릴리즈 체크 — "v0.0.X 있음 → 다운로드" 알림용 (자동 다운로드 X)
+  'update:check': async () => checkForUpdate(),
 
   // zasa (보충용 ☆12 난이도표 — DP12 격자 표 미분류 곡 fallback 매칭)
   'zasa:get': async (...args: never[]) => {

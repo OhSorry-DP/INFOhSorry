@@ -14,7 +14,8 @@ export interface LampStyle {
 export function lampStyle(lamp: Lamp): LampStyle {
   switch (lamp) {
     case 'PFC':
-      return { label: 'P-FC', color: '#00d4dd', bg: '#e0f7f9' };
+      // P-FC 는 F-COMBO 에 통합 (같은 색 / 같은 라벨로 시각적 동일).
+      return { label: 'F-COMBO', color: '#00aab2', bg: '#e6fafa' };
     case 'FC':
       return { label: 'F-COMBO', color: '#00aab2', bg: '#e6fafa' };
     case 'EX':
@@ -22,7 +23,8 @@ export function lampStyle(lamp: Lamp): LampStyle {
     case 'HC':
       return { label: 'H-CLEAR', color: '#dc3545', bg: '#fbe9eb' };
     case 'NC':
-      return { label: 'CLEAR', color: '#555', bg: '#f0f0f0' };
+      // 기존 P-FC 가 쓰던 청록색 (#00d4dd) 으로 변경 — NC 가 더 눈에 띄도록.
+      return { label: 'CLEAR', color: '#00d4dd', bg: '#e0f7f9' };
     case 'EC':
       return { label: 'E-CLEAR', color: '#52a447', bg: '#eaf6e8' };
     case 'AC':

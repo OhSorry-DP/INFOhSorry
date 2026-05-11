@@ -272,6 +272,37 @@ function FieldPanel({
     }
   }
 
+  // "찾기만" — 스캔만 하고 매치 리스트만 표시 (자동 저장 X, 사용자가 수동으로 골라 저장)
+  async function onScanOnly(): Promise<void> {
+    if (!input.trim()) return;
+    setScanning(true);
+    setError(null);
+    setMatches([]);
+    setProgress(null);
+    try {
+      const r = await window.infohsorry.memory.scan(EXE_NAME, input);
+      if (!r.ok) {
+        setError(r.error || '스캔 실패');
+        return;
+      }
+      const found = r.results || [];
+      // 정적 매칭 (양수 offset) 우선 정렬 — UI 에서 위쪽에 표시
+      const sorted = [...found].sort((a, b) => {
+        const aStat = !a.relativeRaw.startsWith('-');
+        const bStat = !b.relativeRaw.startsWith('-');
+        if (aStat && !bStat) return -1;
+        if (!aStat && bStat) return 1;
+        return 0;
+      });
+      setMatches(sorted);
+      if (sorted.length === 0) setError('매칭 없음 — 게임에 그 값이 떠있는지 / 인코딩 확인');
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setScanning(false);
+    }
+  }
+
   // 수동 fallback — 자동이 실패할 때 매치 리스트에서 사용자가 직접 저장 시도
   async function onSaveMatch(m: ScanMatch): Promise<void> {
     setError(null);
@@ -366,6 +397,15 @@ function FieldPanel({
           disabled={scanning || !input.trim()}
         >
           {scanning ? '진행 중...' : '찾기 + 자동 저장'}
+        </button>
+        <button
+          type="button"
+          className="ms-btn-secondary"
+          onClick={() => void onScanOnly()}
+          disabled={scanning || !input.trim()}
+          title="스캔만 — 매치 목록만 표시 (자동 저장 X)"
+        >
+          찾기만
         </button>
       </div>
 

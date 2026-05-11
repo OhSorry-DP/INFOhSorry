@@ -1270,6 +1270,44 @@ body {
 }
 
 /* ----- DP ☆12 격자 정렬 토글 — 우측 정렬, 박스 X, 텍스트 only ----- */
+/* 스택드 바 + 색박스 범례 + 정렬 / 캡처 버튼을 한 줄에 (PC 기준).
+   PC: [legend(위) + stackbar(아래)] left | [sort + capture] right
+   Mobile (≤768px): column-reverse 로 sort+capture 가 위, legend+stackbar 가 아래로. */
+.dp12-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+.dp12-bar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.dp12-bar-group .dp12-lamp-legend {
+  margin-bottom: 0;
+}
+.dp12-bar-group .dp12-stackbar {
+  margin-bottom: 0;
+}
+.dp12-toolbar .dp12-sort {
+  margin-left: auto;
+  margin-bottom: 0;
+  flex-shrink: 0;
+}
+@media (max-width: 768px) {
+  .dp12-toolbar {
+    flex-direction: column-reverse;
+    align-items: stretch;
+    gap: 10px;
+  }
+  .dp12-toolbar .dp12-sort {
+    margin-left: 0;
+  }
+}
+
 .dp12-sort {
   display: flex;
   align-items: center;
@@ -1392,6 +1430,71 @@ body {
   display: grid;
   grid-template-columns: 70px 1fr;
 }
+/* lamp 색상 박스 범례 — 작은 swatch + 라벨, 한 줄 가로 배치 */
+.dp12-lamp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  color: var(--text-secondary, #555);
+}
+.dp12-lamp-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+/* 서열표의 .lamp-box 스타일 그대로 (width:6px, align-self:stretch) 사용 — 별도 오버라이드 X */
+/* legend HC swatch 만 상하 테두리 추가 (서열표 안 곡 옆 .lamp-box.lamp-HC 는 좌우만, 변경 X).
+   3 클래스 selector 로 specificity 0-3-0 → .lamp-box.lamp-HC (0-2-0) 이김. */
+.dp12-lamp-legend-swatch.lamp-box.lamp-HC {
+  border-top: 1px solid #c8c8c8;
+  border-bottom: 1px solid #c8c8c8;
+}
+
+/* 표 전체 lamp 분포 스택드 바 — grid 최상단 */
+.dp12-stackbar {
+  display: flex;
+  width: 100%;
+  max-width: 500px;
+  height: 24px;
+  margin-bottom: 16px;
+  border-radius: 4px;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+/* selector 두 클래스 결합 (.dp12-stackbar-seg.lamp-box) 으로 specificity 0-2-0 → 뒤에 오는
+   .lamp-box (0-1-0) 의 display:inline-block / width:6px / align-self:stretch 를 모두 이김. */
+.dp12-stackbar-seg.lamp-box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #fff;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  width: auto;
+  align-self: auto;
+  height: 100%;
+}
+/* HC (흰 배경) 일 때 텍스트 색 어둡게 — 흰색 텍스트는 안 보임 */
+.dp12-stackbar-seg.lamp-HC {
+  color: #555;
+  text-shadow: none;
+  /* 스택드바에서만 상하 테두리 추가 (색박스는 기존 좌우 테두리 그대로) */
+  border-top: 1px solid #c8c8c8;
+  border-bottom: 1px solid #c8c8c8;
+}
+/* NP (연한 회색 배경) 도 텍스트 어둡게 */
+.dp12-stackbar-seg.lamp-NP {
+  color: #555;
+  text-shadow: none;
+}
+
 /* 레벨 그룹 사이에 빈 row 한 줄만큼 spacing */
 .dp12-group + .dp12-group {
   margin-top: 30px;
@@ -1401,9 +1504,18 @@ body {
   font-weight: 700;
   color: var(--text-primary);
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  align-items: flex-end;
   justify-content: center;
+  gap: 2px;
+  padding-right: 15px;
   font-variant-numeric: tabular-nums;
+}
+.dp12-level-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--text-muted, #888);
+  opacity: 0.7;
 }
 .dp12-songs {
   display: grid;
@@ -1460,14 +1572,17 @@ body {
 .lamp-box.lamp-EX  { background: #dcaf45; }
 /* DP12 격자: 깜빡임 대신 정적 그라데이션 */
 .lamp-box.lamp-F {
-  background: #5e2222;
+  background: #b86060; /* 라이트: 중간 톤 더스티 레드 */
   opacity: 0.65;
 }
+[data-theme="dark"] .lamp-box.lamp-F {
+  background: #5e2222; /* 다크: opacity 와 자연스럽게 어울리는 어두운 빨강 */
+}
 .lamp-box.lamp-FC {
-  background: linear-gradient(to bottom, #5cb8ea, #ffffff, #dcaf45);
+  background: linear-gradient(to bottom right, #0d47a1, #e3f2fd);
 }
 .lamp-box.lamp-PFC {
-  background: linear-gradient(to bottom, #5cb8ea, #ffffff, #dcaf45);
+  background: linear-gradient(to bottom right, #0d47a1, #e3f2fd);
 }
 /* 차트 슬롯 별 글자 색 (배경 X) */
 .dp12-song.slot-DPN { color: var(--action-primary); }              /* NORMAL — 하늘 */
@@ -1953,7 +2068,10 @@ body {
   }
   .dp12-level {
     font-size: 15px;
+    flex-direction: row;
+    align-items: baseline;
     justify-content: flex-start;
+    gap: 6px;
     padding: 4px 0;
     color: var(--text-primary);
     border-bottom: 1px solid var(--border-primary);

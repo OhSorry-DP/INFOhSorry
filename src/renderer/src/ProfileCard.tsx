@@ -7,7 +7,19 @@ import type { StarResult } from '../../shared/star-estimator';
 interface ProfileCardProps {
   profile: ProfileInfo;
   starResult: StarResult | null;
+  // 두번째로 큰 scope 결과 (max 와의 차이 표시용). null 이면 "DP Recommend" 표시.
+  secondHighest?: {
+    name: 'primary' | 'ereter-only' | 'lv12-only' | 'all-11.6+';
+    result: StarResult | null;
+  } | null;
 }
+
+// scope 라벨 (한국어 표시)
+const SCOPE_LABEL: Record<string, string> = {
+  'ereter-only': '이레터넷만',
+  'lv12-only': 'LEVEL 12 (이레터+추정)',
+  'all-11.6+': '11.6+ 전체',
+};
 
 // 단위 색상 — 한자 / 한국식 / 일본식 모두 인식:
 //   皆伝 / 개전 → 금빛
@@ -42,11 +54,24 @@ function rankClass(rank: string | null): string {
   return 'rank-low';
 }
 
-export function ProfileCard({ profile, starResult }: ProfileCardProps): JSX.Element | null {
+export function ProfileCard({
+  profile,
+  starResult,
+  secondHighest,
+}: ProfileCardProps): JSX.Element | null {
   const { djName, iidxId, iidxIdFormatted, spRank, dpRank } = profile;
 
   // 메모리 read 가 한 번도 성공 X (게임 로그인 전 등) → 카드 자체 숨김
   if (!djName && !iidxId && !starResult) return null;
+
+  // 2nd 표시: max (starResult.star) 와의 차이
+  const secondNote = (() => {
+    if (!starResult || !secondHighest || !secondHighest.result) return null;
+    const diff = secondHighest.result.star - starResult.star;
+    const diffStr = (diff >= 0 ? '+' : '') + diff.toFixed(2);
+    const label = SCOPE_LABEL[secondHighest.name] || secondHighest.name;
+    return { value: secondHighest.result.star, diffStr, label };
+  })();
 
   return (
     <div className="profile-card">
@@ -67,7 +92,17 @@ export function ProfileCard({ profile, starResult }: ProfileCardProps): JSX.Elem
       {starResult && (
         <div className="profile-card-star">
           <div className="profile-card-star-value">★{starResult.star.toFixed(2)}</div>
-          <div className="profile-card-star-note">DP Recommend</div>
+          {secondNote ? (
+            <div
+              className="profile-card-star-note"
+              title={`두번째로 큰 scope: ${secondNote.label}`}
+            >
+              {secondNote.label}: ★{secondNote.value.toFixed(2)}{' '}
+              <span style={{ opacity: 0.7 }}>({secondNote.diffStr})</span>
+            </div>
+          ) : (
+            <div className="profile-card-star-note">DP Recommend</div>
+          )}
         </div>
       )}
     </div>

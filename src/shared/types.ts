@@ -209,3 +209,13 @@ export interface RatingCacheStatus {
   isStale: boolean;
   exists: boolean;
 }
+
+// GitHub 최신 릴리즈 체크 결과 — 알림 전용 (자동 다운로드 X)
+export interface UpdateInfo {
+  hasUpdate: boolean;
+  currentVersion: string;
+  latestVersion: string | null;
+  htmlUrl: string | null; // 릴리즈 페이지 URL
+  publishedAt: string | null;
+  error?: string;
+}
