@@ -447,14 +447,18 @@ export default function App() {
     const fitDataAll: FitDatum[] = [];
     const poolCharts: PoolChart[] = [];
     for (const c of dp12Match.charts) {
-      poolCharts.push({
-        lampNum: c.lampNum,
-        level: c.level,
-        djLevel: c.djLevel,
-        ec: c.ec,
-        hc: c.hc,
-        exh: c.exh,
-      });
+      // poolCharts (features pool: acfcPool / v32Cleared) 는 ereter-matched 만 (ohSorry 와 동일).
+      // ratingMap fallback 차트 (c.gameLevel != null) 는 fitData 보강용으로만 쓰고 features 에는 X.
+      if (c.gameLevel == null) {
+        poolCharts.push({
+          lampNum: c.lampNum,
+          level: c.level,
+          djLevel: c.djLevel,
+          ec: c.ec,
+          hc: c.hc,
+          exh: c.exh,
+        });
+      }
       // 별값 추정 input 은 ★11.6~12.7 만 (ohSorry v3.3.3 와 동일).
       if (c.lampNum > 0 && c.level >= 11.6 && c.level <= 12.7) {
         const items: FitDatum[] = [];
