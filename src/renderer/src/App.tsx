@@ -4,6 +4,7 @@ import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
 import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
+import { inferUserTiered as osrInferUserTieredBundle, version as osrBundleVersion } from '../../shared/calc-osrating';
 import {
   buildExhRecs,
   buildRecsWithPool,
@@ -308,6 +309,13 @@ export default function App() {
         ratingIdx.set(norm(rt.title) + '|' + rt.diff, rt);
       }
     }
+    // zasa-data lookup — chart 별 zasaLevel 채움용
+    const zasaIdx = new Map<string, number>();
+    if (zasaData) {
+      for (const z of zasaData.charts) {
+        zasaIdx.set(norm(z.title) + '|' + z.diff, z.level);
+      }
+    }
     const charts: RecInputChart[] = [];
     let matched = 0;
     let unmatched = 0;
@@ -337,6 +345,16 @@ export default function App() {
         const diff = slotToDiff(slot);
         const normKey = norm(r.title) + '|' + diff;
         const e = idx.get(normKey);
+        const zasaLevel = zasaIdx.get(normKey) ?? null;
+        // Reflux TSV 의 chart/곡 단위 정보 (모든 분기 공통)
+        const tsvExtras = {
+          unlocked: c.unlocked,
+          exScore: typeof c.exScore === 'number' ? c.exScore : null,
+          noteCount: typeof c.noteCount === 'number' ? c.noteCount : null,
+          djPoints: typeof c.djPoints === 'number' ? c.djPoints : null,
+          songType: r.type ?? null,
+          songLabel: r.label ?? null,
+        };
         if (e) {
           // ereter 매칭 — 우선순위 최상. ratingMap 안 봄.
           if (e.level > 12.7) continue;
@@ -356,7 +374,9 @@ export default function App() {
             ec_n: e.ec_n,
             hc_n: e.hc_n,
             exh_n: e.exh_n,
-            // gameLevel 필드 안 채움 (이레터 매칭 곡은 색상 표시 X)
+            gameLevel: c.level,
+            zasaLevel,
+            ...tsvExtras,
           });
           continue;
         }
@@ -379,11 +399,32 @@ export default function App() {
             ec_n: typeof rt.nEcCleared === 'number' ? rt.nEcCleared : null,
             hc_n: typeof rt.nHcCleared === 'number' ? rt.nHcCleared : null,
             exh_n: 0,
-            gameLevel: rt.gameLevel ?? null, // UI 색상 구분
+            gameLevel: rt.gameLevel ?? c.level,  // ratingMap gameLevel 우선, 없으면 INF tsv lv
+            zasaLevel: rt.zasaLevel,
+            ...tsvExtras,
           });
           continue;
         }
-        // 둘 다 없음 — unmatched
+        // 둘 다 없음 — supabase 신곡 추정용으로 charts 에 포함 (ec/hc/exh = null)
+        charts.push({
+          title: r.title,
+          slot,
+          diff,
+          level: zasaLevel ?? c.level,
+          lamp: c.lamp,
+          lampNum: lampNum(c.lamp),
+          djLevel: c.letter || null,
+          missCount: typeof c.missCount === 'number' ? c.missCount : null,
+          ec: null,
+          hc: null,
+          exh: null,
+          ec_n: null,
+          hc_n: null,
+          exh_n: 0,
+          gameLevel: c.level,
+          zasaLevel,
+          ...tsvExtras,
+        });
         if (c.unlocked && c.lamp !== 'NP') {
           unmatched++;
           const titleK = norm(r.title);
@@ -430,7 +471,7 @@ export default function App() {
       (window as unknown as { __dp_unmatched: typeof unmatchedAll }).__dp_unmatched = unmatchedAll;
     }
     return { charts, matched, unmatched, unmatchedSamples, unmatchedAll };
-  }, [rows, ereterData, ratingData]);
+  }, [rows, ereterData, ratingData, zasaData]);
 
   // 별값 추정 input — dp12Match 에서 derive
   // v3.3.3: 4종 fitData scope 동시 수집 (ohSorry 와 동일).
@@ -511,14 +552,94 @@ export default function App() {
     ];
   }, [dp12StarInputs]);
 
-  // max-of-4 채택 — 저렙 fallback (★0.01) 자동 보완. dp12StarResult 는 max 결과.
-  const dp12StarResult = useMemo(() => {
+  // max-of-4 채택 — 저렙 fallback (★0.01) 자동 보완. dp12StarOldResult 는 v3.3.3 의 max 결과.
+  const dp12StarOldResult = useMemo(() => {
     if (!dp12StarAll) return null;
     const valid = dp12StarAll.filter((x) => x.res != null);
     if (valid.length === 0) return null;
     valid.sort((a, b) => (b.res!.star ?? 0) - (a.res!.star ?? 0));
     return valid[0].res;
   }, [dp12StarAll]);
+
+  // ohSorry v3.3.4: calc-OSRating (v0.0.2) inferUserTiered 추가 → ensemble 평균
+  //   charts 변환 — SongRow / DP_SLOTS → { title, diff, lampNum } 단순 형식
+  const osrChartsInput = useMemo(() => {
+    if (!rows || rows.length === 0) return [];
+    const out: { title: string; diff: string; lampNum: number }[] = [];
+    for (const r of rows) {
+      for (const slot of DP_SLOTS) {
+        const cell = r.charts[slot];
+        if (!cell || !cell.unlocked || !cell.lamp) continue;
+        const diff = slotToDiff(slot);
+        if (!diff) continue;
+        out.push({ title: r.title, diff, lampNum: lampNum(cell.lamp) });
+      }
+    }
+    return out;
+  }, [rows]);
+
+  // gist 자동 갱신된 lib (cache) 가 더 최신이면 그것 우선 사용. 없거나 옛 버전이면 bundle 사용.
+  // startup 시 main 에 IPC 요청 → eval → osrLibOverride 에 저장. 이후 inferUserTiered 호출에 사용.
+  const [osrLibOverride, setOsrLibOverride] = useState<{ inferUserTiered: typeof osrInferUserTieredBundle; version: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.infohsorry?.osrLib) return;
+    window.infohsorry.osrLib.get().then((cached) => {
+      if (!cached || !cached.code || !cached.version) return;
+      // version 비교: cache > bundle 일 때만 override
+      const a = cached.version.split('.').map((n) => parseInt(n, 10) || 0);
+      const b = osrBundleVersion.split('.').map((n) => parseInt(n, 10) || 0);
+      let newer = false;
+      for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        if ((a[i] || 0) > (b[i] || 0)) { newer = true; break; }
+        if ((a[i] || 0) < (b[i] || 0)) break;
+      }
+      if (!newer) {
+        console.log(`[osr] bundle (v${osrBundleVersion}) 사용 (cache v${cached.version} 동일 또는 옛 버전)`);
+        return;
+      }
+      try {
+        // UMD wrapper 의 IIFE 실행 — window.ohSorryRating 에 등록됨
+        new Function(cached.code)();
+        const w = window as unknown as { ohSorryRating?: { inferUserTiered?: typeof osrInferUserTieredBundle } };
+        if (typeof w.ohSorryRating?.inferUserTiered === 'function') {
+          setOsrLibOverride({ inferUserTiered: w.ohSorryRating.inferUserTiered, version: cached.version });
+          console.log(`[osr] gist cache v${cached.version} 사용 (bundle v${osrBundleVersion})`);
+        }
+      } catch (e) {
+        console.warn('[osr] cache eval 실패:', (e as Error).message);
+      }
+    });
+  }, []);
+
+  const osrTieredResult = useMemo<{ star: number; group?: string; nativeStar?: number; bandCorrection?: number } | null>(() => {
+    if (!ratingData || osrChartsInput.length === 0) return null;
+    const inferFn = osrLibOverride?.inferUserTiered || osrInferUserTieredBundle;
+    try {
+      const r = inferFn(osrChartsInput, ratingData) as {
+        ereterCompatStar?: number;
+        nativeStar?: number;
+        group?: string;
+        bandCorrection?: number;
+      };
+      return typeof r.ereterCompatStar === 'number'
+        ? { star: r.ereterCompatStar, group: r.group, nativeStar: r.nativeStar, bandCorrection: r.bandCorrection }
+        : null;
+    } catch (e) {
+      console.warn('[osr] inferUserTiered 실패:', (e as Error).message);
+      return null;
+    }
+  }, [osrChartsInput, ratingData, osrLibOverride]);
+
+  // ensemble — (oldOSR max + OSR tiered) / 2 평균. 한쪽 없으면 다른 쪽 단독.
+  // dp12StarOldResult 의 StarResult 타입 그대로 유지 + star 필드만 ensemble 결과로 override.
+  const dp12StarResult = useMemo(() => {
+    const oldStar = dp12StarOldResult?.star;
+    const newStar = osrTieredResult?.star;
+    if (typeof oldStar === 'number' && typeof newStar === 'number') {
+      return { ...dp12StarOldResult!, star: (oldStar + newStar) / 2 };
+    }
+    return dp12StarOldResult;  // 한쪽이라도 없으면 v3.3.3 그대로
+  }, [dp12StarOldResult, osrTieredResult]);
 
   // 2nd 채택 — 3 unique scope (이레터 / lv12 / all-11.6+) 중 두번째로 큰 값.
   // primary 는 위 3개 중 하나의 복사이므로 dedup 위해 제외.
@@ -859,9 +980,9 @@ export default function App() {
       {memoryScannerOpen && <MemoryScanner onClose={() => setMemoryScannerOpen(false)} />}
 
       <div className="app-body">
-      <RefluxLog state={refluxState} />
+      {rows.length === 0 && <RefluxLog state={refluxState} />}
 
-      {error && <div className="error">에러: {error}</div>}
+      {error && !/ENOENT|no such file/i.test(error) && <div className="error">에러: {error}</div>}
 
       {refluxState.stage === 'idle' && rows.length === 0 && (
         <div className="empty-state">

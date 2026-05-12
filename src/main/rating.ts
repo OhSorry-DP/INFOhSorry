@@ -44,19 +44,10 @@ async function fetchRaw(): Promise<RatingData> {
   return (await res.json()) as RatingData;
 }
 
-export async function getRatingData(force = false): Promise<RatingData> {
+export async function getRatingData(_force = false): Promise<RatingData> {
+  // 항상 gist fetch 우선 시도 — 성공 시 캐시 갱신 + 사용.
+  // fetch 실패 시에만 기존 캐시 fallback (gist 다운 / 오프라인 대응).
   const path = dataPath();
-  if (!force && existsSync(path)) {
-    try {
-      const text = await fsp.readFile(path, 'utf-8');
-      const cached: RatingData = JSON.parse(text);
-      const age = Date.now() - new Date(cached.generatedAt).getTime();
-      if (age < TTL_MS) return cached;
-    } catch {
-      // 손상된 캐시 — 다시 fetch
-    }
-  }
-  // gist fetch — 실패 시 stale 캐시 fallback (gist 다운 대응)
   try {
     const data = await fetchRaw();
     await fsp.writeFile(path, JSON.stringify(data), 'utf-8');
@@ -67,11 +58,11 @@ export async function getRatingData(force = false): Promise<RatingData> {
         const text = await fsp.readFile(path, 'utf-8');
         const cached: RatingData = JSON.parse(text);
         console.warn(
-          `[rating] gist fetch 실패 → stale 캐시 fallback (${cached.generatedAt} 추출본): ${(e as Error).message}`,
+          `[rating] gist fetch 실패 → 기존 캐시 fallback (${cached.generatedAt}): ${(e as Error).message}`,
         );
         return cached;
       } catch {
-        /* 손상된 캐시는 fallback 으로도 못 씀 */
+        /* 손상된 캐시 → fallback 도 못 씀 */
       }
     }
     throw e;

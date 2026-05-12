@@ -36,7 +36,16 @@ export interface RecInputChart {
   ec_n: number | null; // 해당 stage 클리어 인구수 (이레터넷의 ec_count)
   hc_n: number | null;
   exh_n: number | null;
-  gameLevel?: number | null; // ratingMap fallback 시 11 / 12. ereter 매칭 곡은 null/undefined.
+  gameLevel?: number | null; // INF 게임 lv (11 / 12). ereter / rating / 미매칭 모두 채움 (Reflux tsv 의 c.level 사용).
+  zasaLevel?: number | null; // zasa★ (10.2~12.7). zasa-data 매칭 시 채움, 없으면 null.
+  // Reflux TSV 의 chart 단위 추가 정보 (supabase 신곡 추정 / 통계 보강용)
+  unlocked?: boolean;
+  exScore?: number | null;
+  noteCount?: number | null;
+  djPoints?: number | null;
+  // Reflux TSV 의 곡 단위 추가 정보
+  songType?: string | null;
+  songLabel?: string | null;
 }
 
 export interface RecCandidate {
@@ -244,7 +253,8 @@ export function buildExhRecs(
   for (const c of matched) {
     if (c.lampNum >= 6) continue; // EXH 클리어한 곡 제외
     if (typeof c.exh !== 'number') continue;
-    if (c.exh > baseStar) continue; // 자기 실력 위 곡 제외
+    if (c.exh > baseStar + 1) continue; // 실력 +1 이상 곡 제외 (도전 살짝 허용)
+    if (c.exh < baseStar - 2) continue; // 실력 -2 미만 곡 제외 (너무 쉬움)
     candidates.push({
       title: c.title,
       slot: c.slot,

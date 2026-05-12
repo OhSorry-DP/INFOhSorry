@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF Setup 0.0.8.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.8-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.18.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.18-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -78,6 +78,18 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.18 — v3.3.4 ensemble + OSR lib 자동 갱신 + supabase 업로드 확장
+- **v3.3.4 ensemble** — 사용자 ★ = (oldOSR v3.3.3 + OSR v0.0.2 tiered) / 2 평균. OSR (calc-OSRating.js) 을 INFOhSorry 에 bundle, `inferUserTiered` 사용 (그룹별 scope + band correction)
+- **calc-OSRating.js 자동 갱신** — 매 부팅 시 main process 가 gist 에서 fetch + userData/libs/ 캐시. version 비교해서 더 최신이면 renderer 가 eval → window override. bundle 은 fallback. 모델 업데이트 시 INFOhSorry 재빌드 불필요
+- **ohSorryRating 캐시 정책 변경** — 24h TTL 제거, **매번 fetch + 실패 시에만 캐시 fallback** (gist 다운 / 오프라인 대응)
+- **EXH 추천 범위 조정** — `[baseStar - 2, baseStar + 1]` 로 변경. 실력 +1 까지 도전 허용, 실력 -2 미만은 제외 (너무 쉬운 곡 컷)
+- **UI 정리** — tracker.tsv 로드 후 Reflux 로그 자동 숨김, `ENOENT` / `no such file` 에러 화면 표시 제거 (조용히 무시)
+- **supabase 업로드 확장**:
+  - `charts_json` 에 **DP lv11/lv12 전곡 포함** (이전: ereter 매칭곡만)
+  - 각 chart 에 `gameLevel` / `zasaLevel` 명시
+  - Reflux TSV 의 모든 정보 추가: `unlocked` / `exScore` / `noteCount` / `djPoints` / `songType` / `songLabel`
+  - 신곡 추정 / 통계 분석 데이터 풍부해짐
 
 ### 0.0.8 — 매칭 / 캐싱 안정화 + zasa 보충
 - **norm() 강화로 추가 매칭** — 16곡 (이전 미매칭) 신규 매칭. 따옴표 변종 (U+201C/D, U+2019), `Ø`/`ø`, `Æ`/`æ`, `ə`, 키릴 homoglyph (`И` → `n` 등), 라틴 디아크리틱 (`Ü`→u, `ê`→e), `♥` `♪` `※` `→` `∮` `†` 등 장식 기호 제거

@@ -105,6 +105,11 @@ if (!IS_HOST) {
       status: () =>
         callIpc('rating:status') as ReturnType<Window['infohsorry']['rating']['status']>,
     },
+    osrLib: {
+      get: () => callIpc('osrLib:get') as ReturnType<Window['infohsorry']['osrLib']['get']>,
+      checkUpdate: () =>
+        callIpc('osrLib:checkUpdate') as ReturnType<Window['infohsorry']['osrLib']['checkUpdate']>,
+    },
     update: {
       check: () =>
         callIpc('update:check') as ReturnType<Window['infohsorry']['update']['check']>,

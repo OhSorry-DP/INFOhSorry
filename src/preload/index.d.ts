@@ -45,6 +45,10 @@ declare global {
         get: (force?: boolean) => Promise<RatingGetResult>;
         status: () => Promise<RatingCacheStatus>;
       };
+      osrLib: {
+        get: () => Promise<{ code: string; version: string | null } | null>;
+        checkUpdate: () => Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }>;
+      };
       update: {
         check: () => Promise<UpdateInfo>;
       };

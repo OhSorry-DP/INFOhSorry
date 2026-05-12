@@ -23,6 +23,7 @@ import {
 } from './ereter';
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
 import { getRatingData, getRatingCacheStatus } from './rating';
+import { checkAndUpdateOsrLib, getOsrLibCode } from './osrLib';
 import { checkForUpdate } from './updateCheck';
 import { startHttpServer } from './http-server';
 
@@ -97,6 +98,10 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
   'rating:status': async () => getRatingCacheStatus(),
+
+  // calc-OSRating.js auto-update — 부팅 시 gist fetch + userData 캐시 (renderer 가 eval 해서 사용)
+  'osrLib:get': async () => getOsrLibCode(),
+  'osrLib:checkUpdate': async () => checkAndUpdateOsrLib(),
 
   // GitHub 최신 릴리즈 체크 — "v0.0.X 있음 → 다운로드" 알림용 (자동 다운로드 X)
   'update:check': async () => checkForUpdate(),
@@ -495,6 +500,9 @@ function createWindow(): void {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   createWindow();
+
+  // calc-OSRating.js 자동 갱신 — 부팅 시 background fetch + cache update (실패해도 무시)
+  checkAndUpdateOsrLib().catch((e) => console.warn('[osrLib] 갱신 실패:', (e as Error).message));
 
   // production 빌드에서만 HTTP 서버 시작 (LAN 모드 — 다른 PC 의 Chrome 으로 접속해서 동일 화면 + 원격 제어)
   if (!process.env.ELECTRON_RENDERER_URL) {
