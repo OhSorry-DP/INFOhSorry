@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { EreterCacheStatus, EreterData, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
+import type { ChartSlot, EreterCacheStatus, EreterData, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
@@ -61,6 +61,8 @@ export default function App() {
   });
   const [rows, setRows] = useState<SongRow[]>([]);
   const [tab, setTab] = useState<Tab>('dp');
+  // 추천곡 클릭 → DP 탭 + 해당 row 로 스크롤 타깃
+  const [scrollTarget, setScrollTarget] = useState<{ title: string; slot: string; gameLevel?: number | null } | null>(null);
   const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
   // 개발 모드 — 호스트 (Electron) 에서만 콘솔에 startdev() 노출. PC2 (브라우저 원격) 에선 비활성.
   // 활성 시 Reflux 토글 / 프로필 스캐너 / StarPanel 등 디버그 요소 표시.
@@ -98,6 +100,14 @@ export default function App() {
   // GitHub 최신 릴리즈 체크 결과 — 새 버전 있으면 헤더 배너 노출.
   // 사용자가 "이번 버전 보지 않기" 클릭 시 localStorage 에 dismissed 버전 저장.
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
+  // v0.0.19+: 포터블 자동 다운로드 state
+  const [updateDownload, setUpdateDownload] = useState<{
+    stage: 'idle' | 'downloading' | 'done' | 'error';
+    downloaded: number;
+    total: number;
+    filePath?: string;
+    error?: string;
+  }>({ stage: 'idle', downloaded: 0, total: 0 });
 
   // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
   // Reflux 가 설치돼있으면 무조건 자동 시작 (5분 health check 가 떴는지 계속 확인).
@@ -267,220 +277,230 @@ export default function App() {
     return { total, unlocked, played };
   }, [rows, tab]);
 
-  // DP ☆12 차트만 추출 (별값 추정 모델 input 의 prep)
-  // 매칭 우선순위: ereter ★ → zasa ★ (둘 다 없으면 미분류).
-  // zasa 만 매칭된 차트는 추천 / ★값 추정엔 사용 X — DP12 격자 분류만 영향.
+  // DP ☆12 차트 추출 — 서열표 input
+  // 매칭 우선순위: ereter ★ → ohSorryRating (gameLevel===12) zasaLevel (둘 다 없으면 미분류).
+  // ratingMap 만 매칭된 차트는 추천 / ★값 추정엔 사용 X — 격자 분류만 영향.
   const dp12Charts = useMemo(() => {
     const charts = extractCharts(rows, { slots: DP_SLOTS, level: 12 });
-    if (!ereterData && !zasaData) return charts;
+    if (!ereterData && !ratingData && !zasaData) return charts;
     const ereterIdx = ereterData ? buildEreterIndex(ereterData.charts).index : null;
-    // zasa 인덱스 — 같은 키 형식 (norm(title) + '|' + diff)
-    const zasaIdx = new Map<string, { level: number }>();
-    if (zasaData) {
-      for (const z of zasaData.charts) {
-        zasaIdx.set(norm(z.title) + '|' + z.diff, { level: z.level });
-      }
-    }
-    return charts.map((c) => {
-      const key = norm(c.title) + '|' + slotToDiff(c.slot);
-      const e = ereterIdx?.get(key);
-      if (e) return { ...c, ereterLevel: e.level };
-      const z = zasaIdx.get(key);
-      if (z) return { ...c, ereterLevel: z.level };
-      return c;
-    });
-  }, [rows, ereterData, zasaData]);
-
-  // INFINITAS DP 차트 + ereter ★ 매칭 (LEVEL 11 + LEVEL 12 모두 대상, ★11.6 하한 없음)
-  //
-  // 우선순위: ereter > ratingMap.
-  // - ereter 매칭 곡 → 그 값 그대로 (matched 카운트, gameLevel 필드 없음)
-  // - ereter 없을 때만 ratingMap fallback (gameLevel 필드 11/12 표시 → UI 색상 구분)
-  // - 둘 다 없으면 unmatched (skip)
-  //
-  // 별값 추정 input 은 LEVEL 12 ★11.6~12.7 만 (matched ereter 곡들에서 따로 필터),
-  // 추천 풀은 lv11+lv12 전곡 (이 charts 배열 그대로) — ohSorry v3.3.3 와 동일.
-  const dp12Match = useMemo(() => {
-    if (!ereterData) return null;
-    const idx = buildEreterIndex(ereterData.charts).index;
-    const ratingIdx = new Map<string, RatingData['ratings'][number]>();
+    // ohSorryRating (lv12) 인덱스 — norm(title)+'|'+diff → zasaLevel
+    const ratingIdx12 = new Map<string, number>();
     if (ratingData) {
-      for (const rt of ratingData.ratings) {
-        ratingIdx.set(norm(rt.title) + '|' + rt.diff, rt);
+      for (const r of ratingData.ratings) {
+        if (r.gameLevel !== 12) continue;
+        ratingIdx12.set(norm(r.title) + '|' + r.diff, r.zasaLevel);
       }
     }
-    // zasa-data lookup — chart 별 zasaLevel 채움용
+    // zasa-data 인덱스 — ereter / ratingMap 둘 다 없는 미분류 곡 fallback
     const zasaIdx = new Map<string, number>();
     if (zasaData) {
       for (const z of zasaData.charts) {
         zasaIdx.set(norm(z.title) + '|' + z.diff, z.level);
       }
     }
-    const charts: RecInputChart[] = [];
-    let matched = 0;
-    let unmatched = 0;
-    let ratingFallbackCount = 0;
-    const unmatchedSamples: string[] = [];
-    const unmatchedAll: {
-      title: string;
-      diff: string;
-      lamp: string;
-      normKey: string;
-      ereterCandidates: string[];
-    }[] = [];
+    return charts.map((c) => {
+      const key = norm(c.title) + '|' + slotToDiff(c.slot);
+      const e = ereterIdx?.get(key);
+      if (e) return { ...c, ereterLevel: e.level };
+      const lv = ratingIdx12.get(key);
+      if (typeof lv === 'number') return { ...c, ereterLevel: lv };
+      const zlv = zasaIdx.get(key);
+      if (typeof zlv === 'number') return { ...c, ereterLevel: zlv };
+      return c;
+    });
+  }, [rows, ereterData, ratingData, zasaData]);
 
-    // 곡명 norm → ereter 등록된 모든 차트 인덱스 (미매칭 진단용)
-    const ereterByTitleNorm = new Map<string, string[]>();
-    for (const e of ereterData.charts) {
-      const k = norm(e.title);
-      if (!ereterByTitleNorm.has(k)) ereterByTitleNorm.set(k, []);
-      ereterByTitleNorm.get(k)!.push(`${e.title} [${e.diff}] ★${e.level}`);
+  // DP ☆11 차트 추출 — ohSorryRating.ratings (gameLevel === 11) 의 zasaLevel 매칭
+  //   ereter 는 ★12 만 등재 → lv11 격자는 ohSorryRating 의 zasaLevel 로 그룹화
+  const dp11Charts = useMemo(() => {
+    const charts = extractCharts(rows, { slots: DP_SLOTS, level: 11 });
+    if (!ratingData && !zasaData) return charts;
+    const ratingIdx = new Map<string, number>(); // key → zasaLevel
+    if (ratingData) {
+      for (const r of ratingData.ratings) {
+        if (r.gameLevel !== 11) continue;
+        ratingIdx.set(norm(r.title) + '|' + r.diff, r.zasaLevel);
+      }
     }
+    // zasa-data 인덱스 — ratingMap 에 없는 미분류 곡 fallback
+    const zasaIdx = new Map<string, number>();
+    if (zasaData) {
+      for (const z of zasaData.charts) {
+        zasaIdx.set(norm(z.title) + '|' + z.diff, z.level);
+      }
+    }
+    return charts.map((c) => {
+      const key = norm(c.title) + '|' + slotToDiff(c.slot);
+      const lv = ratingIdx.get(key);
+      if (typeof lv === 'number') return { ...c, ereterLevel: lv };
+      const zlv = zasaIdx.get(key);
+      if (typeof zlv === 'number') return { ...c, ereterLevel: zlv };
+      return c;
+    });
+  }, [rows, ratingData, zasaData]);
+
+  // 서열표 미분류 곡 JSON payload — ereter / ratingMap / zasaData 셋 다 매칭 안 된 곡 (lv11+lv12).
+  const unclassifiedJson = useMemo(() => {
+    const toEntry = (c: typeof dp12Charts[number], gameLevel: 11 | 12) => {
+      const diff = slotToDiff(c.slot);
+      return {
+        title: c.title,
+        diff,
+        slot: c.slot,
+        gameLevel,
+        lamp: c.lamp,
+        unlocked: c.unlocked,
+        normKey: norm(c.title) + '|' + diff,
+      };
+    };
+    const lv12Unclassified = dp12Charts.filter((c) => c.ereterLevel == null).map((c) => toEntry(c, 12));
+    const lv11Unclassified = dp11Charts.filter((c) => c.ereterLevel == null).map((c) => toEntry(c, 11));
+    return {
+      generatedAt: new Date().toISOString(),
+      summary: { lv12Count: lv12Unclassified.length, lv11Count: lv11Unclassified.length },
+      lv12Unclassified,
+      lv11Unclassified,
+    };
+  }, [dp12Charts, dp11Charts]);
+
+  // INFINITAS DP 차트 풀 — **ohSorryRating.json (ratingData) 등재곡 기준**.
+  //
+  // 변경 (2026-05-14): 풀 자체를 ratingData 의 lv11/12 곡으로 한정.
+  //   - 내부 추천 평가용 (level/ec/hc/exh) = ratingMap 의 zasaLevel / estEc / estHc / estExh
+  //   - 표시용 ereter 실측 (ereterLevel/Ec/Hc/Exh) = 별도 필드로 저장 (있을 때만)
+  //   - ratingData 미등재 곡 (신곡 등) 은 풀에서 제외 — supabase 업로드용은 별도 newSongCharts 분리
+  //
+  // 매칭 흐름:
+  //   ratingData.ratings → tsv (Reflux) row 매칭 → ereter 보조 매칭
+  const dp12Match = useMemo(() => {
+    if (!ratingData) return null;  // 풀 기준 자체가 ratingData
+    const ereterIdx = ereterData ? buildEreterIndex(ereterData.charts).index : new Map();
+    // zasa-data lookup
+    const zasaIdx = new Map<string, number>();
+    if (zasaData) {
+      for (const z of zasaData.charts) {
+        zasaIdx.set(norm(z.title) + '|' + z.diff, z.level);
+      }
+    }
+    // tsv (Reflux row) index: normKey → { title, slot, c, type, label }
+    type TsvHit = {
+      title: string;
+      slot: ChartSlot;
+      diff: string;
+      c: NonNullable<(typeof rows)[number]['charts'][ChartSlot]>;
+      type: string | null;
+      label: string | null;
+    };
+    const tsvIdx = new Map<string, TsvHit>();
     for (const r of rows) {
       for (const slot of DP_SLOTS) {
         const c = r.charts[slot];
         if (!c) continue;
-        // LEVEL 11 + LEVEL 12 모두 대상 (ohSorry v3.3.3 와 동일하게 추천 풀 확장)
         if (c.level !== 11 && c.level !== 12) continue;
         const diff = slotToDiff(slot);
         const normKey = norm(r.title) + '|' + diff;
-        const e = idx.get(normKey);
-        const zasaLevel = zasaIdx.get(normKey) ?? null;
-        // Reflux TSV 의 chart/곡 단위 정보 (모든 분기 공통)
-        const tsvExtras = {
-          unlocked: c.unlocked,
-          exScore: typeof c.exScore === 'number' ? c.exScore : null,
-          noteCount: typeof c.noteCount === 'number' ? c.noteCount : null,
-          djPoints: typeof c.djPoints === 'number' ? c.djPoints : null,
-          songType: r.type ?? null,
-          songLabel: r.label ?? null,
-        };
-        if (e) {
-          // ereter 매칭 — 우선순위 최상. ratingMap 안 봄.
-          if (e.level > 12.7) continue;
-          matched++;
-          charts.push({
-            title: r.title,
-            slot,
-            diff,
-            level: e.level,
-            lamp: c.lamp,
-            lampNum: lampNum(c.lamp),
-            djLevel: c.letter || null,
-            missCount: typeof c.missCount === 'number' ? c.missCount : null,
-            ec: e.ec,
-            hc: e.hc,
-            exh: e.exh,
-            ec_n: e.ec_n,
-            hc_n: e.hc_n,
-            exh_n: e.exh_n,
-            gameLevel: c.level,
-            zasaLevel,
-            ...tsvExtras,
-          });
-          continue;
-        }
-        // ereter 매칭 실패 — ratingMap fallback 시도
-        const rt = ratingIdx.get(normKey);
-        if (rt && typeof rt.zasaLevel === 'number' && rt.zasaLevel <= 12.7) {
-          ratingFallbackCount++;
-          charts.push({
-            title: r.title,
-            slot,
-            diff,
-            level: rt.zasaLevel,
-            lamp: c.lamp,
-            lampNum: lampNum(c.lamp),
-            djLevel: c.letter || null,
-            missCount: typeof c.missCount === 'number' ? c.missCount : null,
-            ec: typeof rt.estEc === 'number' ? rt.estEc : null,
-            hc: typeof rt.estHc === 'number' ? rt.estHc : null,
-            exh: typeof rt.estExh === 'number' ? rt.estExh : null,
-            ec_n: typeof rt.nEcCleared === 'number' ? rt.nEcCleared : null,
-            hc_n: typeof rt.nHcCleared === 'number' ? rt.nHcCleared : null,
-            exh_n: 0,
-            gameLevel: rt.gameLevel ?? c.level,  // ratingMap gameLevel 우선, 없으면 INF tsv lv
-            zasaLevel: rt.zasaLevel,
-            ...tsvExtras,
-          });
-          continue;
-        }
-        // 둘 다 없음 — supabase 신곡 추정용으로 charts 에 포함 (ec/hc/exh = null)
-        charts.push({
-          title: r.title,
-          slot,
-          diff,
-          level: zasaLevel ?? c.level,
-          lamp: c.lamp,
-          lampNum: lampNum(c.lamp),
-          djLevel: c.letter || null,
-          missCount: typeof c.missCount === 'number' ? c.missCount : null,
-          ec: null,
-          hc: null,
-          exh: null,
-          ec_n: null,
-          hc_n: null,
-          exh_n: 0,
-          gameLevel: c.level,
-          zasaLevel,
-          ...tsvExtras,
-        });
-        if (c.unlocked && c.lamp !== 'NP') {
-          unmatched++;
-          const titleK = norm(r.title);
-          unmatchedAll.push({
-            title: r.title,
-            diff,
-            lamp: c.lamp,
-            normKey,
-            ereterCandidates: ereterByTitleNorm.get(titleK) ?? [],
-          });
-          if (unmatchedSamples.length < 10) {
-            unmatchedSamples.push(`${r.title} [${diff}] (lamp=${c.lamp})`);
-          }
-        }
+        tsvIdx.set(normKey, { title: r.title, slot, diff, c, type: r.type ?? null, label: r.label ?? null });
       }
     }
-    if (ratingFallbackCount > 0) {
-      console.log(`[dp12Match] ratingMap fallback: ${ratingFallbackCount}곡 (ereter 미등록 lv11/lv12 추정)`);
-    }
-    // dev 디버그: 미매칭 곡 전체 목록 + ereter 의 norm 키 후보 console 출력
-    if (unmatchedAll.length > 0) {
-      console.group(`[dp12Match] 미매칭 ${unmatchedAll.length}곡 (★12 + 시도한 곡)`);
-      console.log(unmatchedAll.map((u) => `${u.title} [${u.diff}] (lamp=${u.lamp})`).join('\n'));
-      // 같은 곡명의 ereter 후보 — diff 종류는 다를 수 있음
-      const titleNorm = new Map<string, string[]>();
-      for (const e of ereterData.charts) {
-        const k = norm(e.title);
-        if (!titleNorm.has(k)) titleNorm.set(k, []);
-        titleNorm.get(k)!.push(`${e.title} [${e.diff}] ★${e.level}`);
+
+    const charts: RecInputChart[] = [];
+    let matched = 0;          // ratingData ∩ tsv ∩ ereter (3중 매칭)
+    let ratingOnlyCount = 0;  // ratingData ∩ tsv (ereter 미등재 — isRatingFallback=true)
+    let ratingMissCount = 0;  // ratingData 에 있지만 tsv 미매칭 (잠금/신곡 미반영)
+    // 미매칭 진단 — tsv 와 ratingData 간 불일치 목록 (JSON 내보내기용)
+    const ratingMissedInTsv: { title: string; diff: string; gameLevel: number; zasaLevel: number; normKey: string }[] = [];
+    const ratingKeyset = new Set<string>();
+    for (const rt of ratingData.ratings) {
+      if (rt.gameLevel !== 11 && rt.gameLevel !== 12) continue;
+      if (typeof rt.zasaLevel !== 'number' || rt.zasaLevel > 12.7) continue;
+      const normKey = norm(rt.title) + '|' + rt.diff;
+      ratingKeyset.add(normKey);
+      const hit = tsvIdx.get(normKey);
+      if (!hit) {
+        ratingMissCount++;
+        ratingMissedInTsv.push({ title: rt.title, diff: rt.diff, gameLevel: rt.gameLevel, zasaLevel: rt.zasaLevel, normKey });
+        continue;
       }
-      console.group('미매칭 곡명별 — ereter 동일 norm 후보 (있으면 다른 diff 가능성, 없으면 ereter 미등록)');
-      for (const u of unmatchedAll) {
-        const tk = u.normKey.split('|')[0];
-        const cands = titleNorm.get(tk);
-        if (cands && cands.length > 0) {
-          console.log(`  '${u.title}' [${u.diff}] → ereter 후보: ${cands.join(' / ')}`);
-        } else {
-          console.log(`  '${u.title}' [${u.diff}] → ereter 곡명 자체 없음 (norm '${tk}')`);
-        }
-      }
-      console.groupEnd();
-      console.groupEnd();
-      // 전역 노출 (개발자가 console 에서 window.__dp_unmatched 로 다시 볼 수 있게)
-      (window as unknown as { __dp_unmatched: typeof unmatchedAll }).__dp_unmatched = unmatchedAll;
+      const c = hit.c;
+      const e = ereterIdx.get(normKey);
+      const hasEreter = !!e && e.level <= 12.7;
+      if (hasEreter) matched++;
+      else ratingOnlyCount++;
+      charts.push({
+        title: hit.title,
+        slot: hit.slot,
+        diff: hit.diff,
+        // 내부 추천 평가용 — ratingMap estimates
+        level: rt.zasaLevel,
+        ec: typeof rt.estEc === 'number' ? rt.estEc : null,
+        hc: typeof rt.estHc === 'number' ? rt.estHc : null,
+        exh: typeof rt.estExh === 'number' ? rt.estExh : null,
+        ec_n: typeof rt.nEcCleared === 'number' ? rt.nEcCleared : null,
+        hc_n: typeof rt.nHcCleared === 'number' ? rt.nHcCleared : null,
+        exh_n: 0,
+        // 사용자 플레이
+        lamp: c.lamp,
+        lampNum: lampNum(c.lamp),
+        djLevel: c.letter || null,
+        missCount: typeof c.missCount === 'number' ? c.missCount : null,
+        // ereter 실측 (있을 때만)
+        ereterLevel: hasEreter ? e.level : null,
+        ereterEc: hasEreter ? e.ec : null,
+        ereterHc: hasEreter ? e.hc : null,
+        ereterExh: hasEreter ? e.exh : null,
+        ereterEcN: hasEreter ? e.ec_n : null,
+        ereterHcN: hasEreter ? e.hc_n : null,
+        ereterExhN: hasEreter ? e.exh_n : null,
+        gameLevel: rt.gameLevel,
+        zasaLevel: zasaIdx.get(normKey) ?? rt.zasaLevel,
+        isRatingFallback: !hasEreter,  // ereter 미등재 → UI 색 구분 + 표시 fallback
+        unlocked: c.unlocked,
+        exScore: typeof c.exScore === 'number' ? c.exScore : null,
+        noteCount: typeof c.noteCount === 'number' ? c.noteCount : null,
+        djPoints: typeof c.djPoints === 'number' ? c.djPoints : null,
+        songType: hit.type,
+        songLabel: hit.label,
+      });
     }
-    return { charts, matched, unmatched, unmatchedSamples, unmatchedAll };
+
+    // 진단용 — supabase 업로드 / 신곡 추정 등에서 쓰일 수 있는 "tsv 에 있는데 ratingData 미등재" 목록
+    // 추천 풀과는 분리. 잠금 해제 + 플레이된 곡 한정.
+    // tsv 에 있는데 ratingData 에 없는 lv11/12 곡 (신곡 / 풀에서 빠짐) 목록 수집
+    const tsvMissedInRating: { title: string; diff: string; gameLevel: number; lamp: string; normKey: string }[] = [];
+    for (const [key, hit] of tsvIdx) {
+      if (ratingKeyset.has(key)) continue;
+      tsvMissedInRating.push({ title: hit.title, diff: hit.diff, gameLevel: hit.c.level, lamp: hit.c.lamp, normKey: key });
+    }
+
+    const unmatched: number = ratingMissCount + tsvMissedInRating.length;
+    const unmatchedSamples: string[] = tsvMissedInRating.slice(0, 5).map((u) => `${u.title} [${u.diff}]`);
+    const unmatchedAll: { title: string; diff: string; lamp: string; normKey: string; ereterCandidates: string[] }[] = [];
+    // 미매칭 곡 JSON 내보내기용 payload
+    const ratingUnmatchedJson = {
+      generatedAt: new Date().toISOString(),
+      summary: {
+        ratingPoolSize: ratingKeyset.size,
+        tsvPoolSize: tsvIdx.size,
+        tsvOnlyCount: tsvMissedInRating.length,
+        ratingOnlyCount: ratingMissedInTsv.length,
+      },
+      tsvOnly: tsvMissedInRating,    // tsv 에 있는데 ratingData 에 없는 곡
+      ratingOnly: ratingMissedInTsv, // ratingData 에 있는데 tsv 에 없는 곡
+    };
+
+    console.log(`[dp12Match] 풀=${charts.length}곡 (ratingData 등재). 3중매칭=${matched}, ereter 미등재=${ratingOnlyCount}, tsv 미반영=${ratingMissCount}, tsv-only=${tsvMissedInRating.length}`);
+    return { charts, matched, unmatched, unmatchedSamples, unmatchedAll, ratingUnmatchedJson };
   }, [rows, ereterData, ratingData, zasaData]);
 
   // 별값 추정 input — dp12Match 에서 derive
   // v3.3.3: 4종 fitData scope 동시 수집 (ohSorry 와 동일).
-  //   ereter 매칭 곡 → c.gameLevel 안 채움 (모두 lv12)
-  //   ratingMap fallback → c.gameLevel = 11 / 12
+  // 새 구조 (2026-05-14): chart.level/ec/hc/exh 는 ratingMap estimates,
+  //   ereter 실측은 chart.ereterLevel/Ec/Hc/Exh 별도 필드. fitData 빌더는 ereter 우선 + estimates fallback.
   //
-  //   - fitDataEreterOnly: 이레터 매칭 (gameLevel == null) 곡만
-  //   - fitDataLv12Only:   이레터 + ratingMap gameLevel === 12 (= 모든 lv12)
-  //   - fitDataAll:        이레터 + ratingMap 모두 (lv11+lv12 통합 = 11.6+ 전체)
+  //   - fitDataEreterOnly: ereter 매칭 곡만, ereter 실측 EC/HC/EXH
+  //   - fitDataLv12Only:   ereter (lv12 자동) + ratingMap gameLevel===12, 우선 ereter 실측
+  //   - fitDataAll:        전체, ereter 우선 + estimates fallback
   const dp12StarInputs = useMemo(() => {
     if (!dp12Match) return null;
     const fitDataEreterOnly: FitDatum[] = [];
@@ -489,33 +509,43 @@ export default function App() {
     const poolCharts: PoolChart[] = [];
     for (const c of dp12Match.charts) {
       // poolCharts (features pool: acfcPool / v32Cleared) 는 ereter-matched 만 (ohSorry 와 동일).
-      // ratingMap fallback 차트 (c.gameLevel != null) 는 fitData 보강용으로만 쓰고 features 에는 X.
-      if (c.gameLevel == null) {
+      const isEreter = !c.isRatingFallback;
+      if (isEreter) {
         poolCharts.push({
           lampNum: c.lampNum,
-          level: c.level,
+          level: c.ereterLevel ?? c.level,
           djLevel: c.djLevel,
-          ec: c.ec,
-          hc: c.hc,
-          exh: c.exh,
+          ec: c.ereterEc,
+          hc: c.ereterHc,
+          exh: c.ereterExh,
         });
       }
-      // 별값 추정 input 은 ★11.6~12.7 만 (ohSorry v3.3.3 와 동일).
+      // 별값 추정 input 은 zasa★ 11.6~12.7 만 (chart.level = zasaLevel).
       if (c.lampNum > 0 && c.level >= 11.6 && c.level <= 12.7) {
+        // 값 선택: ereter 실측 우선, 없으면 ratingMap estimates
+        const ec = isEreter && typeof c.ereterEc === 'number' ? c.ereterEc : c.ec;
+        const hc = isEreter && typeof c.ereterHc === 'number' ? c.ereterHc : c.hc;
+        const exh = isEreter && typeof c.ereterExh === 'number' ? c.ereterExh : c.exh;
         const items: FitDatum[] = [];
-        if (typeof c.ec === 'number') items.push({ d: c.ec, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
-        if (typeof c.hc === 'number') items.push({ d: c.hc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
-        if (typeof c.exh === 'number') items.push({ d: c.exh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
-        const isEreter = c.gameLevel == null;
-        const isLv12 = c.gameLevel == null || c.gameLevel === 12;
+        if (typeof ec === 'number') items.push({ d: ec, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
+        if (typeof hc === 'number') items.push({ d: hc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
+        if (typeof exh === 'number') items.push({ d: exh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
+        const isLv12 = isEreter || c.gameLevel === 12;
         fitDataAll.push(...items);
         if (isLv12) fitDataLv12Only.push(...items);
-        if (isEreter) fitDataEreterOnly.push(...items);
+        if (isEreter) {
+          // fitDataEreterOnly 는 ereter 실측만 (estimates fallback X)
+          const ereterItems: FitDatum[] = [];
+          if (typeof c.ereterEc === 'number') ereterItems.push({ d: c.ereterEc, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
+          if (typeof c.ereterHc === 'number') ereterItems.push({ d: c.ereterHc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
+          if (typeof c.ereterExh === 'number') ereterItems.push({ d: c.ereterExh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
+          fitDataEreterOnly.push(...ereterItems);
+        }
       }
     }
     // useOnlyLv12 분기 — LEVEL 12 (이레터 + lv12 rating) 플레이 ≥ 30
     const nLv12Played = dp12Match.charts.filter(
-      (c) => (c.gameLevel == null || c.gameLevel === 12) && c.lampNum > 0,
+      (c) => (!c.isRatingFallback || c.gameLevel === 12) && c.lampNum > 0,
     ).length;
     const useOnlyLv12 = nLv12Played >= 30;
     return {
@@ -611,7 +641,7 @@ export default function App() {
     });
   }, []);
 
-  const osrTieredResult = useMemo<{ star: number; group?: string; nativeStar?: number; bandCorrection?: number } | null>(() => {
+  const osrTieredResult = useMemo<{ star: number; group?: string; nativeStar?: number; bandCorrection?: number; nEnriched?: number; nLv12Cleared?: number; nZ12_0upCleared?: number } | null>(() => {
     if (!ratingData || osrChartsInput.length === 0) return null;
     const inferFn = osrLibOverride?.inferUserTiered || osrInferUserTieredBundle;
     try {
@@ -620,9 +650,19 @@ export default function App() {
         nativeStar?: number;
         group?: string;
         bandCorrection?: number;
+        nEnriched?: number;
+        nLv12Cleared?: number;
+        nZ12_0upCleared?: number;
       };
+      // v3.3.5 진단: 입력 chart 수 + 매칭 chart 수 + group 분기 결과
+      console.log(
+        `[osr] charts.in=${osrChartsInput.length} nEnriched=${r.nEnriched ?? '?'} ` +
+        `nLv12cl=${r.nLv12Cleared ?? '?'} nZ12cl=${r.nZ12_0upCleared ?? '?'} ` +
+        `group=${r.group ?? '-'} native=${r.nativeStar?.toFixed(2) ?? '?'} ` +
+        `compat=${r.ereterCompatStar?.toFixed(2) ?? '?'} (corr=${r.bandCorrection ?? 0})`
+      );
       return typeof r.ereterCompatStar === 'number'
-        ? { star: r.ereterCompatStar, group: r.group, nativeStar: r.nativeStar, bandCorrection: r.bandCorrection }
+        ? { star: r.ereterCompatStar, group: r.group, nativeStar: r.nativeStar, bandCorrection: r.bandCorrection, nEnriched: r.nEnriched, nLv12Cleared: r.nLv12Cleared, nZ12_0upCleared: r.nZ12_0upCleared }
         : null;
     } catch (e) {
       console.warn('[osr] inferUserTiered 실패:', (e as Error).message);
@@ -630,26 +670,92 @@ export default function App() {
     }
   }, [osrChartsInput, ratingData, osrLibOverride]);
 
-  // ensemble — (oldOSR max + OSR tiered) / 2 평균. 한쪽 없으면 다른 쪽 단독.
-  // dp12StarOldResult 의 StarResult 타입 그대로 유지 + star 필드만 ensemble 결과로 override.
-  const dp12StarResult = useMemo(() => {
-    const oldStar = dp12StarOldResult?.star;
-    const newStar = osrTieredResult?.star;
-    if (typeof oldStar === 'number' && typeof newStar === 'number') {
-      return { ...dp12StarOldResult!, star: (oldStar + newStar) / 2 };
-    }
-    return dp12StarOldResult;  // 한쪽이라도 없으면 v3.3.3 그대로
-  }, [dp12StarOldResult, osrTieredResult]);
+  // v3.3.5: OSR13.5+ lib (gist auto-update + cache eval) — window.OSR135 등록
+  const [osr135Lib, setOsr135Lib] = useState<{ inferUser: (charts: unknown, ereter: unknown) => { starEstimate: number; adopted: string }; version: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.infohsorry?.osrLib135) return;
+    window.infohsorry.osrLib135.get().then((cached) => {
+      if (!cached || !cached.code) return;
+      try {
+        new Function(cached.code)();
+        const w = window as unknown as { OSR135?: { inferUser?: (c: unknown, e: unknown) => { starEstimate: number; adopted: string }; version?: string } };
+        if (typeof w.OSR135?.inferUser === 'function') {
+          setOsr135Lib({ inferUser: w.OSR135.inferUser, version: w.OSR135.version || cached.version || '?' });
+          console.log(`[osr135] gist cache v${cached.version} 로드`);
+        }
+      } catch (e) {
+        console.warn('[osr135] cache eval 실패:', (e as Error).message);
+      }
+    });
+  }, []);
 
-  // 2nd 채택 — 3 unique scope (이레터 / lv12 / all-11.6+) 중 두번째로 큰 값.
-  // primary 는 위 3개 중 하나의 복사이므로 dedup 위해 제외.
-  const dp12StarSecond = useMemo(() => {
-    if (!dp12StarAll) return null;
-    const scopes = dp12StarAll.filter((x) => x.name !== 'primary' && x.res != null);
-    if (scopes.length < 2) return null;
-    scopes.sort((a, b) => (b.res!.star ?? 0) - (a.res!.star ?? 0));
-    return { name: scopes[1].name, result: scopes[1].res };
-  }, [dp12StarAll]);
+  // OSR13.5+ 결과 계산 — ereterData.charts 필요
+  const osr135Result = useMemo<{ star: number; adopted: string } | null>(() => {
+    if (!osr135Lib || !ereterData || osrChartsInput.length === 0) return null;
+    try {
+      const r = osr135Lib.inferUser(osrChartsInput, { charts: ereterData.charts });
+      return typeof r.starEstimate === 'number' ? { star: r.starEstimate, adopted: r.adopted } : null;
+    } catch (e) {
+      console.warn('[osr135] inferUser 실패:', (e as Error).message);
+      return null;
+    }
+  }, [osr135Lib, ereterData, osrChartsInput]);
+
+  // 분기 (표기용, ohSorry 와 동일):
+  //   OSR135 ≥ 13.0                    → OSR135 (13.0+ 영역 가장 정확, MAE 0.121)
+  //   else if group A or B + OSR 결과   → OSR (v0.0.2) — 저클리어 사용자 (lv12 < 30 또는 12.0+ < 30) 는 OSR 채택
+  //   else                              → oldOSR (v3.3.3) — group C (12.0+ ≥ 30) + OSR135 < 13.0 영역
+  //   oldOSR 도 없으면 OSR 로 fallback
+  // group C 에서 oldOSR 채택 시 4종 max 에서 'all-11.6+' scope 제외 — lv11 추정 보강이 잡음으로 작용
+  // 추천 풀 baseStar (ohsorryRecBase) 는 별도로 OSR (newStar) 단독 사용
+  const dp12StarResult = useMemo(() => {
+    const star135 = osr135Result?.star;
+    const newStar = osrTieredResult?.star;
+    const group = osrTieredResult?.group;
+    // group C 면 'all-11.6+' 제외 후 max 재계산, 아니면 기존 4종 max 그대로
+    let oldStar: number | undefined;
+    if (group === 'C' && dp12StarAll) {
+      const filtered = dp12StarAll.filter((x) => x.res != null && x.name !== 'all-11.6+');
+      if (filtered.length > 0) {
+        filtered.sort((a, b) => (b.res!.star ?? 0) - (a.res!.star ?? 0));
+        oldStar = filtered[0].res!.star;
+      } else {
+        oldStar = dp12StarOldResult?.star;
+      }
+    } else {
+      oldStar = dp12StarOldResult?.star;
+    }
+    let final: number | undefined;
+    let adoptedLib: 'OSR135' | 'OSR' | 'old' | undefined;
+    if (typeof star135 === 'number' && star135 >= 13.0) {
+      final = star135;
+      adoptedLib = 'OSR135';
+    } else if ((group === 'A' || group === 'B') && typeof newStar === 'number') {
+      final = newStar;
+      adoptedLib = 'OSR';
+    } else if (typeof oldStar === 'number') {
+      final = oldStar;
+      adoptedLib = 'old';
+    } else if (typeof newStar === 'number') {
+      final = newStar;
+      adoptedLib = 'OSR';
+    }
+    // v3.3.5 진단: 어느 lib 채택됐는지 + group 정보 출력
+    console.log(
+      `[★] 채택=${adoptedLib ?? 'none'} final=${final?.toFixed(3) ?? 'N/A'} | ` +
+      `OSR135=${star135?.toFixed(3) ?? 'null'} OSR=${newStar?.toFixed(3) ?? 'null'} old=${oldStar?.toFixed(3) ?? 'null'} | ` +
+      `group=${group ?? '-'}${group === 'C' ? ' (all-11.6+ excluded)' : ''}`
+    );
+    if (final == null) return dp12StarOldResult;
+    return dp12StarOldResult ? { ...dp12StarOldResult, star: final, _adoptedLib: adoptedLib } as typeof dp12StarOldResult & { _adoptedLib?: string } : null;
+  }, [dp12StarOldResult, osrTieredResult, osr135Result, dp12StarAll]);
+
+  // 추천 baseStar — OSR (v0.0.2) 단독 사용 (D2 표기 ★ 와 분리)
+  //   이유: OSR135 의 12점대 over-estimation (+0.46 bias) 을 추천 풀 결정에서 배제
+  const ohsorryRecBase = useMemo(() => {
+    if (typeof osrTieredResult?.star === 'number') return osrTieredResult.star;
+    return dp12StarResult?.star ?? null;
+  }, [osrTieredResult, dp12StarResult]);
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
@@ -823,34 +929,35 @@ export default function App() {
     return { picked: updatedPicked, pool: updatedPool };
   }
 
+  // v3.3.5: 추천 baseStar — dp12StarResult.star (D2 표기 ★) 대신 ohsorryRecBase (OSR 단독) 사용
   useEffect(() => {
-    if (!dp12Match || !dp12StarResult) return;
+    if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEC.current !== rerollEC) {
       lastRerollEC.current = rerollEC;
-      setRecsEC(buildRecsWithPool(dp12Match.charts, dp12StarResult.star, 'ec'));
+      setRecsEC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'ec'));
     } else {
       setRecsEC((prev) => refreshRecs(prev, 'ec', dp12Match.charts));
     }
-  }, [rerollEC, dp12Match, dp12StarResult]);
+  }, [rerollEC, dp12Match, ohsorryRecBase]);
   useEffect(() => {
-    if (!dp12Match || !dp12StarResult) return;
+    if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollHC.current !== rerollHC) {
       lastRerollHC.current = rerollHC;
-      setRecsHC(buildRecsWithPool(dp12Match.charts, dp12StarResult.star, 'hc'));
+      setRecsHC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'hc'));
     } else {
       setRecsHC((prev) => refreshRecs(prev, 'hc', dp12Match.charts));
     }
-  }, [rerollHC, dp12Match, dp12StarResult]);
+  }, [rerollHC, dp12Match, ohsorryRecBase]);
   useEffect(() => {
-    if (!dp12Match || !dp12StarResult) return;
+    if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEXH.current !== rerollEXH) {
       lastRerollEXH.current = rerollEXH;
       // EXH 는 ohSorry 스타일 별도 로직 — ★ 낮은 30곡 → missCount 낮은 순 10곡
-      setRecsEXH(buildExhRecs(dp12Match.charts, dp12StarResult.star));
+      setRecsEXH(buildExhRecs(dp12Match.charts, ohsorryRecBase));
     } else {
       setRecsEXH((prev) => refreshRecs(prev, 'exh', dp12Match.charts));
     }
-  }, [rerollEXH, dp12Match, dp12StarResult]);
+  }, [rerollEXH, dp12Match, ohsorryRecBase]);
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
   const dp12Stats = useMemo(() => {
@@ -876,54 +983,6 @@ export default function App() {
 
   return (
     <div className="app">
-      {updateInfo && updateInfo.hasUpdate && updateInfo.latestVersion && updateInfo.htmlUrl && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 12,
-            padding: '8px 16px',
-            background: '#dcaf45',
-            color: '#212529',
-            fontSize: 13,
-            fontWeight: 600,
-          }}
-        >
-          <span>
-            🆕 새 버전 <b>v{updateInfo.latestVersion}</b> 있음 (현재 v{updateInfo.currentVersion})
-          </span>
-          <a
-            href={updateInfo.htmlUrl}
-            target="_blank"
-            rel="noreferrer"
-            style={{ color: '#212529', textDecoration: 'underline' }}
-          >
-            다운로드 페이지 열기 →
-          </a>
-          <button
-            type="button"
-            onClick={() => {
-              if (updateInfo.latestVersion) {
-                localStorage.setItem('infohsorry.update.dismissed', updateInfo.latestVersion);
-              }
-              setUpdateInfo(null);
-            }}
-            style={{
-              marginLeft: 'auto',
-              background: 'transparent',
-              border: '1px solid #212529',
-              color: '#212529',
-              padding: '2px 8px',
-              fontSize: 11,
-              cursor: 'pointer',
-              borderRadius: 4,
-            }}
-            title="이번 버전 알림 끄기"
-          >
-            이 버전 안 보기
-          </button>
-        </div>
-      )}
       <header className="app-header">
         <div className="title">
           <h1>
@@ -980,6 +1039,132 @@ export default function App() {
       {memoryScannerOpen && <MemoryScanner onClose={() => setMemoryScannerOpen(false)} />}
 
       <div className="app-body">
+      {updateInfo && updateInfo.hasUpdate && updateInfo.latestVersion && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            padding: '8px 16px',
+            background: '#dcaf45',
+            color: '#212529',
+            fontSize: 13,
+            fontWeight: 600,
+            flexWrap: 'wrap',
+          }}
+        >
+          <span>
+            🆕 새 버전 <b>v{updateInfo.latestVersion}</b> 있음 (현재 v{updateInfo.currentVersion})
+          </span>
+          {updateDownload.stage === 'idle' && updateInfo.portableUrl && updateInfo.portableName && (
+            <button
+              type="button"
+              onClick={async () => {
+                if (!updateInfo.portableUrl || !updateInfo.portableName) return;
+                setUpdateDownload({ stage: 'downloading', downloaded: 0, total: updateInfo.portableSize || 0 });
+                const off = window.infohsorry.portable.onProgress((p) => {
+                  setUpdateDownload((prev) => ({ ...prev, stage: 'downloading', downloaded: p.downloaded, total: p.total || prev.total }));
+                });
+                try {
+                  const filePath = await window.infohsorry.portable.download(updateInfo.portableUrl, updateInfo.portableName);
+                  setUpdateDownload({ stage: 'done', downloaded: updateInfo.portableSize || 0, total: updateInfo.portableSize || 0, filePath });
+                } catch (e) {
+                  setUpdateDownload({ stage: 'error', downloaded: 0, total: 0, error: (e as Error).message });
+                } finally {
+                  off();
+                }
+              }}
+              style={{
+                background: '#212529',
+                color: '#dcaf45',
+                border: 'none',
+                padding: '4px 12px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                borderRadius: 4,
+              }}
+            >
+              ⬇ 자동 다운로드 + 실행
+            </button>
+          )}
+          {updateDownload.stage === 'downloading' && (
+            <span>
+              다운로드 중… {Math.round((updateDownload.downloaded / Math.max(1, updateDownload.total)) * 100)}%
+              {updateDownload.total > 0 && ` (${(updateDownload.downloaded / 1024 / 1024).toFixed(1)} / ${(updateDownload.total / 1024 / 1024).toFixed(1)} MB)`}
+            </span>
+          )}
+          {updateDownload.stage === 'done' && updateDownload.filePath && (
+            <button
+              type="button"
+              onClick={async () => {
+                const r = await window.infohsorry.portable.run(updateDownload.filePath!);
+                if (!r.ok) {
+                  setUpdateDownload((prev) => ({ ...prev, stage: 'error', error: r.error || '실행 실패' }));
+                }
+                // 성공 시 main 이 app.quit() 호출
+              }}
+              style={{
+                background: '#212529',
+                color: '#dcaf45',
+                border: 'none',
+                padding: '4px 12px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+                borderRadius: 4,
+              }}
+            >
+              ▶ 새 버전 실행 (현재 종료)
+            </button>
+          )}
+          {updateDownload.stage === 'error' && (
+            <span style={{ color: '#a02020' }}>
+              ⚠ {updateDownload.error || '다운로드 실패'}
+              {updateInfo.htmlUrl && (
+                <>
+                  {' — '}
+                  <a href={updateInfo.htmlUrl} target="_blank" rel="noreferrer" style={{ color: '#212529', textDecoration: 'underline' }}>
+                    수동 다운로드
+                  </a>
+                </>
+              )}
+            </span>
+          )}
+          {updateDownload.stage === 'idle' && !updateInfo.portableUrl && updateInfo.htmlUrl && (
+            <a
+              href={updateInfo.htmlUrl}
+              target="_blank"
+              rel="noreferrer"
+              style={{ color: '#212529', textDecoration: 'underline' }}
+            >
+              다운로드 페이지 열기 →
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={() => {
+              if (updateInfo.latestVersion) {
+                localStorage.setItem('infohsorry.update.dismissed', updateInfo.latestVersion);
+              }
+              setUpdateInfo(null);
+            }}
+            style={{
+              marginLeft: 'auto',
+              background: 'transparent',
+              border: '1px solid #212529',
+              color: '#212529',
+              padding: '2px 8px',
+              fontSize: 11,
+              cursor: 'pointer',
+              borderRadius: 4,
+            }}
+            title="이번 버전 알림 끄기"
+          >
+            이 버전 안 보기
+          </button>
+        </div>
+      )}
       {rows.length === 0 && <RefluxLog state={refluxState} />}
 
       {error && !/ENOENT|no such file/i.test(error) && <div className="error">에러: {error}</div>}
@@ -998,7 +1183,7 @@ export default function App() {
           <ProfileCard
             profile={profile}
             starResult={dp12StarResult}
-            secondHighest={dp12StarSecond}
+            osrStar={osrTieredResult?.star ?? null}
           />
           <nav className="tabs">
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
@@ -1041,26 +1226,44 @@ export default function App() {
                     ereterReady={!!ereterData}
                     unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
                     unmatchedAll={dp12Match?.unmatchedAll ?? []}
+                    ratingUnmatchedJson={dp12Match?.ratingUnmatchedJson ?? null}
+                    unclassifiedJson={unclassifiedJson}
                     ereterStatus={ereterStatus}
                     ereterBusy={ereterBusy}
                     onRefreshEreter={() => refreshEreter(true)}
                   />
                 )}
-                {dp12StarResult && (recsEC.picked.length > 0 || recsHC.picked.length > 0 || recsEXH.picked.length > 0) && (
+                {dp12StarResult && ohsorryRecBase != null && (recsEC.picked.length > 0 || recsHC.picked.length > 0 || recsEXH.picked.length > 0) && (
                   <Recommendations
                     recsEC={recsEC.picked}
                     recsHC={recsHC.picked}
                     recsEXH={recsEXH.picked}
-                    baseStar={dp12StarResult.star}
+                    baseStar={ohsorryRecBase}
                     onRerollEC={() => setRerollEC((k) => k + 1)}
                     onRerollHC={() => setRerollHC((k) => k + 1)}
                     onRerollEXH={() => setRerollEXH((k) => k + 1)}
+                    onPickChart={(r) => {
+                      setTab('dp');
+                      setScrollTarget({ title: r.title, slot: r.slot, gameLevel: r.gameLevel ?? null });
+                    }}
                   />
                 )}
-                <Dp12Table charts={dp12Charts} />
+                <Dp12Table
+                  lv12Charts={dp12Charts}
+                  lv11Charts={dp11Charts}
+                  onPickChart={(target) => {
+                    setTab('dp');
+                    setScrollTarget(target);
+                  }}
+                />
               </>
             ) : (
-              <ChartTable rows={rows} style={tab} />
+              <ChartTable
+                rows={rows}
+                style={tab}
+                scrollTarget={scrollTarget}
+                onScrollDone={() => setScrollTarget(null)}
+              />
             )}
           </main>
         </>
@@ -1094,6 +1297,7 @@ function Recommendations({
   onRerollEC,
   onRerollHC,
   onRerollEXH,
+  onPickChart,
 }: {
   recsEC: RecCandidate[];
   recsHC: RecCandidate[];
@@ -1102,6 +1306,7 @@ function Recommendations({
   onRerollEC: () => void;
   onRerollHC: () => void;
   onRerollEXH: () => void;
+  onPickChart?: (r: RecCandidate) => void;
 }): JSX.Element {
   return (
     <div className="rec-area">
@@ -1111,9 +1316,9 @@ function Recommendations({
         </h3>
       </div>
       <div className="rec-cards">
-        <RecCard stage="ec" recs={recsEC} onReroll={onRerollEC} />
-        <RecCard stage="hc" recs={recsHC} onReroll={onRerollHC} />
-        <RecCard stage="exh" recs={recsEXH} onReroll={onRerollEXH} />
+        <RecCard stage="ec" recs={recsEC} onReroll={onRerollEC} onPickChart={onPickChart} />
+        <RecCard stage="hc" recs={recsHC} onReroll={onRerollHC} onPickChart={onPickChart} />
+        <RecCard stage="exh" recs={recsEXH} onReroll={onRerollEXH} onPickChart={onPickChart} />
       </div>
     </div>
   );
@@ -1123,10 +1328,12 @@ function RecCard({
   stage,
   recs,
   onReroll,
+  onPickChart,
 }: {
   stage: RecStage;
   recs: RecCandidate[];
   onReroll: () => void;
+  onPickChart?: (r: RecCandidate) => void;
 }): JSX.Element {
   const info = STAGE_INFO[stage];
   // 모바일에서만 collapsible. uncontrolled — 초기 open 만 ref 로 설정, 이후 React 가 안 건드림.
@@ -1173,16 +1380,30 @@ function RecCard({
         <ul className="rec-list">
           {recs.map((r) => {
             const ls = lampStyle(r.currentLamp);
-            // ratingMap fallback 곡 색상 구분: lv11 → 진한 연두 (#9ccc65) / lv12 → 하늘색 (#87ceeb)
-            // ereter 매칭 곡은 gameLevel 비어있어서 기본 색.
-            const titleColor =
+            // ratingMap fallback 곡 색상 구분 (ereter 미등록 곡만):
+            //   lv11 → 진한 연두 (#9ccc65) / lv12 → 하늘색 (#87ceeb). ereter 매칭 곡은 기본 색.
+            const titleColor = r.isRatingFallback ? (
               r.gameLevel === 11 ? '#9ccc65' :
-              r.gameLevel === 12 ? '#87ceeb' : undefined;
-            const titleTooltip =
+              r.gameLevel === 12 ? '#87ceeb' : undefined
+            ) : undefined;
+            const titleTooltip = r.isRatingFallback ? (
               r.gameLevel === 11 ? 'ohSorry 추정 ★ (게임 LEVEL 11, ereter 미등록)' :
-              r.gameLevel === 12 ? 'ohSorry 추정 ★ (게임 LEVEL 12, ereter 미등록)' : undefined;
+              r.gameLevel === 12 ? 'ohSorry 추정 ★ (게임 LEVEL 12, ereter 미등록)' : undefined
+            ) : undefined;
+            // 표시값 — ereter 실측 우선, 없으면 ratingMap estimates fallback
+            const stageEreter = stage === 'ec' ? r.ereterEc : stage === 'hc' ? r.ereterHc : r.ereterExh;
+            const displayDiff = typeof stageEreter === 'number' ? stageEreter : r.diffValue;
+            const displayLevel = typeof r.ereterLevel === 'number' ? r.ereterLevel : r.level;
             return (
-              <li key={`${r.title}|${r.slot}`} className={`rec-row rec-${r.category}`}>
+              <li
+                key={`${r.title}|${r.slot}`}
+                className={`rec-row rec-${r.category}${onPickChart ? ' rec-row-clickable' : ''}`}
+                onClick={onPickChart ? () => onPickChart(r) : undefined}
+                role={onPickChart ? 'button' : undefined}
+                tabIndex={onPickChart ? 0 : undefined}
+                onKeyDown={onPickChart ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPickChart(r); } } : undefined}
+                title={onPickChart ? '클릭 시 DP 탭에서 곡명 검색' : undefined}
+              >
                 <span
                   className="rec-cat"
                   title={
@@ -1207,7 +1428,7 @@ function RecCard({
                 <span className="rec-diff" style={{ color: DIFF_COLOR[r.diff] || '#888' }}>
                   {r.diff[0]}
                 </span>
-                <span className="rec-stagestar">★{r.diffValue.toFixed(2)}</span>
+                <span className="rec-stagestar">★{displayDiff.toFixed(2)}</span>
                 {r.category === 'exh-near' && (
                   <span className="rec-misscount" title="미스 카운트 (BP)">
                     BP{r.missCount ?? '?'}
@@ -1216,7 +1437,7 @@ function RecCard({
                 <span className="rec-lamp" style={{ color: ls.color }}>
                   {ls.label}
                 </span>
-                <span className="rec-level">☆{r.level.toFixed(1)}</span>
+                <span className="rec-level">☆{displayLevel.toFixed(1)}</span>
               </li>
             );
           })}
@@ -1245,6 +1466,8 @@ function StarPanel({
   ereterReady,
   unmatchedSamples,
   unmatchedAll,
+  ratingUnmatchedJson,
+  unclassifiedJson,
   ereterStatus,
   ereterBusy,
   onRefreshEreter,
@@ -1264,6 +1487,18 @@ function StarPanel({
     normKey: string;
     ereterCandidates: string[];
   }[];
+  ratingUnmatchedJson: {
+    generatedAt: string;
+    summary: { ratingPoolSize: number; tsvPoolSize: number; tsvOnlyCount: number; ratingOnlyCount: number };
+    tsvOnly: { title: string; diff: string; gameLevel: number; lamp: string; normKey: string }[];
+    ratingOnly: { title: string; diff: string; gameLevel: number; zasaLevel: number; normKey: string }[];
+  } | null;
+  unclassifiedJson: {
+    generatedAt: string;
+    summary: { lv12Count: number; lv11Count: number };
+    lv12Unclassified: { title: string; diff: string; slot: string; gameLevel: number; lamp: string; unlocked: boolean; normKey: string }[];
+    lv11Unclassified: { title: string; diff: string; slot: string; gameLevel: number; lamp: string; unlocked: boolean; normKey: string }[];
+  };
   ereterStatus: EreterCacheStatus | null;
   ereterBusy: boolean;
   onRefreshEreter: () => void;
@@ -1309,6 +1544,94 @@ function StarPanel({
       </div>
       <details className="star-debug">
         <summary>모델 내부 (디버그)</summary>
+        {unclassifiedJson && (unclassifiedJson.summary.lv12Count > 0 || unclassifiedJson.summary.lv11Count > 0) && (
+          <div style={{ marginTop: 6, marginBottom: 8, padding: '6px 8px', background: 'var(--surface-2, rgba(0,0,0,0.04))', borderRadius: 4 }}>
+            <div style={{ fontSize: 11.5, marginBottom: 4 }}>
+              <b>서열표 미분류곡 (ereter / ratingMap / zasaData 모두 없음):</b>{' '}
+              lv12 <b>{unclassifiedJson.summary.lv12Count}</b>곡 · lv11 <b>{unclassifiedJson.summary.lv11Count}</b>곡
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                className="dp12-sort-btn"
+                onClick={() => {
+                  const text = JSON.stringify(unclassifiedJson, null, 2);
+                  navigator.clipboard.writeText(text).then(
+                    () => console.log('[unclassified-json] 클립보드 복사 완료'),
+                    (e) => console.error('[unclassified-json] 클립보드 복사 실패:', e),
+                  );
+                }}
+                title="서열표 미분류 곡 목록 JSON 을 클립보드로 복사"
+              >
+                JSON 복사
+              </button>
+              <button
+                type="button"
+                className="dp12-sort-btn"
+                onClick={() => {
+                  const text = JSON.stringify(unclassifiedJson, null, 2);
+                  const blob = new Blob([text], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const ts = new Date().toISOString().replace(/[:T.]/g, '-').replace('Z', '');
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `unclassified-${ts}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+                title="서열표 미분류 곡 목록 JSON 파일 다운로드"
+              >
+                JSON 저장
+              </button>
+            </div>
+          </div>
+        )}
+        {ratingUnmatchedJson && (
+          <div style={{ marginTop: 6, marginBottom: 8, padding: '6px 8px', background: 'var(--surface-2, rgba(0,0,0,0.04))', borderRadius: 4 }}>
+            <div style={{ fontSize: 11.5, marginBottom: 4 }}>
+              <b>tsv ↔ ohSorryRating 미매칭:</b>{' '}
+              tsv-only <b>{ratingUnmatchedJson.summary.tsvOnlyCount}</b>곡 · rating-only <b>{ratingUnmatchedJson.summary.ratingOnlyCount}</b>곡
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button
+                type="button"
+                className="dp12-sort-btn"
+                onClick={() => {
+                  const text = JSON.stringify(ratingUnmatchedJson, null, 2);
+                  navigator.clipboard.writeText(text).then(
+                    () => console.log('[unmatched-json] 클립보드 복사 완료'),
+                    (e) => console.error('[unmatched-json] 클립보드 복사 실패:', e),
+                  );
+                }}
+                title="미매칭 곡 목록 JSON 을 클립보드로 복사"
+              >
+                JSON 복사
+              </button>
+              <button
+                type="button"
+                className="dp12-sort-btn"
+                onClick={() => {
+                  const text = JSON.stringify(ratingUnmatchedJson, null, 2);
+                  const blob = new Blob([text], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const ts = new Date().toISOString().replace(/[:T.]/g, '-').replace('Z', '');
+                  const a = document.createElement('a');
+                  a.href = url;
+                  a.download = `rating-unmatched-${ts}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                }}
+                title="미매칭 곡 목록 JSON 파일 다운로드"
+              >
+                JSON 저장
+              </button>
+            </div>
+          </div>
+        )}
         <ul>
           {allScopes && (
             <li>

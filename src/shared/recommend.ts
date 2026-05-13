@@ -15,35 +15,46 @@
 // 매번 random shuffle 이라 호출할 때마다 결과 바뀜 ("다시 뽑기" 효과).
 import type { ChartSlot, Lamp } from './types';
 
-// 추천곡의 input — 매칭된 차트 (★ EC/HC/EXH 다 있어야 의미 있음)
+// 추천곡의 input — ohSorryRating.json 등재곡만 풀에 포함.
 //
-// 우선순위: ereter > ratingMap.
-// - ereter 매칭 → 그 값 그대로 사용 (gameLevel === undefined / null)
-// - ereter 없을 때만 ratingMap fallback 사용 → gameLevel 11 또는 12 로 표시
-//   (UI 색상 구분: lv11 추정 → 진한 연두, lv12 추정 → 하늘색)
+// 내부 추천 평가용 (level / ec / hc / exh) = ohSorryRating estimates 사용
+//   level = zasaLevel, ec = estEc, hc = estHc, exh = estExh
+// 표시용 (displayEc / displayHc / displayExh / displayLevel) = ereter 실측 우선, 없으면 estimates 로 fallback
+// ereter 실측 (ereterEc / ereterHc / ereterExh) = oldOSR fitData 빌더에서 사용
 export interface RecInputChart {
   title: string;
   slot: ChartSlot;
   diff: string; // 'NORMAL' / 'HYPER' / 'ANOTHER' / 'LEGGENDARIA'
-  level: number; // ereter ★ (소수) 또는 rating zasaLevel
+  // 내부 추천 평가용 — ohSorryRating estimates (모든 풀곡에 채워짐)
+  level: number; // zasaLevel
+  ec: number | null; // estEc
+  hc: number | null; // estHc
+  exh: number | null; // estExh
+  ec_n: number | null; // nEcCleared (인구수, 정렬용)
+  hc_n: number | null; // nHcCleared
+  exh_n: number | null; // estimates 에는 보통 없음 → 0
+  // 사용자 플레이 정보
   lamp: Lamp;
   lampNum: number;
-  djLevel: string | null; // DJ Level (AAA/AA/A/B/C/D/E/F) — v3.2.6 djLevel boost 에 사용
-  missCount: number | null; // BP — Reflux tracker.tsv 에서 가져옴 (EXH 추천 정렬용)
-  ec: number | null;
-  hc: number | null;
-  exh: number | null;
-  ec_n: number | null; // 해당 stage 클리어 인구수 (이레터넷의 ec_count)
-  hc_n: number | null;
-  exh_n: number | null;
-  gameLevel?: number | null; // INF 게임 lv (11 / 12). ereter / rating / 미매칭 모두 채움 (Reflux tsv 의 c.level 사용).
-  zasaLevel?: number | null; // zasa★ (10.2~12.7). zasa-data 매칭 시 채움, 없으면 null.
-  // Reflux TSV 의 chart 단위 추가 정보 (supabase 신곡 추정 / 통계 보강용)
+  djLevel: string | null; // DJ Level (AAA/AA/A/B/C/D/E/F)
+  missCount: number | null; // BP — Reflux tracker.tsv
+  // ereter 실측 — 있을 때만 채움. oldOSR fitData / 일부 표시 용.
+  ereterLevel: number | null;
+  ereterEc: number | null;
+  ereterHc: number | null;
+  ereterExh: number | null;
+  ereterEcN: number | null;
+  ereterHcN: number | null;
+  ereterExhN: number | null;
+  // 메타
+  gameLevel?: number | null; // INF 게임 lv (11 / 12)
+  zasaLevel?: number | null; // zasa★ (10.2~12.7)
+  isRatingFallback?: boolean; // true: ereter 미등재 (UI 색 구분 / 추정값 표시 fallback)
+  // Reflux TSV 추가 정보 (supabase 업로드용)
   unlocked?: boolean;
   exScore?: number | null;
   noteCount?: number | null;
   djPoints?: number | null;
-  // Reflux TSV 의 곡 단위 추가 정보
   songType?: string | null;
   songLabel?: string | null;
 }
@@ -52,6 +63,7 @@ export interface RecCandidate {
   title: string;
   slot: ChartSlot;
   diff: string;
+  // 내부 알고리즘 평가용 — ratingMap estimates (level=zasaLevel, ec/hc/exh=estEc/Hc/Exh)
   level: number;
   currentLamp: Lamp;
   missCount: number | null;
@@ -61,11 +73,20 @@ export interface RecCandidate {
   ec_n: number | null;
   hc_n: number | null;
   exh_n: number | null;
-  diffValue: number; // 해당 stage 의 ★
+  diffValue: number; // 해당 stage 의 ★ (알고리즘용 — ratingMap estimates)
   diffCount: number; // 해당 stage 의 클리어 인구수 (정렬용)
   margin: number; // baseStar - diffValue (음수면 도전, 양수면 정리)
   category: 'challenge-hard' | 'challenge-easy' | 'cleanup' | 'exh-near';
-  gameLevel?: number | null; // ratingMap fallback 시 11 / 12. UI 색상 구분용.
+  // 표시용 — ereter 실측 (있으면 UI 에서 우선 표시)
+  ereterLevel: number | null;
+  ereterEc: number | null;
+  ereterHc: number | null;
+  ereterExh: number | null;
+  ereterEcN: number | null;
+  ereterHcN: number | null;
+  ereterExhN: number | null;
+  gameLevel?: number | null; // INF 게임 lv (11 / 12).
+  isRatingFallback?: boolean; // true 면 UI 색 구분 (ratingMap 추정 / 미매칭). ereter 매칭 곡은 false/undefined.
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';
@@ -167,7 +188,15 @@ export function buildRecsWithPool(
       diffValue: dv,
       diffCount: typeof dn === 'number' ? dn : 0,
       margin: baseStar - dv,
+      ereterLevel: c.ereterLevel,
+      ereterEc: c.ereterEc,
+      ereterHc: c.ereterHc,
+      ereterExh: c.ereterExh,
+      ereterEcN: c.ereterEcN,
+      ereterHcN: c.ereterHcN,
+      ereterExhN: c.ereterExhN,
       gameLevel: c.gameLevel ?? null,
+      isRatingFallback: c.isRatingFallback ?? false,
     };
     // 하드 우선 (overlap 시 약 도전과 중복 방지)
     if (dv >= hardMin && dv <= hardMax && dv > easyMax) {
@@ -272,7 +301,15 @@ export function buildExhRecs(
       diffCount: typeof c.exh_n === 'number' ? c.exh_n : 0,
       margin: baseStar - c.exh,
       category: 'exh-near',
+      ereterLevel: c.ereterLevel,
+      ereterEc: c.ereterEc,
+      ereterHc: c.ereterHc,
+      ereterExh: c.ereterExh,
+      ereterEcN: c.ereterEcN,
+      ereterHcN: c.ereterHcN,
+      ereterExhN: c.ereterExhN,
       gameLevel: c.gameLevel ?? null,
+      isRatingFallback: c.isRatingFallback ?? false,
     });
   }
   // 1. EXH ★ 낮은 순 → top 30

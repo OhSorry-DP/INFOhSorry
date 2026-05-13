@@ -1,6 +1,6 @@
 {
   "name": "infohsorry",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "ohSorryScoreINF",
   "productName": "ohSorryScoreINF",
   "main": "./out/main/index.js",
@@ -51,8 +51,9 @@
     ],
     "win": {
       "icon": "ohsorry.ico",
-      "signAndEditExecutable": false,
       "verifyUpdateCodeSignature": false,
+      "fileDescription": "INF오소리",
+      "legalCopyright": "by 오소리",
       "target": [
         {
           "target": "nsis",

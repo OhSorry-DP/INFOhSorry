@@ -10,6 +10,10 @@ export interface UpdateInfo {
   latestVersion: string | null;
   htmlUrl: string | null; // 릴리즈 페이지 URL — 클릭 시 브라우저에서 열기
   publishedAt: string | null;
+  // v0.0.19+: 포터블 자동 다운로드용 (방식 B)
+  portableUrl: string | null;     // assets[].browser_download_url (portable .exe)
+  portableName: string | null;    // 저장 파일명
+  portableSize: number | null;    // bytes
   error?: string;
 }
 
@@ -44,6 +48,9 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
         latestVersion: null,
         htmlUrl: null,
         publishedAt: null,
+        portableUrl: null,
+        portableName: null,
+        portableSize: null,
         error: `HTTP ${res.status}`,
       };
     }
@@ -53,15 +60,18 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       published_at?: string;
       draft?: boolean;
       prerelease?: boolean;
+      assets?: Array<{ name: string; browser_download_url: string; size: number }>;
     };
     if (json.draft || json.prerelease) {
-      // draft / prerelease 는 무시
       return {
         hasUpdate: false,
         currentVersion,
         latestVersion: null,
         htmlUrl: null,
         publishedAt: null,
+        portableUrl: null,
+        portableName: null,
+        portableSize: null,
       };
     }
     const latestVersion = (json.tag_name || '').replace(/^v/i, '');
@@ -72,9 +82,14 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
         latestVersion: null,
         htmlUrl: null,
         publishedAt: null,
+        portableUrl: null,
+        portableName: null,
+        portableSize: null,
         error: 'tag_name 없음',
       };
     }
+    // assets 에서 portable .exe 추출 (예: ohSorryScoreINF-0.0.19-portable.exe)
+    const portableAsset = json.assets?.find((a) => /portable.*\.exe$/i.test(a.name));
     const hasUpdate = compareVersion(latestVersion, currentVersion) > 0;
     return {
       hasUpdate,
@@ -82,6 +97,9 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       latestVersion,
       htmlUrl: json.html_url ?? null,
       publishedAt: json.published_at ?? null,
+      portableUrl: portableAsset?.browser_download_url ?? null,
+      portableName: portableAsset?.name ?? null,
+      portableSize: portableAsset?.size ?? null,
     };
   } catch (e) {
     return {
@@ -90,6 +108,9 @@ export async function checkForUpdate(): Promise<UpdateInfo> {
       latestVersion: null,
       htmlUrl: null,
       publishedAt: null,
+      portableUrl: null,
+      portableName: null,
+      portableSize: null,
       error: (e as Error).message,
     };
   }

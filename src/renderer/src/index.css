@@ -832,6 +832,17 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 클릭 가능한 곡명 — hover 시 밑줄 강조, 클릭 시 클립보드 복사 */
+.ct-title-clickable {
+  cursor: pointer;
+}
+.ct-title-clickable:hover {
+  text-decoration: underline;
+}
+.ct-title-clickable:focus-visible {
+  outline: 2px solid var(--action-primary, #1971c2);
+  outline-offset: -2px;
+}
 .ct-dj {
   display: flex;
   gap: 8px;
@@ -1214,6 +1225,18 @@ body {
 .rec-row:last-child {
   border-bottom: none;
 }
+/* 클릭 가능한 추천 row — hover 시 강조 + 손가락 커서 */
+.rec-row-clickable {
+  cursor: pointer;
+  transition: background 120ms;
+}
+.rec-row-clickable:hover {
+  background: var(--surface-2, rgba(0, 0, 0, 0.04));
+}
+.rec-row-clickable:focus-visible {
+  outline: 2px solid var(--action-primary, #1971c2);
+  outline-offset: -2px;
+}
 .rec-row .rec-cat {
   display: none;
 }
@@ -1269,6 +1292,48 @@ body {
   margin-left: 2px;
 }
 
+/* ----- 서열표 섹션 제목 + 레벨 서브탭 + 하단 가로선 (body width 전체) ----- */
+.dp12-section-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin: 12px 0 12px;
+  border-bottom: 1px solid var(--border-color, #888);
+}
+/* segmented control 스타일 — container box 안에 작은 버튼 두 개, 우측 빈 공간 */
+.dp12-level-tabs {
+  display: inline-flex;
+  background: var(--bg-page, transparent);
+}
+/* PC 모드: 좌측 margin = 난이도 컬럼 너비 (70px) — 스택드바와 동일 align */
+@media (min-width: 769px) {
+  .dp12-level-tabs {
+    margin-left: 70px;
+  }
+}
+/* 상단 탭과 동일 — active 시 아래 underline 만 색깔 강조 */
+.dp12-level-tab {
+  background: transparent;
+  border: none;
+  border-bottom: 3px solid transparent;
+  color: var(--text-muted);
+  padding: 5px 35px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 36px;
+}
+.dp12-level-tab:hover:not(.active) {
+  color: var(--text-secondary);
+}
+.dp12-level-tab.active {
+  color: var(--text-primary);
+  border-bottom-color: var(--action-primary);
+}
+
 /* ----- DP ☆12 격자 정렬 토글 — 우측 정렬, 박스 X, 텍스트 only ----- */
 /* 스택드 바 + 색박스 범례 + 정렬 / 캡처 버튼을 한 줄에 (PC 기준).
    PC: [legend(위) + stackbar(아래)] left | [sort + capture] right
@@ -1288,6 +1353,13 @@ body {
 }
 .dp12-bar-group .dp12-lamp-legend {
   margin-bottom: 0;
+}
+/* PC 화면: 스택드 바 좌측 margin = 레벨 라벨 컬럼 너비 (70px) — 곡 목록 시작 위치와 align */
+@media (min-width: 769px) {
+  .dp12-stackbar,
+  .dp12-bar-group .dp12-lamp-legend {
+    margin-left: 70px;
+  }
 }
 .dp12-bar-group .dp12-stackbar {
   margin-bottom: 0;
@@ -1428,7 +1500,26 @@ body {
 }
 .dp12-group {
   display: grid;
-  grid-template-columns: 70px 1fr;
+  grid-template-columns: 6px 70px 1fr;
+}
+/* 난이도 셀 왼쪽 — 그룹별 lamp 분포 세로 스택드 바.
+   너비 6px = 곡 옆 .lamp-box 와 동일. 높이는 grid row 에 맞춰 자동 stretch.
+   column-reverse: 상위 클리어램프 (FC/EX/HC) 가 아래쪽으로. */
+.dp12-level-stackbar {
+  display: flex;
+  flex-direction: column-reverse;
+  align-self: stretch;
+  width: 6px;
+  flex-shrink: 0;
+}
+/* 안의 lamp-box 는 inline-block / width:6px / align-self:stretch 기본값을 무시하고
+   세로 stack 의 한 segment 로 동작. background 색은 .lamp-box.lamp-X 그대로 상속. */
+.dp12-level-stackbar-seg.lamp-box {
+  display: block;
+  width: 100%;
+  align-self: auto;
+  flex-grow: 0;
+  flex-shrink: 0;
 }
 /* lamp 색상 박스 범례 — 작은 swatch + 라벨, 한 줄 가로 배치 */
 .dp12-lamp-legend {
@@ -1452,12 +1543,13 @@ body {
   border-bottom: 1px solid #c8c8c8;
 }
 
-/* 표 전체 lamp 분포 스택드 바 — grid 최상단 */
+/* 표 전체 lamp 분포 스택드 바 — 서열표 최하단 */
 .dp12-stackbar {
   display: flex;
   width: 100%;
   max-width: 500px;
   height: 24px;
+  margin-top: 16px;
   margin-bottom: 16px;
   border-radius: 4px;
   overflow: hidden;
@@ -1544,6 +1636,42 @@ body {
   align-items: stretch;
   gap: 8px;
   min-height: 30px;
+  /* DJ Level 이 cell 오른쪽 끝에 absolute 로 오버레이됨 — 곡명이 길면 그 뒤로 가려짐 */
+  position: relative;
+  overflow: hidden;
+}
+.dp12-song-text {
+  /* 길이가 길어도 줄바꿈 없이 한 줄 — cell overflow:hidden 이 자름 */
+  flex: 1 1 auto;
+  white-space: nowrap;
+  align-self: center;
+}
+/* DJ Level 오버레이 — 곡명 위로 떠서 cell 우측 끝까지 background 가 덮음 (곡명이 우측에 비치지 않게) */
+.dp12-song-djlv {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+  align-items: center;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+  z-index: 1;
+  pointer-events: none;
+  background: var(--bg-page);
+  padding: 0 6px 0 4px;
+}
+/* 클릭 가능한 곡 cell — hover 시 배경 강조 */
+.dp12-song-clickable {
+  cursor: pointer;
+}
+.dp12-song-clickable:hover .dp12-song-text {
+  text-decoration: underline;
+}
+.dp12-song-clickable:focus-visible {
+  outline: 2px solid var(--action-primary, #1971c2);
+  outline-offset: -2px;
 }
 .dp12-song-text {
   flex: 1;
@@ -2065,6 +2193,10 @@ body {
   .dp12-group {
     grid-template-columns: 1fr;
     grid-template-rows: auto auto;
+  }
+  /* 모바일에선 그룹별 lamp 분포 stackbar 숨김 — 6px 짜리 단독 row 어색 */
+  .dp12-level-stackbar {
+    display: none;
   }
   .dp12-level {
     font-size: 15px;

@@ -68,6 +68,26 @@ const api = {
       ipcRenderer.invoke('osrLib:checkUpdate'),
   },
 
+  // OSR13.5+.js auto-update (v3.3.5)
+  osrLib135: {
+    get: (): Promise<{ code: string; version: string | null } | null> => ipcRenderer.invoke('osrLib135:get'),
+    checkUpdate: (): Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }> =>
+      ipcRenderer.invoke('osrLib135:checkUpdate'),
+  },
+
+  // 포터블 자동 다운로드 + 실행 (v0.0.19+)
+  portable: {
+    download: (url: string, fileName: string): Promise<string> =>
+      ipcRenderer.invoke('portable:download', { url, fileName }),
+    run: (filePath: string): Promise<{ ok: boolean; error?: string }> =>
+      ipcRenderer.invoke('portable:run', filePath),
+    onProgress: (cb: (p: { downloaded: number; total: number }) => void): (() => void) => {
+      const listener = (_e: Electron.IpcRendererEvent, p: { downloaded: number; total: number }) => cb(p);
+      ipcRenderer.on('portable:progress', listener);
+      return () => ipcRenderer.removeListener('portable:progress', listener);
+    },
+  },
+
   // GitHub 최신 릴리즈 체크 — 알림 전용 (자동 다운로드 X)
   update: {
     check: (): Promise<UpdateInfo> => ipcRenderer.invoke('update:check'),

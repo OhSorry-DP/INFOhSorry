@@ -14,9 +14,14 @@ import { join, dirname } from 'path';
 
 const OSR_GIST_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/calc-OSRating.js';
+const OSR135_GIST_URL =
+  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/OSR13.5%2B.js';
 
 function cachePath(): string {
   return join(app.getPath('userData'), 'libs', 'calc-OSRating.js');
+}
+function cachePath135(): string {
+  return join(app.getPath('userData'), 'libs', 'OSR13.5+.js');
 }
 
 // version 추출 — UMD lib 의 `version: '0.0.X'` 패턴 검색
@@ -88,6 +93,57 @@ export async function checkAndUpdateOsrLib(): Promise<{ updated: boolean; versio
 // renderer 가 호출 — 캐시 lib 코드 + version 반환. 없으면 null.
 export async function getOsrLibCode(): Promise<{ code: string; version: string | null } | null> {
   const path = cachePath();
+  if (!existsSync(path)) return null;
+  try {
+    const code = await fsp.readFile(path, 'utf-8');
+    return { code, version: extractVersion(code) };
+  } catch {
+    return null;
+  }
+}
+
+// OSR13.5+.js — 동일 패턴 (v3.3.5)
+export async function checkAndUpdateOsr135Lib(): Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }> {
+  const path = cachePath135();
+  let cachedVersion: string | null = null;
+  if (existsSync(path)) {
+    try {
+      const cached = await fsp.readFile(path, 'utf-8');
+      cachedVersion = extractVersion(cached);
+    } catch {}
+  }
+  try {
+    const url = OSR135_GIST_URL + '?t=' + Date.now();
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'INFOhSorry (+https://github.com/yenkara/INFOhSorry)' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const code = await res.text();
+    const remoteVersion = extractVersion(code);
+    if (!remoteVersion) throw new Error('version 추출 실패');
+
+    if (isNewer(remoteVersion, cachedVersion)) {
+      await fsp.mkdir(dirname(path), { recursive: true });
+      await fsp.writeFile(path, code, 'utf-8');
+      console.log(`[osrLib135] 갱신: ${cachedVersion || '(없음)'} → ${remoteVersion}`);
+      return { updated: true, version: remoteVersion, source: 'fetch' };
+    }
+    console.log(`[osrLib135] 최신 (${cachedVersion}, remote ${remoteVersion})`);
+    return { updated: false, version: cachedVersion, source: 'cache' };
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.warn(`[osrLib135] fetch 실패: ${msg} (캐시 ${cachedVersion ? 'v' + cachedVersion : '없음'} 유지)`);
+    return {
+      updated: false,
+      version: cachedVersion,
+      source: cachedVersion ? 'cache' : 'none',
+      error: msg,
+    };
+  }
+}
+
+export async function getOsr135LibCode(): Promise<{ code: string; version: string | null } | null> {
+  const path = cachePath135();
   if (!existsSync(path)) return null;
   try {
     const code = await fsp.readFile(path, 'utf-8');

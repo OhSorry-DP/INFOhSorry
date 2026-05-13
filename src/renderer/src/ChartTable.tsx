@@ -11,6 +11,10 @@ import { lampStyle } from './lampStyle';
 interface Props {
   rows: SongRow[];
   style: 'sp' | 'dp';
+  // 외부에서 특정 곡 검색 요청 — title 자동 입력 + gameLevel 있으면 필터 자동 적용
+  scrollTarget?: { title: string; slot: string; gameLevel?: number | null } | null;
+  // 적용 완료 콜백 (target 해제용)
+  onScrollDone?: () => void;
 }
 
 const SLOT_COLOR: Record<ChartSlot, string> = {
@@ -70,7 +74,7 @@ const LETTER_COLOR: Record<string, string> = {
   // D / E / F: default (검정)
 };
 
-export default function ChartTable({ rows, style }: Props) {
+export default function ChartTable({ rows, style, scrollTarget, onScrollDone }: Props) {
   const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<SortDir>('desc');
 
@@ -93,6 +97,19 @@ export default function ChartTable({ rows, style }: Props) {
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // 외부 scrollTarget (추천곡 클릭 등) → search 박스에 곡 제목 자동 입력 + 다른 필터 초기화.
+  // 스크롤은 사용자가 검색 결과 자체로 확인.
+  const onScrollDoneRef = useRef(onScrollDone);
+  useEffect(() => { onScrollDoneRef.current = onScrollDone; }, [onScrollDone]);
+  useEffect(() => {
+    if (!scrollTarget) return;
+    setSearch(scrollTarget.title);
+    setActiveLevels(typeof scrollTarget.gameLevel === 'number' ? new Set([scrollTarget.gameLevel]) : new Set());
+    setActiveLamps(new Set());
+    setHideLocked(false);
+    onScrollDoneRef.current?.();
+  }, [scrollTarget]);
 
   const allCharts = useMemo(
     () => extractCharts(rows, { slots: style === 'sp' ? SP_SLOTS : DP_SLOTS }),
@@ -254,6 +271,16 @@ export default function ChartTable({ rows, style }: Props) {
               ))}
             </div>
             <div className="ct-filter-row">
+              <span className="ct-filter-label">LV</span>
+              {ALL_LEVELS.map((lv) => (
+                <button
+                  key={lv}
+                  className={`ct-filter-btn${activeLevels.has(lv) ? ' active' : ''}`}
+                  onClick={() => toggleLevel(lv)}
+                >
+                  {lv}
+                </button>
+              ))}
               <label className="ct-checkbox ct-hide-locked">
                 <input
                   type="checkbox"
@@ -270,16 +297,6 @@ export default function ChartTable({ rows, style }: Props) {
                   Reset
                 </button>
               )}
-              <span className="ct-filter-label">LV</span>
-              {ALL_LEVELS.map((lv) => (
-                <button
-                  key={lv}
-                  className={`ct-filter-btn${activeLevels.has(lv) ? ' active' : ''}`}
-                  onClick={() => toggleLevel(lv)}
-                >
-                  {lv}
-                </button>
-              ))}
             </div>
           </>
         )}
@@ -357,10 +374,24 @@ function ChartRow({ c }: { c: SongChart }) {
         <span style={{ color: slotColor, fontWeight: 700 }}>{c.level || '-'}</span>
       </div>
       <div
-        className="ct-cell ct-title"
-        title={c.title}
+        className="ct-cell ct-title ct-title-clickable"
+        title={`${c.title}\n(클릭하면 곡명 클립보드 복사)`}
         // LEGGENDARIA 차트는 곡명 앞에 † + 마젠타 색
         style={c.slot === 'SPL' || c.slot === 'DPL' ? { color: slotColor } : undefined}
+        onClick={() => {
+          navigator.clipboard.writeText(c.title).then(
+            () => console.log(`[clipboard] '${c.title}' 복사됨`),
+            (e) => console.error('[clipboard] 복사 실패:', e),
+          );
+        }}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            navigator.clipboard.writeText(c.title).catch(() => {});
+          }
+        }}
       >
         {(c.slot === 'SPL' || c.slot === 'DPL' ? '† ' : '') + c.title}
       </div>

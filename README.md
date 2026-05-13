@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.18.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.18-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.19.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.19-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -78,6 +78,23 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.19 — v3.3.5 (OSR13.5+ + 추천 풀 재설계 + UI 확장)
+- **OSR13.5+.js lib 추가** — bin50 + 50% 임계 + 상향 bin 부분 보너스. 14+ user MAE 0.014, 13+ MAE 0.107 (이전 ensemble 대비 압도)
+- **분기 D2 채택**: `OSR135 ≥ 13.0 → OSR135 / group A·B → OSR / group C → oldOSR / fallback → OSR`. ohSorry 와 동일한 분기로 통일. (oldOSR + OSR) / 2 ensemble 폐기
+- **OSR13.5+ 자동 갱신** — main process 가 gist 에서 fetch + userData/libs/ 캐시 (OSR 패턴 동일)
+- **group C 의 oldOSR 4종 max 에서 `all-11.6+` scope 제외** — group C 고수에게 lv11 추정 보강이 잡음으로 작용. `ereterOnly` / `lv12Only` 중 max 로 재계산
+- **추천 풀 재설계** — 풀 자체를 `ohSorryRating.json` 등재곡으로 한정. 내부 평가는 ratingMap estimates, UI 표시는 ereter 실측 (있으면) → 추정 fallback
+- **추천 baseStar 분리** — D2 표기 ★ 와 별개로 추천은 OSR (v0.0.2) 단독값 사용 (OSR135 의 12점대 over-estimation 회피)
+- **ProfileCard 보조 ★** — 기존 oldOSR 4종 2nd → OSR 값 표시로 교체
+- **zasa-data sakura + gist 합치기** — sakura ☆12 page 가 부분 출력일 때 gist 풀데이터 (~2045곡) 로 보강 → 서열표 미분류 lv11 -47% (147→78)
+- **서열표 (Dp12Table) UI 강화** — 난이도 셀 왼쪽에 그룹별 lamp 분포 세로 stackbar (FC 가 아래로), 정렬에 DJ Level 순 asc/desc + 램프 순 asc/desc 토글, SongCell 우측에 DJ Level 오버레이 (곡명이 그 뒤로 가려짐, NP 곡도 영역 유지)
+- **추천곡 / 서열표 곡명 클릭** → DP 탭 이동 + 검색 자동 입력 + 난이도 필터 자동 적용
+- **DP/SP 탭 곡명 클릭** → 곡명 클립보드 복사 (secure context 한정)
+- **모델 내부 디버그 JSON** — "tsv ↔ ohSorryRating 미매칭" / "서열표 미분류곡" 목록 클립보드 복사 + 파일 다운로드 버튼
+- **CSP `'unsafe-eval'` 허용** — gist 의 OSR lib 동적 eval 위해 필요 (이전엔 차단되어 캐시 발동 X)
+- **ChartTable 필터 row 순서 조정** — LV 먼저, Hide Locked / Reset 뒤로 → wrap 시 LV 가 위, 컨트롤이 아래로 자연 배치
+- 1021명 검증: 전체 MAE 0.398 → **0.363**, max\|err\| 6.989 → **4.264**, 14+ MAE 0.101 → **0.014**, 13+ MAE 0.377 → **0.121**
 
 ### 0.0.18 — v3.3.4 ensemble + OSR lib 자동 갱신 + supabase 업로드 확장
 - **v3.3.4 ensemble** — 사용자 ★ = (oldOSR v3.3.3 + OSR v0.0.2 tiered) / 2 평균. OSR (calc-OSRating.js) 을 INFOhSorry 에 bundle, `inferUserTiered` 사용 (그룹별 scope + band correction)
