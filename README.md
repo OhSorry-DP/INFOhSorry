@@ -79,6 +79,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.21 — 자동 다운로드 저장 위치를 Downloads 폴더로 변경
+- **자동 다운로드 받은 portable .exe 가 영구 보존** — 이전엔 `userData/updates/` 임시 저장 후 부팅 시 정리되어 실행만 되고 사라짐 (옛 portable 이 그대로 남아 다음 부팅 시 옛 버전 실행되는 문제) → 이제 **Windows Downloads 폴더 (`%USERPROFILE%/Downloads`)** 에 영구 저장
+- 동일 파일명 존재 시 ` (1)`, ` (2)` 식으로 unique 접미사 자동 추가 — 사용자의 기존 다운로드 덮어쓰지 않음
+- `cleanupOldUpdates()` 제거 — Downloads 폴더의 사용자 파일을 건드리면 안 되므로
+
 ### 0.0.20 — 모바일 / PC2 호환성 보강
 - **모바일 추천 영역 가로 스크롤 수정** — grid `minmax(0, 1fr)` + `min-width: 0` + `overflow: hidden` 안전망 추가. children intrinsic min-width 가 grid 를 넘치게 하던 이슈 해소
 - **DP/SP 탭 곡명 클립보드 복사 — PC2 (non-secure context) 지원** — `navigator.clipboard` 가 차단되면 `document.execCommand('copy')` + 임시 textarea fallback 자동 시도. LAN IP / `http://` 접속에서도 동작

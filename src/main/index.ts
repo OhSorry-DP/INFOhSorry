@@ -24,7 +24,7 @@ import {
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
 import { getRatingData, getRatingCacheStatus } from './rating';
 import { checkAndUpdateOsrLib, getOsrLibCode, checkAndUpdateOsr135Lib, getOsr135LibCode } from './osrLib';
-import { downloadPortable, runPortable, cleanupOldUpdates } from './portableUpdate';
+import { downloadPortable, runPortable } from './portableUpdate';
 import { checkForUpdate } from './updateCheck';
 import { startHttpServer } from './http-server';
 
@@ -516,7 +516,6 @@ app.whenReady().then(() => {
   // calc-OSRating.js 자동 갱신 — 부팅 시 background fetch + cache update (실패해도 무시)
   checkAndUpdateOsrLib().catch((e) => console.warn('[osrLib] 갱신 실패:', (e as Error).message));
   checkAndUpdateOsr135Lib().catch((e) => console.warn('[osrLib135] 갱신 실패:', (e as Error).message));
-  cleanupOldUpdates().catch(() => {});
 
   // production 빌드에서만 HTTP 서버 시작 (LAN 모드 — 다른 PC 의 Chrome 으로 접속해서 동일 화면 + 원격 제어)
   if (!process.env.ELECTRON_RENDERER_URL) {

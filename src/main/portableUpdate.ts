@@ -1,39 +1,38 @@
-// 포터블 exe 자동 다운로드 + 실행 (v0.0.19 / v3.3.5)
+// 포터블 exe 자동 다운로드 + 실행 (v0.0.20+)
 //
 // 흐름:
 //   1. renderer 가 download(url, fileName) 호출
 //   2. main 이 net.request 로 다운로드, chunk 단위로 progress 이벤트 전송
-//   3. userData/updates/{fileName} 에 저장 (다음 실행 때 정리)
-//   4. 완료 시 파일 경로 반환
-//   5. renderer 가 run(path) 호출 → spawn detached + app.quit()
-import { app, net, BrowserWindow } from 'electron';
-import { promises as fsp, createWriteStream, existsSync } from 'fs';
-import { join, dirname } from 'path';
+//   3. **Windows 기본 다운로드 폴더** 에 저장 (사용자가 영구 보관 가능)
+//   4. 동일 파일명 존재 시 (N) 접미사 자동 추가
+//   5. 완료 시 파일 경로 반환
+//   6. renderer 가 run(path) 호출 → spawn detached + app.quit()
+import { app, net } from 'electron';
+import { createWriteStream, existsSync } from 'fs';
+import { join, parse } from 'path';
 import { spawn } from 'child_process';
 
 function updatesDir(): string {
-  return join(app.getPath('userData'), 'updates');
+  // 사용자 Downloads 폴더 (Windows: %USERPROFILE%\Downloads)
+  return app.getPath('downloads');
 }
 
-// 이전 다운로드 정리 — 부팅 시 호출
-export async function cleanupOldUpdates(): Promise<void> {
-  const dir = updatesDir();
-  if (!existsSync(dir)) return;
-  try {
-    const files = await fsp.readdir(dir);
-    for (const f of files) {
-      try {
-        await fsp.unlink(join(dir, f));
-      } catch {}
-    }
-  } catch {}
+// 동일 파일명 있으면 " (1)", " (2)" 식으로 unique 생성
+function uniqueFilePath(dir: string, fileName: string): string {
+  const target = join(dir, fileName);
+  if (!existsSync(target)) return target;
+  const { name, ext } = parse(fileName);
+  for (let i = 1; i < 1000; i++) {
+    const candidate = join(dir, `${name} (${i})${ext}`);
+    if (!existsSync(candidate)) return candidate;
+  }
+  return target; // overwrite (1000번 다 중복은 사실상 X)
 }
 
 // 다운로드 — 진행률은 'portable:progress' IPC 이벤트로 sender 에 보냄
 export async function downloadPortable(url: string, fileName: string, sender: Electron.WebContents): Promise<string> {
-  const dir = updatesDir();
-  await fsp.mkdir(dir, { recursive: true });
-  const filePath = join(dir, fileName);
+  // Downloads 폴더는 항상 존재 — mkdir 불필요
+  const filePath = uniqueFilePath(updatesDir(), fileName);
 
   return new Promise<string>((resolve, reject) => {
     const request = net.request(url);
