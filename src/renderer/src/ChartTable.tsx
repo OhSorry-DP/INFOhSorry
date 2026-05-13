@@ -8,6 +8,40 @@ import { DP_SLOTS, SP_SLOTS, extractCharts } from '../../shared/types';
 import { lampNum } from '../../shared/match';
 import { lampStyle } from './lampStyle';
 
+// 클립보드 복사 헬퍼 — navigator.clipboard 우선, 실패 시 execCommand fallback.
+// PC2 (LAN IP / http://) 등 non-secure context 에서도 동작.
+async function copyToClipboard(text: string): Promise<boolean> {
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      await navigator.clipboard.writeText(text);
+      console.log(`[clipboard] '${text}' 복사됨 (clipboard API)`);
+      return true;
+    } catch (e) {
+      console.warn('[clipboard] clipboard API 실패, fallback 시도:', (e as Error).message);
+    }
+  }
+  // fallback: 임시 textarea + execCommand
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.position = 'fixed';
+  ta.style.left = '-9999px';
+  ta.style.top = '0';
+  ta.setAttribute('readonly', '');
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try {
+    ok = document.execCommand('copy');
+    if (ok) console.log(`[clipboard] '${text}' 복사됨 (execCommand fallback)`);
+    else console.warn('[clipboard] execCommand 도 실패');
+  } catch (e) {
+    console.error('[clipboard] execCommand 에러:', (e as Error).message);
+  }
+  document.body.removeChild(ta);
+  return ok;
+}
+
 interface Props {
   rows: SongRow[];
   style: 'sp' | 'dp';
@@ -378,18 +412,13 @@ function ChartRow({ c }: { c: SongChart }) {
         title={`${c.title}\n(클릭하면 곡명 클립보드 복사)`}
         // LEGGENDARIA 차트는 곡명 앞에 † + 마젠타 색
         style={c.slot === 'SPL' || c.slot === 'DPL' ? { color: slotColor } : undefined}
-        onClick={() => {
-          navigator.clipboard.writeText(c.title).then(
-            () => console.log(`[clipboard] '${c.title}' 복사됨`),
-            (e) => console.error('[clipboard] 복사 실패:', e),
-          );
-        }}
+        onClick={() => { void copyToClipboard(c.title); }}
         role="button"
         tabIndex={0}
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
-            navigator.clipboard.writeText(c.title).catch(() => {});
+            void copyToClipboard(c.title);
           }
         }}
       >

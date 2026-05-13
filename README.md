@@ -79,6 +79,10 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.20 — 모바일 / PC2 호환성 보강
+- **모바일 추천 영역 가로 스크롤 수정** — grid `minmax(0, 1fr)` + `min-width: 0` + `overflow: hidden` 안전망 추가. children intrinsic min-width 가 grid 를 넘치게 하던 이슈 해소
+- **DP/SP 탭 곡명 클립보드 복사 — PC2 (non-secure context) 지원** — `navigator.clipboard` 가 차단되면 `document.execCommand('copy')` + 임시 textarea fallback 자동 시도. LAN IP / `http://` 접속에서도 동작
+
 ### 0.0.19 — v3.3.5 (OSR13.5+ + 추천 풀 재설계 + UI 확장)
 - **OSR13.5+.js lib 추가** — bin50 + 50% 임계 + 상향 bin 부분 보너스. 14+ user MAE 0.014, 13+ MAE 0.107 (이전 ensemble 대비 압도)
 - **분기 D2 채택**: `OSR135 ≥ 13.0 → OSR135 / group A·B → OSR / group C → oldOSR / fallback → OSR`. ohSorry 와 동일한 분기로 통일. (oldOSR + OSR) / 2 ensemble 폐기

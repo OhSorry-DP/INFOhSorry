@@ -2157,7 +2157,8 @@ body {
 
   /* ----- 추천곡 카드 — 모바일은 박스 없이 1열 (기존 오소리 디자인) ----- */
   .rec-cards {
-    grid-template-columns: 1fr;
+    /* minmax(0, 1fr) — children intrinsic min-width 가 grid 넘치지 않도록 */
+    grid-template-columns: minmax(0, 1fr);
     gap: 0;
   }
   .rec-card {
@@ -2166,6 +2167,15 @@ body {
     border-radius: 0 !important;
     padding: 0 !important;
     margin-bottom: 0;
+    /* 자식 (ul / row) 가 넘치지 않도록 */
+    min-width: 0;
+    overflow: hidden;
+  }
+  .rec-list {
+    min-width: 0;
+  }
+  .rec-row {
+    min-width: 0;
   }
   .rec-card > summary {
     padding: 4px 0;
