@@ -22,13 +22,15 @@ export interface UploadInput {
   appVersion: string; // package.json version, e.g. '0.0.9'
   profile: ProfileInfo;
   starResult: StarResult;
-  charts: RecInputChart[]; // dp12Match.charts (★11.6~12.7 ereter 매칭된 차트)
+  charts: RecInputChart[]; // dp12Match.charts (★11.6~12.7 ereter 매칭된 차트) — lamp 통계 집계 기준
+  // 서열표 '미분류' 곡 (ratingData 미등재). charts_json 에만 charts 와 합쳐 올림, lamp 통계엔 미포함.
+  unclassifiedCharts?: Omit<RecInputChart, 'level'>[];
   // 선택: ereter 매핑 있으면 함께 (대개 INF ID 는 ereter 에 없어 null)
   ereterStar?: number | null;
 }
 
 export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; error?: string }> {
-  const { appVersion, profile, starResult, charts, ereterStar } = input;
+  const { appVersion, profile, starResult, charts, unclassifiedCharts, ereterStar } = input;
 
   // iidx_id 정규화 — 하이픈 제거 (게임 메모리에 이미 하이픈 없는 형식이라 그대로지만 안전망)
   const rawId = profile.iidxId;

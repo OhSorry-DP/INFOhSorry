@@ -79,6 +79,13 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.23 — 서열표 '미분류' 곡 supabase 업로드
+- **서열표 미분류 곡 charts_json 업로드** — 게스트 페이지 (ohsorry.vercel.app) 서열표에서 INF 유저의 '미분류' 곡 (ohSorryRating.json 미등재 — 신곡 등) 이 안 보이던 버그 수정
+  - 기존엔 `dp12Match.charts` (ratingData 등재곡만) 만 `charts_json` 으로 업로드 → 미등재 곡은 게스트가 받을 데이터 자체가 없었음
+  - 플레이했지만 미등재인 lv11/12 곡을 `unclassifiedCharts` 로 따로 모아 `charts_json` 에 합쳐 업로드 (`level` 없음 → 게스트는 zasa★ fallback / 미분류 그룹)
+  - 추천 풀 / ★ 추정 / lamp 통계엔 미포함 — 서열표 표시에만 영향
+- INFOhSorry 자체 서열표는 기존에도 정상 표시 (이번 변경은 게스트 페이지용 업로드 데이터에만 영향)
+
 ### 0.0.22 — v3.3.5 (D3) 채택 분기 재정의 + OSR / OSR13.5+ 모델 개선
 - **채택 분기 D3** (1021명 검증 영역별 최강 lib 기준): `OSR135 ≥ 13.0 → 무조건 OSR135` / `12.5~13.0 → OSR135↔group값 선형 보간` / `< 12.5 → group 별 base`
   - group A·B → OSR

@@ -472,9 +472,45 @@ export default function App() {
     // 추천 풀과는 분리. 잠금 해제 + 플레이된 곡 한정.
     // tsv 에 있는데 ratingData 에 없는 lv11/12 곡 (신곡 / 풀에서 빠짐) 목록 수집
     const tsvMissedInRating: { title: string; diff: string; gameLevel: number; lamp: string; normKey: string }[] = [];
+    // 서열표 '미분류' 표시용 — ratingData 미등재지만 플레이한 lv11/12 곡.
+    // 추천 풀 / ★ 추정엔 미포함, supabase charts_json 업로드에만 m.charts 와 합쳐짐.
+    // level (rating zasaLevel 추정치) 은 없음 → 게스트 서열표는 zasaLevel fallback → 미분류/zasa★ 그룹.
+    const unclassifiedCharts: Omit<RecInputChart, 'level'>[] = [];
     for (const [key, hit] of tsvIdx) {
       if (ratingKeyset.has(key)) continue;
       tsvMissedInRating.push({ title: hit.title, diff: hit.diff, gameLevel: hit.c.level, lamp: hit.c.lamp, normKey: key });
+      const c = hit.c;
+      unclassifiedCharts.push({
+        title: hit.title,
+        slot: hit.slot,
+        diff: hit.diff,
+        ec: null,
+        hc: null,
+        exh: null,
+        ec_n: null,
+        hc_n: null,
+        exh_n: 0,
+        lamp: c.lamp,
+        lampNum: lampNum(c.lamp),
+        djLevel: c.letter || null,
+        missCount: typeof c.missCount === 'number' ? c.missCount : null,
+        ereterLevel: null,
+        ereterEc: null,
+        ereterHc: null,
+        ereterExh: null,
+        ereterEcN: null,
+        ereterHcN: null,
+        ereterExhN: null,
+        gameLevel: hit.c.level,
+        zasaLevel: zasaIdx.get(key) ?? null,
+        isRatingFallback: true,
+        unlocked: c.unlocked,
+        exScore: typeof c.exScore === 'number' ? c.exScore : null,
+        noteCount: typeof c.noteCount === 'number' ? c.noteCount : null,
+        djPoints: typeof c.djPoints === 'number' ? c.djPoints : null,
+        songType: hit.type,
+        songLabel: hit.label,
+      });
     }
 
     const unmatched: number = ratingMissCount + tsvMissedInRating.length;
@@ -494,7 +530,7 @@ export default function App() {
     };
 
     console.log(`[dp12Match] 풀=${charts.length}곡 (ratingData 등재). 3중매칭=${matched}, ereter 미등재=${ratingOnlyCount}, tsv 미반영=${ratingMissCount}, tsv-only=${tsvMissedInRating.length}`);
-    return { charts, matched, unmatched, unmatchedSamples, unmatchedAll, ratingUnmatchedJson };
+    return { charts, unclassifiedCharts, matched, unmatched, unmatchedSamples, unmatchedAll, ratingUnmatchedJson };
   }, [rows, ereterData, ratingData, zasaData]);
 
   // 별값 추정 input — dp12Match 에서 derive
@@ -827,6 +863,8 @@ export default function App() {
         profile: p,
         starResult: s,
         charts: m.charts,
+        // 서열표 '미분류' 곡 — charts_json 에만 합쳐 올림 (lamp 통계는 m.charts 만 집계)
+        unclassifiedCharts: m.unclassifiedCharts,
       }).then((r) => {
         if (r.ok) console.log(`${tag} 업로드 성공`);
         else console.warn(`${tag} upsert 실패:`, r.error);

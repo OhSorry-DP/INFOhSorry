@@ -299,6 +299,15 @@ export default function Dp12Table({ lv12Charts, lv11Charts, onPickChart }: Props
             const stack = groupLampStacks.get(level) ?? [];
             return (
             <div key={level} className="dp12-group">
+              <div className="dp12-level">
+                {level === -1 ? '미분류' : level.toFixed(1)}
+                <span className="dp12-level-count">{list.length}곡</span>
+              </div>
+              <div className="dp12-songs">
+                {list.map((c, i) => (
+                  <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} onPickChart={onPickChart} />
+                ))}
+              </div>
               <div className="dp12-level-stackbar" title={`그룹 lamp 분포 (${list.length}곡)`}>
                 {stack.map(({ lamp, count, pct }) => (
                   <span
@@ -307,15 +316,6 @@ export default function Dp12Table({ lv12Charts, lv11Charts, onPickChart }: Props
                     style={{ flexBasis: `${pct}%` }}
                     title={`${LAMP_LABEL[lamp] ?? lamp}: ${count}곡 (${pct.toFixed(1)}%)`}
                   />
-                ))}
-              </div>
-              <div className="dp12-level">
-                {level === -1 ? '미분류' : level.toFixed(1)}
-                <span className="dp12-level-count">{list.length}곡</span>
-              </div>
-              <div className="dp12-songs">
-                {list.map((c, i) => (
-                  <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} onPickChart={onPickChart} />
                 ))}
               </div>
             </div>
