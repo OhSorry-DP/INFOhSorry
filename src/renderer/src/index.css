@@ -1500,8 +1500,8 @@ body {
 }
 .dp12-group {
   display: grid;
-  /* 컬럼: [난이도 라벨 | 곡 목록 | lamp 분포 스택드바] — 스택바를 제일 오른쪽으로 */
-  grid-template-columns: 70px 1fr 6px;
+  /* 컬럼: [lamp 분포 스택드바 | 난이도 라벨 | 곡 목록] — 스택바를 제일 왼쪽으로 */
+  grid-template-columns: 6px 70px 1fr;
 }
 /* 난이도 셀 왼쪽 — 그룹별 lamp 분포 세로 스택드 바.
    너비 6px = 곡 옆 .lamp-box 와 동일. 높이는 grid row 에 맞춰 자동 stretch.

@@ -79,6 +79,9 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.24 — 서열표 그룹 스택바 위치 복원 (제일 왼쪽)
+- 그룹별 lamp 분포 색박스 스택바를 난이도 라벨 오른쪽 → **제일 왼쪽**으로 복원 (`.dp12-group` 컬럼 순서 + Dp12Table JSX 순서)
+
 ### 0.0.23 — 서열표 '미분류' 곡 supabase 업로드
 - **서열표 미분류 곡 charts_json 업로드** — 게스트 페이지 (ohsorry.vercel.app) 서열표에서 INF 유저의 '미분류' 곡 (ohSorryRating.json 미등재 — 신곡 등) 이 안 보이던 버그 수정
   - 기존엔 `dp12Match.charts` (ratingData 등재곡만) 만 `charts_json` 으로 업로드 → 미등재 곡은 게스트가 받을 데이터 자체가 없었음
