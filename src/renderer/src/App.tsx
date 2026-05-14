@@ -120,18 +120,22 @@ export default function App() {
       setTsvPath(path);
       const state = await window.infohsorry.reflux.getState();
       setRefluxState(state);
-      const r = await window.infohsorry.readTsv(path);
-      if (r.ok && r.rows && r.rows.length > 0) {
-        setRows(r.rows);
-        if (r.mtime) {
-          lastLoadedMtime.current = r.mtime;
-          setTsvMtime(r.mtime);
+      // tsv 읽기 순서 — startAll 의 cleanupPreviousSession 이 이전 세션 tracker.tsv 를 삭제하므로
+      //   처음 실행 (spawned=false) 시엔 readTsv 를 하면 안 됨 (stale / 다른 계정 tsv 를 읽어버림).
+      //   → spawned=true (이미 Reflux 세션 진행 중) 일 때만 현재 tsv 복원,
+      //     spawned=false 면 start() (cleanup 포함) 만 하고 이후 watchTsv 가 새 tsv 감지 시 reload.
+      if (state.spawned) {
+        const r = await window.infohsorry.readTsv(path);
+        if (r.ok && r.rows && r.rows.length > 0) {
+          setRows(r.rows);
+          if (r.mtime) {
+            lastLoadedMtime.current = r.mtime;
+            setTsvMtime(r.mtime);
+          }
         }
-      }
-      // v0.0.15+: 설치 여부 무관 자동 시작 — 미설치면 startAll 안에서 자동 다운로드 + 설치 후 spawn.
-      // spawnReflux 가 이미 살아있는 Reflux.exe 감지 시 중복 spawn 안 함.
-      // "데이터 불러오기" 버튼은 다운로드 실패 시 retry 용도로 유지.
-      if (!state.spawned) {
+      } else {
+        // 처음 실행 — startAll 안에서 cleanup (이전 tsv 삭제) → spawn → watchTsv 순서 보장.
+        // 미설치면 startAll 안에서 자동 다운로드 + 설치 후 spawn.
         void window.infohsorry.reflux.start();
       }
     })();
