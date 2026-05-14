@@ -79,6 +79,9 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.25 — 곡명 hover 효과 밑줄 → 볼드
+- 클릭 가능한 곡명 (DP/SP 표 `.ct-title`, 서열표 `.dp12-song`) hover 시 밑줄 대신 **볼드** 처리
+
 ### 0.0.24 — 서열표 그룹 스택바 위치 복원 (제일 왼쪽)
 - 그룹별 lamp 분포 색박스 스택바를 난이도 라벨 오른쪽 → **제일 왼쪽**으로 복원 (`.dp12-group` 컬럼 순서 + Dp12Table JSX 순서)
 

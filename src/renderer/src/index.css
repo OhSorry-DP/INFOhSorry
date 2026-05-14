@@ -837,7 +837,7 @@ body {
   cursor: pointer;
 }
 .ct-title-clickable:hover {
-  text-decoration: underline;
+  font-weight: 700;
 }
 .ct-title-clickable:focus-visible {
   outline: 2px solid var(--action-primary, #1971c2);
@@ -1668,7 +1668,7 @@ body {
   cursor: pointer;
 }
 .dp12-song-clickable:hover .dp12-song-text {
-  text-decoration: underline;
+  font-weight: 700;
 }
 .dp12-song-clickable:focus-visible {
   outline: 2px solid var(--action-primary, #1971c2);
