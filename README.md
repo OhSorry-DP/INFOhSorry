@@ -79,6 +79,15 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.22 — v3.3.5 (D3) 채택 분기 재정의 + OSR / OSR13.5+ 모델 개선
+- **채택 분기 D3** (1021명 검증 영역별 최강 lib 기준): `OSR135 ≥ 13.0 → 무조건 OSR135` / `12.5~13.0 → OSR135↔group값 선형 보간` / `< 12.5 → group 별 base`
+  - group A·B → OSR
+  - group C → OSR값 ≥ 11.0 이면 OSR (11~13 은 OSR 가 최강), < 11.0 이면 oldOSR, 10.5~11.0 보간
+- **OSR / OSR13.5+ lib 개선** (gist 자동 갱신 — 재시작 시 적용):
+  - `calc-OSRating.js` v0.0.5 — bandCorr 선형 보간 / 그룹 경계 soft transition / nativeStar shrinkage / ASSIST 제외 / M feature top-3 평균 + 재학습
+  - `OSR13.5+.js` v0.0.3 — bonus down-scale (14+ 0.014 유지 + 저렙 over-estimation 억제)
+- 1021명 검증: D3 분기 누적 MAE 10.0+ **0.244** (v3.3.4 0.291 대비 -16%), 13.0+ **0.116**
+
 ### 0.0.21 — 자동 다운로드 저장 위치를 Downloads 폴더로 변경
 - **자동 다운로드 받은 portable .exe 가 영구 보존** — 이전엔 `userData/updates/` 임시 저장 후 부팅 시 정리되어 실행만 되고 사라짐 (옛 portable 이 그대로 남아 다음 부팅 시 옛 버전 실행되는 문제) → 이제 **Windows Downloads 폴더 (`%USERPROFILE%/Downloads`)** 에 영구 저장
 - 동일 파일명 존재 시 ` (1)`, ` (2)` 식으로 unique 접미사 자동 추가 — 사용자의 기존 다운로드 덮어쓰지 않음

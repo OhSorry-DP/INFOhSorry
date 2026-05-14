@@ -725,20 +725,48 @@ export default function App() {
     } else {
       oldStar = dp12StarOldResult?.star;
     }
+    // 채택 (1021명 검증 기반 영역별 최강 lib):
+    //   OSR135 ≥ 13.0 → 무조건 OSR135 (13+ 압도) / 12.5~13.0 → 선형 보간
+    //   OSR135 < 12.5 → group 별 base: A·B → OSR / C → OSR값 ≥ 11.0 면 OSR (11~13 OSR 최강) 아니면 oldOSR (10.5~11.0 보간)
+    const OSR135_TH = 13.0;   // OSR135 담당 하한
+    const BLEND_W = 0.5;      // (OSR135_TH - BLEND_W) ~ OSR135_TH 선형 보간 폭
+    const isAB = group === 'A' || group === 'B';
+    // group 별 base 값
+    let baseStar2: number | undefined;
+    let groupLib: 'OSR' | 'old';
+    if (isAB) {
+      baseStar2 = typeof newStar === 'number' ? newStar : oldStar;
+      groupLib = typeof newStar === 'number' ? 'OSR' : 'old';
+    } else {
+      // group C: 11~13 은 OSR 가 최강 → OSR값 ≥ 11.0 → OSR / < 11.0 → oldOSR / 10.5~11.0 보간
+      const C_TH = 11.0, C_W = 0.5;
+      if (typeof newStar === 'number' && newStar >= C_TH) {
+        baseStar2 = newStar; groupLib = 'OSR';
+      } else if (typeof newStar === 'number' && newStar >= C_TH - C_W && typeof oldStar === 'number') {
+        const ct = (newStar - (C_TH - C_W)) / C_W;
+        baseStar2 = oldStar * (1 - ct) + newStar * ct;
+        groupLib = 'OSR';
+      } else if (typeof oldStar === 'number') {
+        baseStar2 = oldStar; groupLib = 'old';
+      } else {
+        baseStar2 = newStar; groupLib = 'OSR';
+      }
+    }
     let final: number | undefined;
-    let adoptedLib: 'OSR135' | 'OSR' | 'old' | undefined;
-    if (typeof star135 === 'number' && star135 >= 13.0) {
+    let adoptedLib: 'OSR135' | 'OSR' | 'old' | 'blend' | undefined;
+    if (typeof star135 === 'number' && star135 >= OSR135_TH) {
       final = star135;
       adoptedLib = 'OSR135';
-    } else if ((group === 'A' || group === 'B') && typeof newStar === 'number') {
-      final = newStar;
-      adoptedLib = 'OSR';
-    } else if (typeof oldStar === 'number') {
-      final = oldStar;
-      adoptedLib = 'old';
-    } else if (typeof newStar === 'number') {
-      final = newStar;
-      adoptedLib = 'OSR';
+    } else if (typeof star135 === 'number' && star135 >= OSR135_TH - BLEND_W && typeof baseStar2 === 'number') {
+      const t = (star135 - (OSR135_TH - BLEND_W)) / BLEND_W; // 0~1 (1 이면 OSR135 쪽)
+      final = baseStar2 * (1 - t) + star135 * t;
+      adoptedLib = 'blend';
+    } else if (typeof baseStar2 === 'number') {
+      final = baseStar2;
+      adoptedLib = groupLib;
+    } else if (typeof star135 === 'number') {
+      final = star135;
+      adoptedLib = 'OSR135';
     }
     // v3.3.5 진단: 어느 lib 채택됐는지 + group 정보 출력
     console.log(
