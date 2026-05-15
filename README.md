@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.30.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.30-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.31.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.31-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -78,6 +78,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.31 — 곡명 정규화 Æ → a 매핑 (ÆTHER 매칭)
+- 클라이언트가 `&AElig;` HTML entity decode 실패해서 `ÆTHER` 를 `ATHER` 로 전송하는 케이스 호환 — `src/shared/match.ts` 의 norm 함수에서 `Æ`/`æ` 를 `ae` → `a` 로 변경
+- zasa 의 `ÆTHER` (DP12 ANOTHER lv11 / LEGGENDARIA lv12.1) 가 정상 매칭됨
+- 다른 단어에 `ATHER` substring 들어있어도 충돌 X — norm 전체 key 완전 일치만 매칭
 
 ### 0.0.30 — OSR 모듈 이름 변경 (calc-OSRating → osr / calc-Old-OSR → oldOSR)
 - gist 의 외부 ★ 추정 lib 두 개 이름 변경 — `calc-OSRating.js` → `osr.js`, `calc-Old-OSR.js` → `oldOSR.js` (ohSorryRating 프로젝트의 산출물명 통일)

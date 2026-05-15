@@ -22,7 +22,7 @@ export function norm(s: string): string {
     // 라틴 확장 → 기본
     .replace(/ƒ/g, 'f')              // ƒ "FFFFF"
     .replace(/[Øø]/g, 'o')      // Ø ø "VØID" "ACTØ"
-    .replace(/[Ææ]/g, 'ae')     // Æ æ "Iræ"
+    .replace(/[Ææ]/g, 'a')      // Æ æ "ÆTHER" — 클라이언트가 Æ 떼고 ATHER 로 보내는 케이스 호환
     .replace(/ə/g, 'e')              // ə schwa "uən"
     .replace(/[Œœ]/g, 'oe')     // Œ œ
     .replace(/ß/g, 'ss')             // ß
