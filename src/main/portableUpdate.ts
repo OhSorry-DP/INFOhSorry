@@ -8,9 +8,44 @@
 //   5. 완료 시 파일 경로 반환
 //   6. renderer 가 run(path) 호출 → spawn detached + app.quit()
 import { app, net } from 'electron';
-import { createWriteStream, existsSync } from 'fs';
-import { join, parse } from 'path';
+import { createWriteStream, existsSync, readdirSync, unlinkSync } from 'fs';
+import { join, parse, basename, dirname } from 'path';
 import { spawn } from 'child_process';
+
+// portable 파일명 패턴 — `ohSorryScoreINF-0.0.28-portable.exe` / `ohSorryScoreINF-0.0.28-portable (1).exe`
+// uniqueFilePath 의 ` (N)` 접미사 / 대소문자 변형 모두 허용. 이 패턴 외 파일은 절대 건드리지 않음.
+const PORTABLE_NAME_RE = /^ohSorryScoreINF-\d+\.\d+\.\d+-portable(?: \(\d+\))?\.exe$/i;
+
+// 자기 실행 파일이 portable 패턴이면 같은 폴더의 다른 portable 들 정리. 설치형 / 패턴
+// 비매칭 파일은 안 건드림. 0.0.21 의 cleanupOldUpdates 제거 결정을 portable-only 로 다시 활성화.
+//
+// 주의: electron-builder portable 은 실행 시 임시 폴더에 unpack 됨 → process.execPath 는 임시
+// 폴더의 'app.exe' 등을 가리킴. 사용자가 더블클릭한 진짜 portable 파일 경로는
+// process.env.PORTABLE_EXECUTABLE_FILE / PORTABLE_EXECUTABLE_DIR 로만 알 수 있음.
+export function cleanupOldPortables(): { removed: string[]; errors: string[] } {
+  const removed: string[] = [];
+  const errors: string[] = [];
+  try {
+    const portableFile = process.env.PORTABLE_EXECUTABLE_FILE;
+    const portableDir = process.env.PORTABLE_EXECUTABLE_DIR;
+    if (!portableFile || !portableDir) return { removed, errors }; // 설치형 / dev — skip
+    const myName = basename(portableFile);
+    if (!PORTABLE_NAME_RE.test(myName)) return { removed, errors }; // 다른 이름의 portable — skip
+    for (const entry of readdirSync(portableDir)) {
+      if (entry === myName) continue;
+      if (!PORTABLE_NAME_RE.test(entry)) continue;
+      try {
+        unlinkSync(join(portableDir, entry));
+        removed.push(entry);
+      } catch (e) {
+        errors.push(`${entry}: ${(e as Error).message}`);
+      }
+    }
+  } catch (e) {
+    errors.push((e as Error).message);
+  }
+  return { removed, errors };
+}
 
 function updatesDir(): string {
   // 사용자 Downloads 폴더 (Windows: %USERPROFILE%\Downloads)

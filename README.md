@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.28.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.28-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.29.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.29-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -78,6 +78,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.29 — portable 자동 업데이트 시 같은 폴더 옛 portable 정리
+- 자기 실행 파일이 `ohSorryScoreINF-X.X.X-portable.exe` 패턴이면 같은 폴더 안의 다른 같은 패턴 파일들을 자동 unlink (`portableUpdate.ts` `cleanupOldPortables`)
+- 같은 폴더의 사용자 다른 파일은 절대 안 건드림 — 패턴 정규식 (`^ohSorryScoreINF-\d+\.\d+\.\d+-portable( \(\d+\))?\.exe$`) 으로 자기 portable 만 한정
+- 0.0.21 의 `cleanupOldUpdates` 제거 결정 (Downloads 폴더 사용자 파일 보호) 을 **portable-only** 로 다시 활성화
+- 설치형 (NSIS) 으로 실행된 케이스는 `process.execPath` 가 패턴 비매칭 → skip
 
 ### 0.0.28 — Reflux tracker.tsv cleanup 을 첫 spawn 1회만 실행
 - 기존: `spawnReflux()` 가 매번 `cleanupPreviousSession()` 호출 → 앱 재시작 / health check 자동 재spawn / "데이터 불러오기" 재클릭마다 `tracker.tsv` / `tracker.db` / `sessions/` 삭제. 사용자가 INFINITAS 안 켠 상태로 앱만 켜면 데이터 매번 비워지는 문제

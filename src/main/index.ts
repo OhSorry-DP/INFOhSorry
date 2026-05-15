@@ -24,7 +24,7 @@ import {
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
 import { getRatingData, getRatingCacheStatus } from './rating';
 import { checkAndUpdateOsrLib, getOsrLibCode, checkAndUpdateOsr135Lib, getOsr135LibCode } from './osrLib';
-import { downloadPortable, runPortable } from './portableUpdate';
+import { downloadPortable, runPortable, cleanupOldPortables } from './portableUpdate';
 import { checkForUpdate } from './updateCheck';
 import { startHttpServer } from './http-server';
 
@@ -512,6 +512,11 @@ function createWindow(): void {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   createWindow();
+
+  // 자기 실행 파일이 portable 패턴이면 같은 폴더 내 옛 portable 정리 (자기 패턴만, 안전)
+  const cl = cleanupOldPortables();
+  if (cl.removed.length > 0) console.log('[portable cleanup] removed:', cl.removed);
+  if (cl.errors.length > 0) console.warn('[portable cleanup] errors:', cl.errors);
 
   // calc-OSRating.js 자동 갱신 — 부팅 시 background fetch + cache update (실패해도 무시)
   checkAndUpdateOsrLib().catch((e) => console.warn('[osrLib] 갱신 실패:', (e as Error).message));
