@@ -729,12 +729,16 @@ export default function App() {
     });
   }, []);
 
-  // OSR13.5+ 결과 계산 — ereterData.charts 필요
-  const osr135Result = useMemo<{ star: number; adopted: string } | null>(() => {
+  // OSR13.5+ 결과 계산 — ereterData.charts 필요. ec/hc/exh 도 spread gate 용으로 보존.
+  const osr135Result = useMemo<{ star: number; adopted: string; ec: number; hc: number; exh: number } | null>(() => {
     if (!osr135Lib || !ereterData || osrChartsInput.length === 0) return null;
     try {
-      const r = osr135Lib.inferUser(osrChartsInput, { charts: ereterData.charts });
-      return typeof r.starEstimate === 'number' ? { star: r.starEstimate, adopted: r.adopted } : null;
+      // any cast — OSR135 의 inferUser 가 ec/hc/exh 도 반환 (lib 정의에 명시 안 돼 있어서)
+      const r = osr135Lib.inferUser(osrChartsInput, { charts: ereterData.charts }) as
+        { starEstimate?: number; adopted: string; ec?: { final: number }; hc?: { final: number }; exh?: { final: number } };
+      return typeof r.starEstimate === 'number'
+        ? { star: r.starEstimate, adopted: r.adopted, ec: r.ec?.final ?? 0, hc: r.hc?.final ?? 0, exh: r.exh?.final ?? 0 }
+        : null;
     } catch (e) {
       console.warn('[osr135] inferUser 실패:', (e as Error).message);
       return null;
@@ -765,11 +769,18 @@ export default function App() {
     } else {
       oldStar = dp12StarOldResult?.star;
     }
-    // 채택 (1021명 검증 기반 영역별 최강 lib):
-    //   OSR135 ≥ 13.0 → 무조건 OSR135 (13+ 압도) / 12.5~13.0 → 선형 보간
-    //   OSR135 < 12.5 → group 별 base: A·B → OSR / C → OSR값 ≥ 11.0 면 OSR (11~13 OSR 최강) 아니면 oldOSR (10.5~11.0 보간)
-    const OSR135_TH = 13.0;   // OSR135 담당 하한
-    const BLEND_W = 0.5;      // (OSR135_TH - BLEND_W) ~ OSR135_TH 선형 보간 폭
+    // 채택 (v335E — 1021명 검증 통과): D3 분기 + spread gate
+    //   [신뢰도 게이트] OSR135 세 분기(EC/HC/EXH) 중 0(데이터 없음) 제외, max-min spread > 2.5 면
+    //                  OSR135 내부 불일치 → 신뢰 X → baseStar2 직행
+    //   spread ≤ 2.5 일 때만 OSR135 사용:
+    //     ≥13.5            → OSR135 직행 (14+ 정확도 핵심)
+    //     12.5 ≤ x < 13.5  → 블렌드: osr > osr135 → 135 직행 / diffBlend × (1-gapW) + osr135 × gapW
+    //                          gapW = clamp((osr135-osr)/3, 0, 1)
+    //     < 12.5           → baseStar2
+    const OSR135_TH = 13.5;
+    const BLEND_W = 1.0;
+    const GAP_GUARD = 3.0;
+    const SPREAD_MAX = 2.5;
     const isAB = group === 'A' || group === 'B';
     // group 별 base 값
     let baseStar2: number | undefined;
@@ -792,27 +803,48 @@ export default function App() {
         baseStar2 = newStar; groupLib = 'OSR';
       }
     }
+    // OSR135 신뢰도 게이트 — 세 분기 spread > 2.5 면 OSR135 안 씀
+    let osr135Trusted = true;
+    if (osr135Result) {
+      const stages = [osr135Result.ec, osr135Result.hc, osr135Result.exh].filter((v) => typeof v === 'number' && v > 0.01);
+      if (stages.length >= 2 && (Math.max(...stages) - Math.min(...stages)) > SPREAD_MAX) osr135Trusted = false;
+    }
     let final: number | undefined;
     let adoptedLib: 'OSR135' | 'OSR' | 'old' | 'blend' | undefined;
-    if (typeof star135 === 'number' && star135 >= OSR135_TH) {
-      final = star135;
-      adoptedLib = 'OSR135';
-    } else if (typeof star135 === 'number' && star135 >= OSR135_TH - BLEND_W && typeof baseStar2 === 'number') {
-      const t = (star135 - (OSR135_TH - BLEND_W)) / BLEND_W; // 0~1 (1 이면 OSR135 쪽)
-      final = baseStar2 * (1 - t) + star135 * t;
-      adoptedLib = 'blend';
-    } else if (typeof baseStar2 === 'number') {
-      final = baseStar2;
-      adoptedLib = groupLib;
-    } else if (typeof star135 === 'number') {
-      final = star135;
-      adoptedLib = 'OSR135';
+    if (typeof star135 !== 'number') {
+      // OSR135 없음 → baseStar2
+      if (typeof baseStar2 === 'number') { final = baseStar2; adoptedLib = groupLib; }
+    } else if (!osr135Trusted) {
+      // spread > 2.5 → OSR135 불신, baseStar2 직행
+      if (typeof baseStar2 === 'number') { final = baseStar2; adoptedLib = groupLib; }
+      else { final = star135; adoptedLib = 'OSR135'; }
+    } else if (star135 >= OSR135_TH) {
+      final = star135; adoptedLib = 'OSR135';
+    } else if (star135 < OSR135_TH - BLEND_W || typeof baseStar2 !== 'number') {
+      // <12.5 또는 baseStar2 없음
+      if (typeof baseStar2 === 'number') { final = baseStar2; adoptedLib = groupLib; }
+      else { final = star135; adoptedLib = 'OSR135'; }
+    } else if (typeof newStar === 'number' && newStar > star135) {
+      // osr > osr135 → 블렌드가 위로 끌어올림 → OSR135 직행
+      final = star135; adoptedLib = 'OSR135';
+    } else {
+      // 12.5 ≤ x < 13.5 블렌드
+      const t = (star135 - (OSR135_TH - BLEND_W)) / BLEND_W;
+      const diffBlend = baseStar2 * (1 - t) + star135 * t;
+      if (typeof newStar !== 'number') {
+        final = diffBlend; adoptedLib = 'blend';
+      } else {
+        const gapW = Math.max(0, Math.min((star135 - newStar) / GAP_GUARD, 1));
+        final = diffBlend * (1 - gapW) + star135 * gapW;
+        adoptedLib = 'blend';
+      }
     }
-    // v3.3.5 진단: 어느 lib 채택됐는지 + group 정보 출력
+    // v335E 진단: 어느 lib 채택됐는지 + group / spread 정보 출력
     console.log(
       `[★] 채택=${adoptedLib ?? 'none'} final=${final?.toFixed(3) ?? 'N/A'} | ` +
       `OSR135=${star135?.toFixed(3) ?? 'null'} OSR=${newStar?.toFixed(3) ?? 'null'} old=${oldStar?.toFixed(3) ?? 'null'} | ` +
-      `group=${group ?? '-'}${group === 'C' ? ' (all-11.6+ excluded)' : ''}`
+      `group=${group ?? '-'}${group === 'C' ? ' (all-11.6+ excluded)' : ''}` +
+      (osr135Result ? ` | osr135 ec/hc/exh=${osr135Result.ec.toFixed(2)}/${osr135Result.hc.toFixed(2)}/${osr135Result.exh.toFixed(2)}${osr135Trusted ? '' : ' ⚠ spread>2.5'}` : ''),
     );
     if (final == null) return dp12StarOldResult;
     return dp12StarOldResult ? { ...dp12StarOldResult, star: final, _adoptedLib: adoptedLib } as typeof dp12StarOldResult & { _adoptedLib?: string } : null;
