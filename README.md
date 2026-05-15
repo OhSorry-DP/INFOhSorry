@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.29.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.29-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.30.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.30-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -79,6 +79,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.30 — OSR 모듈 이름 변경 (calc-OSRating → osr / calc-Old-OSR → oldOSR)
+- gist 의 외부 ★ 추정 lib 두 개 이름 변경 — `calc-OSRating.js` → `osr.js`, `calc-Old-OSR.js` → `oldOSR.js` (ohSorryRating 프로젝트의 산출물명 통일)
+- 클라이언트 측 (osrLib.ts, App.tsx, ProfileCard.tsx 등) 의 require / fetch URL 일괄 갱신 후 재빌드
+- 동작/모델 자체 변경 없음 — 이름만 정리
+
 ### 0.0.29 — portable 자동 업데이트 시 같은 폴더 옛 portable 정리
 - 자기 실행 파일이 `ohSorryScoreINF-X.X.X-portable.exe` 패턴이면 같은 폴더 안의 다른 같은 패턴 파일들을 자동 unlink (`portableUpdate.ts` `cleanupOldPortables`)
 - 같은 폴더의 사용자 다른 파일은 절대 안 건드림 — 패턴 정규식 (`^ohSorryScoreINF-\d+\.\d+\.\d+-portable( \(\d+\))?\.exe$`) 으로 자기 portable 만 한정
@@ -119,7 +124,7 @@ npm run release          # NSIS + portable .exe 생성 (release/)
   - group A·B → OSR
   - group C → OSR값 ≥ 11.0 이면 OSR (11~13 은 OSR 가 최강), < 11.0 이면 oldOSR, 10.5~11.0 보간
 - **OSR / OSR13.5+ lib 개선** (gist 자동 갱신 — 재시작 시 적용):
-  - `calc-OSRating.js` v0.0.5 — bandCorr 선형 보간 / 그룹 경계 soft transition / nativeStar shrinkage / ASSIST 제외 / M feature top-3 평균 + 재학습
+  - `osr.js` v0.0.5 — bandCorr 선형 보간 / 그룹 경계 soft transition / nativeStar shrinkage / ASSIST 제외 / M feature top-3 평균 + 재학습
   - `OSR13.5+.js` v0.0.3 — bonus down-scale (14+ 0.014 유지 + 저렙 over-estimation 억제)
 - 1021명 검증: D3 분기 누적 MAE 10.0+ **0.244** (v3.3.4 0.291 대비 -16%), 13.0+ **0.116**
 - **tsv 읽기 순서 수정** — 처음 실행 시 `readTsv` (자동 복원) 가 `startAll` 의 `cleanupPreviousSession` (이전 세션 tracker.tsv 삭제) 보다 먼저 실행돼 stale / 다른 계정 tsv 를 읽던 race condition 해소. `spawned=false` (처음 실행) 면 readTsv 스킵 → cleanup → spawn 후 1분 timer 가 새 tsv 읽음
@@ -151,8 +156,8 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - 1021명 검증: 전체 MAE 0.398 → **0.363**, max\|err\| 6.989 → **4.264**, 14+ MAE 0.101 → **0.014**, 13+ MAE 0.377 → **0.121**
 
 ### 0.0.18 — v3.3.4 ensemble + OSR lib 자동 갱신 + supabase 업로드 확장
-- **v3.3.4 ensemble** — 사용자 ★ = (oldOSR v3.3.3 + OSR v0.0.2 tiered) / 2 평균. OSR (calc-OSRating.js) 을 INFOhSorry 에 bundle, `inferUserTiered` 사용 (그룹별 scope + band correction)
-- **calc-OSRating.js 자동 갱신** — 매 부팅 시 main process 가 gist 에서 fetch + userData/libs/ 캐시. version 비교해서 더 최신이면 renderer 가 eval → window override. bundle 은 fallback. 모델 업데이트 시 INFOhSorry 재빌드 불필요
+- **v3.3.4 ensemble** — 사용자 ★ = (oldOSR v3.3.3 + OSR v0.0.2 tiered) / 2 평균. OSR (osr.js) 을 INFOhSorry 에 bundle, `inferUserTiered` 사용 (그룹별 scope + band correction)
+- **osr.js 자동 갱신** — 매 부팅 시 main process 가 gist 에서 fetch + userData/libs/ 캐시. version 비교해서 더 최신이면 renderer 가 eval → window override. bundle 은 fallback. 모델 업데이트 시 INFOhSorry 재빌드 불필요
 - **ohSorryRating 캐시 정책 변경** — 24h TTL 제거, **매번 fetch + 실패 시에만 캐시 fallback** (gist 다운 / 오프라인 대응)
 - **EXH 추천 범위 조정** — `[baseStar - 2, baseStar + 1]` 로 변경. 실력 +1 까지 도전 허용, 실력 -2 미만은 제외 (너무 쉬운 곡 컷)
 - **UI 정리** — tracker.tsv 로드 후 Reflux 로그 자동 숨김, `ENOENT` / `no such file` 에러 화면 표시 제거 (조용히 무시)

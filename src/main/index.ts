@@ -100,7 +100,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   },
   'rating:status': async () => getRatingCacheStatus(),
 
-  // calc-OSRating.js auto-update — 부팅 시 gist fetch + userData 캐시 (renderer 가 eval 해서 사용)
+  // osr.js auto-update — 부팅 시 gist fetch + userData 캐시 (renderer 가 eval 해서 사용)
   'osrLib:get': async () => getOsrLibCode(),
   'osrLib:checkUpdate': async () => checkAndUpdateOsrLib(),
   // OSR13.5+.js auto-update (v3.3.5)
@@ -518,7 +518,7 @@ app.whenReady().then(() => {
   if (cl.removed.length > 0) console.log('[portable cleanup] removed:', cl.removed);
   if (cl.errors.length > 0) console.warn('[portable cleanup] errors:', cl.errors);
 
-  // calc-OSRating.js 자동 갱신 — 부팅 시 background fetch + cache update (실패해도 무시)
+  // osr.js 자동 갱신 — 부팅 시 background fetch + cache update (실패해도 무시)
   checkAndUpdateOsrLib().catch((e) => console.warn('[osrLib] 갱신 실패:', (e as Error).message));
   checkAndUpdateOsr135Lib().catch((e) => console.warn('[osrLib135] 갱신 실패:', (e as Error).message));
 

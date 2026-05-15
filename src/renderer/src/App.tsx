@@ -629,7 +629,7 @@ export default function App() {
     return valid[0].res;
   }, [dp12StarAll]);
 
-  // ohSorry v3.3.4: calc-OSRating (v0.0.2) inferUserTiered 추가 → ensemble 평균
+  // ohSorry v3.3.4: osr (v0.0.2) inferUserTiered 추가 → ensemble 평균
   //   charts 변환 — SongRow / DP_SLOTS → { title, diff, lampNum } 단순 형식
   const osrChartsInput = useMemo(() => {
     if (!rows || rows.length === 0) return [];

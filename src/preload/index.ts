@@ -61,7 +61,7 @@ const api = {
     status: (): Promise<RatingCacheStatus> => ipcRenderer.invoke('rating:status'),
   },
 
-  // calc-OSRating.js auto-update — gist 의 최신 lib 가 있으면 cache, renderer 가 eval 해서 사용
+  // osr.js auto-update — gist 의 최신 lib 가 있으면 cache, renderer 가 eval 해서 사용
   osrLib: {
     get: (): Promise<{ code: string; version: string | null } | null> => ipcRenderer.invoke('osrLib:get'),
     checkUpdate: (): Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }> =>

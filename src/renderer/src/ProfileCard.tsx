@@ -7,7 +7,7 @@ import type { StarResult } from '../../shared/star-estimator';
 interface ProfileCardProps {
   profile: ProfileInfo;
   starResult: StarResult | null;
-  // OSR (calc-OSRating v0.0.2) 표시값. starResult (채택 ★) 와의 차이 함께 표시. null 이면 "DP Recommend" 표시.
+  // OSR (osr v0.0.2) 표시값. starResult (채택 ★) 와의 차이 함께 표시. null 이면 "DP Recommend" 표시.
   osrStar?: number | null;
 }
 
@@ -74,7 +74,7 @@ export function ProfileCard({
         <div className="profile-card-star">
           <div className="profile-card-star-value">★{starResult.star.toFixed(2)}</div>
           {osrNote ? (
-            <div className="profile-card-star-note" title="OSR (calc-OSRating v0.0.2) 추정값">
+            <div className="profile-card-star-note" title="OSR (osr v0.0.2) 추정값">
               OSR: ★{osrNote.value.toFixed(2)}{' '}
               <span style={{ opacity: 0.7 }}>({osrNote.diffStr})</span>
             </div>

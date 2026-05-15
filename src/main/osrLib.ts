@@ -1,8 +1,8 @@
-// calc-OSRating.js gist 자동 갱신 — 부팅 시 fetch + userData 캐시
+// osr.js gist 자동 갱신 — 부팅 시 fetch + userData 캐시
 //
 // 흐름:
-//   1. 앱 시작 시 main process 가 gist 에서 calc-OSRating.js 텍스트 fetch (비동기)
-//   2. 캐시 파일 (userData/libs/calc-OSRating.js) 의 version 과 비교
+//   1. 앱 시작 시 main process 가 gist 에서 osr.js 텍스트 fetch (비동기)
+//   2. 캐시 파일 (userData/libs/osr.js) 의 version 과 비교
 //   3. fetch 한 게 더 최신이면 캐시 갱신
 //   4. renderer 가 IPC 로 캐시 lib 코드 요청 → renderer 가 eval → window.ohSorryRating 등록
 //   5. App.tsx 의 osrInferUserTiered 호출 시 window 에 있으면 그것 우선, 없으면 bundle 사용
@@ -13,12 +13,12 @@ import { promises as fsp, existsSync } from 'fs';
 import { join, dirname } from 'path';
 
 const OSR_GIST_URL =
-  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/calc-OSRating.js';
+  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/osr.js';
 const OSR135_GIST_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/OSR13.5%2B.js';
 
 function cachePath(): string {
-  return join(app.getPath('userData'), 'libs', 'calc-OSRating.js');
+  return join(app.getPath('userData'), 'libs', 'osr.js');
 }
 function cachePath135(): string {
   return join(app.getPath('userData'), 'libs', 'OSR13.5+.js');
