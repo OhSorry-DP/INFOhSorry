@@ -120,22 +120,20 @@ export default function App() {
       setTsvPath(path);
       const state = await window.infohsorry.reflux.getState();
       setRefluxState(state);
-      // tsv 읽기 순서 — startAll 의 cleanupPreviousSession 이 이전 세션 tracker.tsv 를 삭제하므로
-      //   처음 실행 (spawned=false) 시엔 readTsv 를 하면 안 됨 (stale / 다른 계정 tsv 를 읽어버림).
-      //   → spawned=true (이미 Reflux 세션 진행 중) 일 때만 현재 tsv 복원,
-      //     spawned=false 면 start() (cleanup 포함) 만 하고 이후 watchTsv 가 새 tsv 감지 시 reload.
-      if (state.spawned) {
-        const r = await window.infohsorry.readTsv(path);
-        if (r.ok && r.rows && r.rows.length > 0) {
-          setRows(r.rows);
-          if (r.mtime) {
-            lastLoadedMtime.current = r.mtime;
-            setTsvMtime(r.mtime);
-          }
+      // tsv 읽기 — RefluxManager 가 cleanup 을 process lifetime 의 첫 spawn 1회만 수행하므로
+      //   재부팅 시 (spawned=false) 이전 세션 tracker.tsv 가 보존됨 → 일단 읽어서 화면에 띄우고,
+      //   그 다음 spawn 으로 INFINITAS 메모리에서 새 tsv dump 시작.
+      //   첫 설치 / 첫 부팅이면 readTsv 가 빈 결과 (파일 없음) — 그냥 0 rows 로 통과, start() 가 진행.
+      const r = await window.infohsorry.readTsv(path);
+      if (r.ok && r.rows && r.rows.length > 0) {
+        setRows(r.rows);
+        if (r.mtime) {
+          lastLoadedMtime.current = r.mtime;
+          setTsvMtime(r.mtime);
         }
-      } else {
-        // 처음 실행 — startAll 안에서 cleanup (이전 tsv 삭제) → spawn → watchTsv 순서 보장.
-        // 미설치면 startAll 안에서 자동 다운로드 + 설치 후 spawn.
+      }
+      if (!state.spawned) {
+        // Reflux 미spawn 상태면 자동 시작. 미설치면 startAll 안에서 자동 다운로드 + 설치 후 spawn.
         void window.infohsorry.reflux.start();
       }
     })();

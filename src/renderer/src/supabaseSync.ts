@@ -68,7 +68,10 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     exh_count: exhCount,
     level_filter: 'lv12',
     series: 'INF',
-    charts_json: charts,
+    // tsv lv11/12 전곡 등재 — m.charts (ratingData∩tsv, zasa≤12.7) + m.unclassifiedCharts (tsv \ ratingData)
+    // 의 union = tsvIdx 전체. 게스트 서열표가 zasaLevel > 12.7 곡 / ratingData 미등재 신곡까지 표시 가능.
+    // lamp 통계 (n_played_lv12 등) 는 위 집계 그대로 — m.charts 만 ★ 추정 풀.
+    charts_json: [...charts, ...(unclassifiedCharts ?? [])],
   };
 
   try {

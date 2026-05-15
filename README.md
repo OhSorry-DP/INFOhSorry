@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.19.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.19-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.28.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.28-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -78,6 +78,16 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.28 — Reflux tracker.tsv cleanup 을 첫 spawn 1회만 실행
+- 기존: `spawnReflux()` 가 매번 `cleanupPreviousSession()` 호출 → 앱 재시작 / health check 자동 재spawn / "데이터 불러오기" 재클릭마다 `tracker.tsv` / `tracker.db` / `sessions/` 삭제. 사용자가 INFINITAS 안 켠 상태로 앱만 켜면 데이터 매번 비워지는 문제
+- 수정: `cleanedUp` flag 추가 — process lifetime 의 **첫 spawn 1회만** cleanup. 이후 재spawn 은 tsv 보존. `killAllRefluxProcesses` 는 file lock 해제 위해 매번 그대로 호출
+- App.tsx 마운트 시 `spawned=false` 라도 이전 tsv 가 살아있으면 일단 `readTsv` 해서 화면에 띄움 → 이후 `start()` 로 새 spawn 진행 (재부팅 직후 곡 선택 진입 전까지 화면 빔 해소)
+
+### 0.0.27 — supabase charts_json 합치기 누락 수정 (lv11/12 전곡 등재)
+- `supabaseSync.ts` payload 가 `charts_json: charts` 만 보내고 `unclassifiedCharts` 는 destructure 만 하고 사용 안 하던 누락 — 0.0.23 entry 의 의도와 실제 코드 불일치
+- `[...charts, ...(unclassifiedCharts ?? [])]` 로 수정 → tsv lv11/12 전곡 (ratingData 미등재 신곡 + zasaLevel > 12.7 보스급 포함) 이 게스트 서열표에 보임
+- lamp 통계 (`n_played_lv12` 등) 는 그대로 — `m.charts` 만 ★ 추정 풀
 
 ### 0.0.26 — v335E 채택 분기 (spread gate)
 - **OSR135 신뢰도 게이트** — OSR135 세 분기 (EC/HC/EXH) 중 0(데이터 없음) 제외, `max-min spread > 2.5` 면 OSR135 내부 불일치로 판단 → 신뢰 X, baseStar2 직행. (LISASU 같은 하드 특화 / `33055059` 같은 OSR135 폭주 케이스 잡음)

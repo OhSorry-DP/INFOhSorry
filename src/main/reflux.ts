@@ -222,6 +222,10 @@ export class RefluxManager extends EventEmitter {
   // health check — Reflux.exe 가 hang/crash 했는지 5분마다 확인 후 재시작
   private healthCheckTimer: NodeJS.Timeout | null = null;
   private static readonly HEALTH_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+  // 이전 세션 정리 (tracker.tsv / tracker.db / sessions/) 는 process lifetime 의 첫 spawn 1회만.
+  // 이후 재spawn (health check 자동 재시작, 사용자 stop→start, "데이터 불러오기" 재클릭 등) 에서는
+  // tsv 보존 — 앱 재시작 시 데이터 매번 비워지는 문제 방지. (사용자 요청)
+  private cleanedUp = false;
 
   getState(): RefluxState {
     // installed 는 디스크 exe 존재 여부로도 결정. 앱 부팅 직후 (state.installed=false 기본값)
@@ -421,10 +425,13 @@ export class RefluxManager extends EventEmitter {
     if (this.child) return;
     this.setState({ stage: 'starting', spawned: false });
 
-    // 매 spawn 마다 깨끗한 시작 보장: 기존 Reflux 모두 kill + 세션 잔여물 정리
-    // startAll / health check 자동 재spawn 둘 다 적용 — zombie / file lock / stale 데이터 방지
+    // 매 spawn 마다 기존 Reflux kill (file lock 해제 + 깨끗한 새 spawn 준비) — 이건 항상 필요.
+    // 세션 잔여물 정리 (tracker.tsv 등) 는 process lifetime 의 첫 spawn 1회만 — 재spawn 시 tsv 보존.
     await this.killAllRefluxProcesses();
-    this.cleanupPreviousSession();
+    if (!this.cleanedUp) {
+      this.cleanupPreviousSession();
+      this.cleanedUp = true;
+    }
 
     // PowerShell Start-Process -WindowStyle Hidden — 콘솔창 작업표시줄에도 안 보임.
     // Reflux 는 hidden 콘솔에서 attach 받음 → Console.Clear 동작.
