@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.31.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.31-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.32.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.32-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -78,6 +78,14 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.32 — OSR 모델 v0.0.6 (Group C lv11 HC/EXH + Group A 보정 + BAND 확장)
+- `src/shared/calc-osrating.ts` 의 모델 동작 업데이트:
+  - **Group C** scope 에 `lv11Weight: 0.1` — lv11 차트의 HC/EXH stage 가 0.1 가중치로 fitData 진입. lv12 천장 효과 영역 (★13+) 변별력 보강 (★13~14 MAE 0.403 → 0.234)
+  - **Group A** 에 `BAND_CORR_A` 보정 신규 — A scope (zasaMin=10.2) raw 가 ★3~8 영역에서 over-estimate 끌어내림, A → B 전환 점프 완화
+  - **BAND** 5 → 15 — 그룹 경계 blend 영역 25~35 → 15~45 로 확장, smooth transition
+- ohSorryRating 의 osr.js v0.0.6 과 동기
+- 동작은 자동 적용 — 별도 설정 변경 없음
 
 ### 0.0.31 — 곡명 정규화 Æ → a 매핑 (ÆTHER 매칭)
 - 클라이언트가 `&AElig;` HTML entity decode 실패해서 `ÆTHER` 를 `ATHER` 로 전송하는 케이스 호환 — `src/shared/match.ts` 의 norm 함수에서 `Æ`/`æ` 를 `ae` → `a` 로 변경

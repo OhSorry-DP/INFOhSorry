@@ -74,6 +74,11 @@ const __osrModule = (function () {
     const zasaMin = typeof opts.zasaMin === 'number' ? opts.zasaMin : 11.6;
     const zasaMax = typeof opts.zasaMax === 'number' ? opts.zasaMax : 12.7;
     const gameLevelFilter = opts.gameLevel; // 12 또는 undefined
+    // lv11Weight (0~1, default 0) — Group C 에서 lv11 HC/EXH 부분 가중치.
+    //   gameLevelFilter=12 일 때 lv11 도 통과 (단 fitData 의 lv11 EC stage 는 스킵).
+    //   NLL 계산 시 weight 만큼 영향.
+    const lv11Weight = (typeof opts.lv11Weight === 'number') ? Math.max(0, Math.min(1, opts.lv11Weight)) : 0;
+    const includeLv11 = lv11Weight > 0;
     const lookup = new Map();
     for (const r of ratingData.ratings) lookup.set(norm(r.title) + '|' + r.diff, r);
 
@@ -91,10 +96,13 @@ const __osrModule = (function () {
       }
       // ereter-compat 용 (zasa cutoff 옵션화 — default 11.6~12.7)
       if (r.zasaLevel < zasaMin || r.zasaLevel > zasaMax) continue;
-      if (gameLevelFilter && r.gameLevel !== gameLevelFilter) continue;
+      if (gameLevelFilter && r.gameLevel !== gameLevelFilter) {
+        if (!(includeLv11 && r.gameLevel === 11)) continue;
+      }
       enriched.push({
         lamp: c.lampNum,
         ec: r.estEc, hc: r.estHc, exh: r.estExh,
+        gameLevel: r.gameLevel,
       });
     }
 
@@ -111,19 +119,23 @@ const __osrModule = (function () {
     const fitData = [];
     for (const c of enriched) {
       if (c.lamp == null || c.lamp <= 0) continue;
-      if (typeof c.ec === 'number') fitData.push({ d: c.ec, p: c.lamp >= 3 ? 1 : 0, stage: 'ec' });
-      if (typeof c.hc === 'number') fitData.push({ d: c.hc, p: c.lamp >= 5 ? 1 : 0, stage: 'hc' });
-      if (typeof c.exh === 'number') fitData.push({ d: c.exh, p: c.lamp >= 6 ? 1 : 0, stage: 'exh' });
+      // weight: lv12 → 1, lv11 → lv11Weight (HC/EXH 만, EC 는 trivial 스킵)
+      const isLv11 = c.gameLevel === 11;
+      const w = isLv11 ? lv11Weight : 1;
+      if (!isLv11 && typeof c.ec === 'number') fitData.push({ d: c.ec, p: c.lamp >= 3 ? 1 : 0, stage: 'ec', w });
+      if (typeof c.hc === 'number') fitData.push({ d: c.hc, p: c.lamp >= 5 ? 1 : 0, stage: 'hc', w });
+      if (typeof c.exh === 'number') fitData.push({ d: c.exh, p: c.lamp >= 6 ? 1 : 0, stage: 'exh', w });
     }
     if (fitData.length < 30) {
       reason = 'few_plays';
     } else {
       const byLamp = { ec: [], hc: [], exh: [] };
-      for (const { d, p, stage } of fitData) byLamp[stage].push({ d, p });
+      for (const { d, p, stage, w } of fitData) byLamp[stage].push({ d, p, w: typeof w === 'number' ? w : 1 });
+      // 클리어 카운트 — weighted sum (lv11 entries 가중치 lv11Weight 만큼 기여)
       const cc = {
-        ec: byLamp.ec.filter((x) => x.p === 1).length,
-        hc: byLamp.hc.filter((x) => x.p === 1).length,
-        exh: byLamp.exh.filter((x) => x.p === 1).length,
+        ec: byLamp.ec.filter((x) => x.p === 1).reduce((s, x) => s + x.w, 0),
+        hc: byLamp.hc.filter((x) => x.p === 1).reduce((s, x) => s + x.w, 0),
+        exh: byLamp.exh.filter((x) => x.p === 1).reduce((s, x) => s + x.w, 0),
       };
       const validStages = ['ec', 'hc', 'exh'].filter((st) => cc[st] >= MIN_CLEAR_PER_LAMP);
       if (validStages.length === 0) {
@@ -134,10 +146,10 @@ const __osrModule = (function () {
           let t = 0;
           for (const st of validStages) {
             const a = alphaOf(S, st);
-            for (const { d, p } of byLamp[st]) {
+            for (const { d, p, w } of byLamp[st]) {
               let z = a * (d - S); if (z > Z) z = Z; else if (z < -Z) z = -Z;
               const sp = Math.max(z, 0) + Math.log(1 + Math.exp(-Math.abs(z)));
-              t -= p === 1 ? -sp : (z - sp);
+              t -= w * (p === 1 ? -sp : (z - sp));
             }
           }
           return t;
@@ -259,6 +271,17 @@ const __osrModule = (function () {
     "10.0": -0.474, "10.5": -0.492, "11.0": -0.509, "11.5": -0.405, "12.0": -0.263, "12.5": -0.251,
     "13.0": -0.01, "13.5": -0.18, "14.0": -0.191, "14.5": -0.295,
   };
+  // Group A 전용 — 876명 in-sample (2026-05-16), A scope (zasaMin=10.2) raw 의 over-estimate 끌어내림.
+  // A → B 전환 점프 완화 효과 (B 의 BAND_CORR_DEFAULT 와 분포 align).
+  const BAND_CORR_A = {
+    "1.0": 0.470, "1.5": 0.439, "2.0": -0.035, "2.5": -0.137,
+    "3.0": -0.925, "3.5": -0.899, "4.0": -0.865, "4.5": -0.793,
+    "5.0": -0.595, "5.5": -0.517, "6.0": -0.843, "6.5": -0.953,
+    "7.0": -1.040, "7.5": -0.816, "8.0": -0.740, "8.5": -0.498,
+    "9.0": -0.419, "9.5": -0.278, "10.0": -0.287, "10.5": -0.367,
+    "11.0": -0.327, "11.5": -0.325, "12.0": -0.313, "12.5": -0.265,
+    "13.0": -0.181, "13.5": -0.226, "14.0": -0.311, "14.5": -0.300,
+  };
   function bandCorr(table, predStar) {
     const b = Math.floor(predStar * 2) / 2;
     const key = b.toFixed(1);
@@ -288,14 +311,14 @@ const __osrModule = (function () {
     if (nLv12Cleared < 30) {
       group = 'A';
       scopeOpts = { zasaMin: 10.2 };
-      corrTable = null;  // A 그룹 B 보정 X
+      corrTable = BAND_CORR_A;  // A 전용 보정 (★3~8 over-estimate 끌어내림, A→B 점프 완화)
     } else if (nZ12_0upCleared < 30) {
       group = 'B';
       scopeOpts = {};  // default zasaMin=11.6
       corrTable = BAND_CORR_DEFAULT;
     } else {
       group = 'C';
-      scopeOpts = { gameLevel: 12 };
+      scopeOpts = { gameLevel: 12, lv11Weight: 0.1 };
       corrTable = BAND_CORR_LV12;
     }
     const r = inferUser(charts, ratingData, scopeOpts);
@@ -315,7 +338,7 @@ const __osrModule = (function () {
   }
 
   return {
-    version: '0.0.2',
+    version: '0.0.6',
     inferUser,
     inferUserTiered,
   };
