@@ -86,6 +86,7 @@ npm run release          # NSIS + portable .exe 생성 (release/)
   - `dp12StarResult` useMemo 가 단순 `adoptFn(input)` 호출로 정리됨. inline 분기 로직 제거.
 - 효과: ohSorry / recompute / INFOhSorry 의 ★ 가 동일 입력에서 동일 출력. 예: group C 케이스에서 5.220 vs 5.167 차이 해소.
 - **DpTable 서열표 stack bar 위치 변경** — 서열표 제일 하단 → 색상 박스 라벨 (lamp-legend) 위 (서열표 최상단) 로 이동. 캡처 출력 순서도 일치 (stackbar → legend → grid).
+- **`.dp-stackbar` bottom margin 제거** — `margin-bottom: 16px` → `0`. 최상단 이동 후 legend 와의 간격이 위아래 동일해서 시각적으로 불편 → 아래 마진 제거 (게스트 페이지 ohsorry-shelf v0.0.17 과 동일 처리).
 
 ### 0.0.33 — DpTable rename + Reflux healthCheck dynamic interval
 - 컴포넌트 rename: `Dp12Table` → `DpTable` (파일/컴포넌트 이름 + CSS prefix `dp12-*` → `dp-*`, 총 111곳)

@@ -1564,14 +1564,14 @@ body {
   border-bottom: 1px solid #c8c8c8;
 }
 
-/* 표 전체 lamp 분포 스택드 바 — 서열표 최하단 */
+/* 표 전체 lamp 분포 스택드 바 — 서열표 최상단 (legend 위) */
 .dp-stackbar {
   display: flex;
   width: 100%;
   max-width: 500px;
   height: 24px;
   margin-top: 16px;
-  margin-bottom: 16px;
+  margin-bottom: 0;
   border-radius: 4px;
   overflow: hidden;
   font-size: 11px;
