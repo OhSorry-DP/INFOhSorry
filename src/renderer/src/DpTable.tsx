@@ -168,7 +168,7 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
   async function captureGrid(): Promise<void> {
     if (!gridRef.current) return;
     setCapturing(true);
-    // 화면 밖에 1200px 폭 임시 컨테이너 만들어서 [lamp-legend + grid + stackbar] 복제 → 캡처 → 제거
+    // 화면 밖에 1200px 폭 임시 컨테이너 만들어서 [stackbar + lamp-legend + grid] 복제 → 캡처 → 제거
     // (창 크기와 무관하게 일정한 1200px 폭의 캡처 결과 보장)
     const bgColor =
       getComputedStyle(document.documentElement).getPropertyValue('--bg-page').trim() ||
@@ -185,26 +185,26 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
       z-index: -1;
       pointer-events: none;
     `;
-    // 1. lamp 라벨 범례 (상단)
+    // 1. 스택드 바 (최상단)
+    if (stackbarRef.current) {
+      const stackClone = stackbarRef.current.cloneNode(true) as HTMLElement;
+      stackClone.style.width = '100%';
+      stackClone.style.marginBottom = '12px';
+      // PC margin-left (난이도 컬럼 너비) 무시 — 캡처 시 grid 전체 폭에 align
+      stackClone.style.marginLeft = '0';
+      wrapper.appendChild(stackClone);
+    }
+    // 2. lamp 라벨 범례 (상단)
     if (legendRef.current) {
       const legendClone = legendRef.current.cloneNode(true) as HTMLElement;
       legendClone.style.width = '100%';
       legendClone.style.marginBottom = '12px';
       wrapper.appendChild(legendClone);
     }
-    // 2. grid (중앙)
+    // 3. grid (하단)
     const clone = gridRef.current.cloneNode(true) as HTMLElement;
     clone.style.width = '100%';
     wrapper.appendChild(clone);
-    // 3. 스택드 바 (하단)
-    if (stackbarRef.current) {
-      const stackClone = stackbarRef.current.cloneNode(true) as HTMLElement;
-      stackClone.style.width = '100%';
-      stackClone.style.marginTop = '12px';
-      // PC margin-left (난이도 컬럼 너비) 무시 — 캡처 시 grid 전체 폭에 align
-      stackClone.style.marginLeft = '0';
-      wrapper.appendChild(stackClone);
-    }
     document.body.appendChild(wrapper);
     // 두 frame 대기 — 레이아웃 + paint 완료 보장
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(undefined))));
@@ -345,6 +345,22 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
         <div className="dp-empty">서열표 {isStarMode ? STAR_RANGES[activeMode].label : activeMode} — 매칭된 곡이 없습니다.</div>
       ) : (
       <>
+      {/* 스택드 바 — 색상 라벨 위 (서열표 최상단) */}
+      {lampStack.length > 0 && (
+        <div className="dp-stackbar" ref={stackbarRef}>
+          {lampStack.map(({ lamp, count, pct }) => {
+            return (
+              <div
+                key={lamp}
+                className={`dp-stackbar-seg lamp-box lamp-${lamp}`}
+                style={{ flexBasis: `${pct}%` }}
+              >
+                {count}
+              </div>
+            );
+          })}
+        </div>
+      )}
       <div className="dp-toolbar">
         <div className="dp-bar-group">
           {/* 색상 박스 범례 */}
@@ -429,22 +445,6 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
           );
         })}
       </div>
-      {/* 스택드 바 — 서열표 제일 하단 */}
-      {lampStack.length > 0 && (
-        <div className="dp-stackbar" ref={stackbarRef}>
-          {lampStack.map(({ lamp, count, pct }) => {
-            return (
-              <div
-                key={lamp}
-                className={`dp-stackbar-seg lamp-box lamp-${lamp}`}
-                style={{ flexBasis: `${pct}%` }}
-              >
-                {count}
-              </div>
-            );
-          })}
-        </div>
-      )}
       {captureToast && (
         <div className="capture-toast" role="status" aria-live="polite">
           <div className="capture-toast-msg">

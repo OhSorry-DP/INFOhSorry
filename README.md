@@ -85,6 +85,7 @@ npm run release          # NSIS + portable .exe 생성 (release/)
   - INFOhSorry 측은 `src/shared/adopt.ts` TS bundle (osr.js 와 동일한 bundle + cache override 패턴) 으로 도입. 첫 부팅 / 오프라인에서도 작동, gist 가 더 최신이면 cache override.
   - `dp12StarResult` useMemo 가 단순 `adoptFn(input)` 호출로 정리됨. inline 분기 로직 제거.
 - 효과: ohSorry / recompute / INFOhSorry 의 ★ 가 동일 입력에서 동일 출력. 예: group C 케이스에서 5.220 vs 5.167 차이 해소.
+- **DpTable 서열표 stack bar 위치 변경** — 서열표 제일 하단 → 색상 박스 라벨 (lamp-legend) 위 (서열표 최상단) 로 이동. 캡처 출력 순서도 일치 (stackbar → legend → grid).
 
 ### 0.0.33 — DpTable rename + Reflux healthCheck dynamic interval
 - 컴포넌트 rename: `Dp12Table` → `DpTable` (파일/컴포넌트 이름 + CSS prefix `dp12-*` → `dp-*`, 총 111곳)
