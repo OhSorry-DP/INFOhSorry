@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.37.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.37-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.38.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.38-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,10 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.38 — INF 곡별 랭킹 업로드 보정
+- 곡별 랭킹 업로드 전 `slot` 값이 `DPN/DPH/DPA/DPL` 인 DP 차트만 필터링.
+- 같은 업로드 묶음 안에서 `(played_version, iidx_id, title, diff)` 가 중복되는 row 는 EX 점수가 높은 기록 1개만 남겨 `ON CONFLICT DO UPDATE` 중복 충돌을 방지.
 
 ### 0.0.37 — 곡별 랭킹 DB 업로드
 - Supabase `user_chart_scores` 업로드 추가 — `exScore > 0` 인 차트를 `played_version='INF'` 로 곡별 점수 테이블에 동기화.

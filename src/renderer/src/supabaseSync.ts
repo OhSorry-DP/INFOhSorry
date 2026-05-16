@@ -73,8 +73,11 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     // lamp 통계 (n_played_lv12 등) 는 위 집계 그대로 — m.charts 만 ★ 추정 풀.
     charts_json: [...charts, ...(unclassifiedCharts ?? [])],
   };
+  const isDpSlot = (slot: unknown): boolean => (
+    slot === 'DPN' || slot === 'DPH' || slot === 'DPA' || slot === 'DPL'
+  );
   const scoreDate = new Date().toISOString();
-  const chartScoreRows = payload.charts_json.filter((c) => (c.exScore ?? 0) > 0).map((c) => ({
+  const chartScoreRowsRaw = payload.charts_json.filter((c) => isDpSlot(c.slot) && (c.exScore ?? 0) > 0).map((c) => ({
     played_version: 'INF',
     level: 'level' in c && typeof c.level === 'number' ? c.level : (c.zasaLevel ?? c.ereterLevel ?? null),
     title: c.title,
@@ -86,6 +89,12 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     ex_score: c.exScore ?? null,
     date: scoreDate,
   }));
+  const chartScoreRows = Array.from(chartScoreRowsRaw.reduce((m, r) => {
+    const key = `${r.played_version}|${r.iidx_id}|${r.title}|${r.diff}`;
+    const prev = m.get(key);
+    if (!prev || (r.ex_score ?? 0) > (prev.ex_score ?? 0)) m.set(key, r);
+    return m;
+  }, new Map()).values());
 
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_profile`, {
