@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.36.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.36-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.37.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.37-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,10 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.37 — 곡별 랭킹 DB 업로드
+- Supabase `user_chart_scores` 업로드 추가 — `exScore > 0` 인 차트를 `played_version='INF'` 로 곡별 점수 테이블에 동기화.
+- 게스트 서열표의 곡별 랭킹 모달이 INF 점수도 조회할 수 있도록 `title / diff / gameLevel / level / djLevel / exScore` 를 함께 저장.
 
 ### 0.0.36 — 추천곡 DP12/DP11+ 토글 + ★ 모드 서열표 표기 개선
 - **추천곡 헤더에 `DP12 / DP11+` 토글 추가** — `recLevelMode` 를 state 로 빼고 사용자가 직접 전환 가능. 토글 시 EC/HC/EXH 모두 새로 뽑힘 (reroll trigger). 기본값 `DP12`.

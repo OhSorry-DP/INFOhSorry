@@ -73,6 +73,19 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     // lamp 통계 (n_played_lv12 등) 는 위 집계 그대로 — m.charts 만 ★ 추정 풀.
     charts_json: [...charts, ...(unclassifiedCharts ?? [])],
   };
+  const scoreDate = new Date().toISOString();
+  const chartScoreRows = payload.charts_json.filter((c) => (c.exScore ?? 0) > 0).map((c) => ({
+    played_version: 'INF',
+    level: 'level' in c && typeof c.level === 'number' ? c.level : (c.zasaLevel ?? c.ereterLevel ?? null),
+    title: c.title,
+    iidx_id: iidxIdNorm,
+    dj_name: profile.djName ?? null,
+    diff: c.diff,
+    game_level: c.gameLevel ?? null,
+    dj_level: c.djLevel ?? null,
+    ex_score: c.exScore ?? null,
+    date: scoreDate,
+  }));
 
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_profile`, {
@@ -87,6 +100,19 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     if (!res.ok) {
       const errText = await res.text().catch(() => '');
       return { ok: false, error: `HTTP ${res.status} ${errText}` };
+    }
+    const chartRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_chart_scores`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: SUPABASE_KEY,
+        Authorization: `Bearer ${SUPABASE_KEY}`,
+      },
+      body: JSON.stringify({ p_rows: chartScoreRows }),
+    });
+    if (!chartRes.ok) {
+      const errText = await chartRes.text().catch(() => '');
+      return { ok: false, error: `chart scores HTTP ${chartRes.status} ${errText}` };
     }
     return { ok: true };
   } catch (e) {
