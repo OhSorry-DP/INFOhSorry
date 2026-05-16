@@ -6,7 +6,7 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 - **Reflux 자동 통합** — 처음 실행 시 [olji/Reflux](https://github.com/olji/Reflux) 를 자동 다운로드. 메모리 리딩 + tracker.tsv dump 까지 백그라운드에서 처리
 - **SP / DP 곡 표** — 차트 단위 (한 row = 한 난이도)로 LAMP / LV / 곡명 / NOTES / RATE 시각화 / SCORE / MISS
-- **DP RECOMMEND 탭** — ereter넷 리코멘드 매칭 + ohSorry v3.3.3 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리), DP12렙 서열표 표시 및 저장
+- **DP RECOMMEND 탭** — ereter넷 리코멘드 매칭 + ohSorry v3.3.5 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리), DP12렙 서열표 표시 및 저장
 - **ereter 데이터 자동 갱신** — 24h TTL 캐시. 만료되면 자동 fetch (수동 갱신 버튼도 있음). v0.0.14+ 부터 ereter.net / zasa 다운 시 ohSorry gist 에서 자동 fallback → 끊김 없이 동작.
 - **ohSorryRating fallback** — ereter 미등록 lv11/lv12 차트는 ohSorry 가 모은 추정값 (ohSorryRating.json) 으로 추천 풀 보강. lv11 추정 곡명은 진한 연두색, lv12 추정은 하늘색.
 - **LAN 원격 제어** — 같은 네트워크의 다른 PC 의 Chrome 으로 접속하면 같은 화면 + 모든 기능 사용 가능 (HTTP RPC bridge)
@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.33.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.33-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.35.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.35-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -30,15 +30,26 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 3. 게임에서 **곡 선택 화면 한 번 진입** → tracker.tsv 자동 dump → 표 자동 표시
 4. 이후 곡 선택 갈 때마다 자동 갱신
 
-## 추천곡 로직 (ohSorry v3.3.3 호환)
+## 추천곡 로직 (ohSorry v3.3.5 호환)
 
-**도전곡 범위** — 사용자 ★실력에 따라 위로 얼마까지 추천할지 동적으로 결정 (선형 보간, ★0.5 → +1.0, ★14.0 → +0.3)
+**카테고리 × 분류** — 추천 후보를 6 버킷으로 분리:
+- 카테고리: **under** (해당 stage 미클리어) / **reached** (stage 깼지만 DJ Level 미달 — 정확도 개선 여지)
+- 분류: **hard** (도전 — `baseStar+offset-0.3 ~ baseStar+offset`) / **easy** (약 도전 — `baseStar ~ baseStar+0.2`) / **cleanup** (정리 — `0 ~ baseStar`)
+- 도전곡 offset 은 ★실력에 따라 선형 보간 (★0.5 → +1.0, ★14.0 → +0.3)
 
-**정리곡** — `★0 ~ baseStar` 범위에서 추천 단계 (EC / HC / EXH) 미만 lamp 인 곡 (NO PLAY 포함). EC 정리곡은 HC 난이도가 baseStar - 3 미만인 곡은 제외 (시간 낭비 방지).
+**비율** — 6 SLOT 으로 총 10곡:
+- under.hard 1 + reach.hard 1
+- under.easy 2 + reach.easy 2
+- under.cleanup 2 + reach.cleanup 2
+- 각 SLOT 부족 시 같은 분류의 반대 카테고리에서 fallback, 그래도 부족하면 전체 풀에서 보충
 
-**비율** — 하드 도전 2 + 약 도전 5 + 정리 3 = 총 10곡. 한 쪽 부족하면 다른 풀에서 보충.
+**샘플링** — 카테고리별 클리어 인구수 desc top 10 + 랜덤 5 = sample 15곡. SLOT 별 셔플 → ★ asc 통합 정렬.
 
-**샘플링** — 각 풀에서 클리어 인구수 desc top 10 + 순 랜덤 5 = 후보 15곡. 셔플 → 풀별 N개 pick → ★ asc 통합 정렬.
+**EXH 별도 로직** — EXH ★ 낮은 30곡 → `rate = exScore / (noteCount*2)` desc 10곡. "거의 통과한 곡" 우선.
+
+**recLevelMode** — baseStar≥6 시 `lv12` (lv11 차트 제외), 미만이면 `all`.
+
+**제외 조건** — EC 정리곡은 HC 추정값이 `baseStar - 3` 미만이면 제외 (시간 낭비 방지). reached 중 `exScore===0` 인 더티 데이터도 제외.
 
 **추천 풀 데이터 출처** (우선순위):
 1. **ereter (이레터넷)** — 매칭되면 그 값 그대로
@@ -78,6 +89,16 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.35 — 추천곡 로직 v3.3.5 포팅 (under/reached × hard/easy/cleanup)
+- **추천곡 로직 전면 갱신** — ohSorry v3.3.5 의 `buildPools` / `buildRecs` / `buildExhRecs` 를 `src/shared/recommend.ts` 로 이식. 기존 3-pool (하드 / 약도전 / 정리) 구조를 6 버킷 (under/reached × hard/easy/cleanup) 으로 확장.
+  - **under** (lampNum < threshold) — 해당 stage 미클리어 곡
+  - **reached** (isReachedLamp + !isAccuracyOK) — stage 깼지만 DJ Level 미달인 곡. 정확도 개선 여지 있는 곡을 추천에 포함. (예: HC 깼는데 AA 미달, EXH 깼는데 AAA 미달)
+  - **6 SLOT** — `under.hard 1 + reach.hard 1 / under.easy 2 + reach.easy 2 / under.cleanup 2 + reach.cleanup 2`. SLOT 부족 시 같은 분류의 반대 카테고리에서 fallback, 그래도 모자라면 전체 풀에서 보충
+- **EXH 정렬 변경** — `missCount asc` → `rate(=exScore/(noteCount*2)) desc`. "거의 통과한 곡" 우선 표시 (`lampNum>=6 && djLevel==='AAA'` 제외, `exScore===0` 더티 제외, `11.6 ≤ level ≤ 12.7` 필터)
+- **recLevelMode** — `baseStar≥6` 시 `lv12` (lv11 차트 제외), 미만이면 `all`. 호출부에서 자동 결정
+- **refreshRecs** — tracker.tsv 갱신 시 picked / pool 갱신 로직을 `shouldDropFromRecs` 헬퍼로 정리. EXH 의 `rate` 도 갱신 시 재계산
+- 신규 헬퍼: `shouldDropFromRecs`, `compareRateDesc`, `isReachedLamp`, `isAccuracyOK` (모두 `recommend.ts` 에서 export). `RecCandidate.category` 값 호환 유지 → UI 변경 불필요
 
 ### 0.0.34 — oldOSR gist fetch + adopt.js (v335E 채택 분기 통합 lib) 도입
 - **oldOSR.js gist fetch 추가** — 기존엔 자체 dp12StarAll (4-scope max) 으로 계산했는데, ohSorry/recompute 의 `oldOSR.inferUser` 와 알고리즘이 미세 차이라 ★ 가 어긋났음. `src/main/osrLib.ts` 에 oldOSR.js gist fetch + cache 추가, App.tsx 에서 로드 + `oldOSRResult` 산출. dp12StarAll 은 DpTable UI 의 4-scope detail 표시 용으로 유지.

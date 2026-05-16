@@ -9,9 +9,11 @@ import { adoptStar as adoptStarBundle, version as adoptBundleVersion, type Adopt
 import {
   buildExhRecs,
   buildRecsWithPool,
-  STAGE_THRESHOLD,
+  compareRateDesc,
+  shouldDropFromRecs,
   type RecCandidate,
   type RecInputChart,
+  type RecLevelMode,
   type RecStage,
 } from '../../shared/recommend';
 import { lampStyle, letterColor } from './lampStyle';
@@ -972,29 +974,59 @@ export default function App() {
   const lastRerollEXH = useRef(-1);
 
   function refreshRecs(prev: RecState, stage: RecStage, charts: RecInputChart[]): RecState {
-    const threshold = STAGE_THRESHOLD[stage];
     const map = new Map<string, RecInputChart>();
     for (const c of charts) map.set(c.title + '|' + c.slot, c);
-    // picked: 클리어된 곡만 제거. lamp / missCount 가 바뀐 경우만 새 객체 생성 (identity 보존).
+    // 갱신 정책 (ohSorry v3.3.5 reached 모델):
+    //   - 제거: shouldDropFromRecs — 더 강한 lamp 까지 진입했거나 reached + DJ Level 통과
+    //   - 갱신: lamp / missCount / djLevel / exScore / noteCount 변화 시 새 객체 (EXH 면 rate 재계산)
+    //   - 변화 없으면 같은 ref 재사용 → React 재렌더 skip
+    const updateCandidate = (r: RecCandidate, c: RecInputChart): RecCandidate | null => {
+      const changed =
+        c.lamp !== r.currentLamp ||
+        c.missCount !== r.missCount ||
+        c.djLevel !== r.djLevel ||
+        c.exScore !== r.exScore ||
+        c.noteCount !== r.noteCount ||
+        c.lampNum !== r.lampNum;
+      if (!changed) return null;
+      const rate =
+        stage === 'exh' && typeof c.exScore === 'number' && typeof c.noteCount === 'number' && c.noteCount > 0
+          ? c.exScore / (c.noteCount * 2)
+          : stage === 'exh'
+          ? null
+          : r.rate;
+      return {
+        ...r,
+        currentLamp: c.lamp,
+        missCount: c.missCount,
+        djLevel: c.djLevel,
+        exScore: c.exScore ?? null,
+        noteCount: c.noteCount ?? null,
+        lampNum: c.lampNum,
+        rate,
+      };
+    };
+
     let droppedCount = 0;
     let pickedChanged = false;
     const updatedPicked: RecCandidate[] = [];
     for (const r of prev.picked) {
       const c = map.get(r.title + '|' + r.slot);
       if (c) {
-        if (c.lampNum >= threshold) {
+        if (shouldDropFromRecs(stage, c.lampNum, c.djLevel)) {
           droppedCount++;
           pickedChanged = true;
           continue;
         }
-        if (c.lamp !== r.currentLamp || c.missCount !== r.missCount) {
-          updatedPicked.push({ ...r, currentLamp: c.lamp, missCount: c.missCount });
+        const next = updateCandidate(r, c);
+        if (next) {
+          updatedPicked.push(next);
           pickedChanged = true;
         } else {
-          updatedPicked.push(r); // 변화 없음 → 같은 ref 재사용
+          updatedPicked.push(r);
         }
       } else {
-        updatedPicked.push(r); // 매칭 안 됨 — 이전 그대로
+        updatedPicked.push(r);
       }
     }
     let poolChanged = false;
@@ -1002,12 +1034,13 @@ export default function App() {
     for (const r of prev.pool) {
       const c = map.get(r.title + '|' + r.slot);
       if (c) {
-        if (c.lampNum >= threshold) {
+        if (shouldDropFromRecs(stage, c.lampNum, c.djLevel)) {
           poolChanged = true;
           continue;
         }
-        if (c.lamp !== r.currentLamp || c.missCount !== r.missCount) {
-          updatedPool.push({ ...r, currentLamp: c.lamp, missCount: c.missCount });
+        const next = updateCandidate(r, c);
+        if (next) {
+          updatedPool.push(next);
           poolChanged = true;
         } else {
           updatedPool.push(r);
@@ -1016,29 +1049,19 @@ export default function App() {
         updatedPool.push(r);
       }
     }
-    // 클리어로 빠진 만큼만 풀에서 보충
+    // 제거된 만큼 풀에서 보충
     while (droppedCount > 0 && updatedPool.length > 0) {
       const next = updatedPool.shift();
       if (next) updatedPicked.push(next);
       droppedCount--;
       poolChanged = true;
     }
-    // 변화 없으면 prev state ref 그대로 반환 → setRecs 가 noop, React 재렌더 안 함
-    if (!pickedChanged && !poolChanged) {
-      return prev;
-    }
+    if (!pickedChanged && !poolChanged) return prev;
     // 변화 있을 때만 정렬:
     //   EC/HC — diffValue (★) asc
-    //   EXH   — missCount asc (null 뒤로) — buildExhRecs 와 동일한 순서 유지
+    //   EXH   — rate desc (null 뒤로) — buildExhRecs 와 동일한 순서 유지
     if (stage === 'exh') {
-      updatedPicked.sort((a, b) => {
-        const ma = a.missCount;
-        const mb = b.missCount;
-        if (ma == null && mb == null) return 0;
-        if (ma == null) return 1;
-        if (mb == null) return -1;
-        return ma - mb;
-      });
+      updatedPicked.sort((a, b) => compareRateDesc(a.rate, b.rate));
     } else {
       updatedPicked.sort((a, b) => a.diffValue - b.diffValue);
     }
@@ -1046,34 +1069,36 @@ export default function App() {
   }
 
   // v3.3.5: 추천 baseStar — dp12StarResult.star (D2 표기 ★) 대신 ohsorryRecBase (OSR 단독) 사용
+  // recLevelMode — ohSorry 원본은 baseStar≥6 시 'lv12' (lv11 차트 제외). INF DP12 컨텍스트에선 거의 항상 lv12.
+  const recLevelMode: RecLevelMode = ohsorryRecBase != null && ohsorryRecBase >= 6 ? 'lv12' : 'all';
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEC.current !== rerollEC) {
       lastRerollEC.current = rerollEC;
-      setRecsEC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'ec'));
+      setRecsEC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'ec', recLevelMode));
     } else {
       setRecsEC((prev) => refreshRecs(prev, 'ec', dp12Match.charts));
     }
-  }, [rerollEC, dp12Match, ohsorryRecBase]);
+  }, [rerollEC, dp12Match, ohsorryRecBase, recLevelMode]);
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollHC.current !== rerollHC) {
       lastRerollHC.current = rerollHC;
-      setRecsHC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'hc'));
+      setRecsHC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'hc', recLevelMode));
     } else {
       setRecsHC((prev) => refreshRecs(prev, 'hc', dp12Match.charts));
     }
-  }, [rerollHC, dp12Match, ohsorryRecBase]);
+  }, [rerollHC, dp12Match, ohsorryRecBase, recLevelMode]);
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEXH.current !== rerollEXH) {
       lastRerollEXH.current = rerollEXH;
-      // EXH 는 ohSorry 스타일 별도 로직 — ★ 낮은 30곡 → missCount 낮은 순 10곡
-      setRecsEXH(buildExhRecs(dp12Match.charts, ohsorryRecBase));
+      // EXH 는 ohSorry 스타일 별도 로직 — ★ 낮은 30곡 → rate(=exScore/(noteCount*2)) desc 10곡
+      setRecsEXH(buildExhRecs(dp12Match.charts, ohsorryRecBase, recLevelMode));
     } else {
       setRecsEXH((prev) => refreshRecs(prev, 'exh', dp12Match.charts));
     }
-  }, [rerollEXH, dp12Match, ohsorryRecBase]);
+  }, [rerollEXH, dp12Match, ohsorryRecBase, recLevelMode]);
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
   const dp12Stats = useMemo(() => {

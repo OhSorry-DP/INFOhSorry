@@ -1,16 +1,17 @@
 // ohSorry 의 추천곡 로직 — INFOhSorry 용 포팅
 //
-// 원본: 2-calc-score.js 의 buildRecs / buildPools.
+// 원본: ohSorry/modules/calcOhsorryCore.js 의 buildRecs / buildPools / buildExhRecs (v3.3.5).
 //
 // 알고리즘 요약:
-//   1. 사용자 별값 (baseStar) 기준으로 도전 / 정리 풀 분리
-//      - 도전: ★ 가 baseStar 이상 baseStar+0.8 이하 (살짝 위)
-//      - 정리: ★ 가 baseStar 미만
-//   2. 각 풀에서 랜덤 10개 sample → quota 만큼 pick
-//      - 일반 (★ ≥ 2.0): 도전 6 / 정리 4
-//      - 저렙 (★ < 2.0): 도전 3 / 정리 7
-//   3. 부족하면 다른 풀에서 채워서 총 10곡 맞춤
-//   4. ★ 내림차순 정렬 (도전 → 정리)
+//   1. 카테고리 × 분류로 6 버킷 분리
+//      - 카테고리: underLamp (stage 미클리어) / reached (stage 깼지만 DJ Level 미달)
+//      - 분류: hard / easy / cleanup — baseStar 와 diffValue (★) 거리 기준
+//   2. 카테고리별 sample 15곡 (클리어 인구수 desc top 10 + 랜덤 5)
+//   3. 6 SLOT 으로 picked 10곡 추출:
+//      under.hard 1 + reach.hard 1 / under.easy 2 + reach.easy 2 / under.cleanup 2 + reach.cleanup 2
+//      각 SLOT 부족 시 같은 분류의 반대 카테고리에서 fallback, 그래도 부족하면 전체 풀에서 보충
+//   4. EXH 는 별도 buildExhRecs — EXH ★ 낮은 30곡 → rate(=exScore/(noteCount*2)) desc 10곡
+//   5. recLevelMode='lv12' 시 gameLevel===12 만 풀에 포함 (baseStar≥6 default)
 //
 // 매번 random shuffle 이라 호출할 때마다 결과 바뀜 ("다시 뽑기" 효과).
 import type { ChartSlot, Lamp } from './types';
@@ -87,10 +88,36 @@ export interface RecCandidate {
   ereterExhN: number | null;
   gameLevel?: number | null; // INF 게임 lv (11 / 12).
   isRatingFallback?: boolean; // true 면 UI 색 구분 (ratingMap 추정 / 미매칭). ereter 매칭 곡은 false/undefined.
+  // ohSorry 의 reached 카테고리 여부 — stage 는 깼지만 DJ Level 미달 (예: HC 깼는데 AA 미달).
+  // refreshRecs 에서 제거 조건이 달라짐 (DJ Level 통과 시 제거).
+  reached?: boolean;
+  // EXH 전용 — exScore / (noteCount*2). refreshRecs 의 EXH 정렬 / "거의 통과" 표시용.
+  rate?: number | null;
+  // 사용자 플레이 메타 — refreshRecs 가 EXH rate 재계산에 사용.
+  exScore?: number | null;
+  noteCount?: number | null;
+  djLevel?: string | null;
+  lampNum?: number;
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';
+export type RecLevelMode = 'all' | 'lv12';
 export const STAGE_THRESHOLD: Record<RecStage, number> = { ec: 3, hc: 5, exh: 6 };
+
+// stage 별 "DJ Level 미달이면 reached 풀에 들어갈 lamp" — 해당 stage 깬 곡 중 추가 클리어 단계 미진입
+export function isReachedLamp(stage: RecStage, lampNum: number): boolean {
+  if (stage === 'exh') return lampNum >= 6;     // EXH/FC/PFC
+  if (stage === 'hc') return lampNum === 5;     // HC (EXH 이상은 EXH stage 에서 처리)
+  return lampNum === 3 || lampNum === 4;        // EC/NC (EC stage)
+}
+
+// stage 별 DJ Level 통과 조건 — 도달 시 추천 풀에서 제외 (개선 여지 없음)
+export function isAccuracyOK(stage: RecStage, djLevel: string | null | undefined): boolean {
+  if (djLevel == null) return false;
+  if (stage === 'exh') return djLevel === 'AAA';
+  if (stage === 'hc') return djLevel === 'AAA' || djLevel === 'AA';
+  return djLevel === 'AAA' || djLevel === 'AA' || djLevel === 'A';
+}
 
 // 도전곡 최대 offset — baseStar 위로 얼마까지 도전곡 풀에 포함할지.
 // 저레벨 (★0.5) 사용자는 +1.0 까지, 고레벨 (★14.0) 사용자는 +0.3 까지. 사이는 선형 보간.
@@ -140,39 +167,74 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-function keyOf(r: RecCandidate): string {
+function keyOf(r: { title: string; slot: ChartSlot }): string {
   return r.title + '|' + r.slot;
 }
 
-// 3개 풀로 분리:
-//   1. 하드 도전 [base+offset-0.3, base+offset] — 클리어 인구수 desc top 10 → 2곡 표시
-//   2. 약 도전 [base, base+0.2] — 클리어 인구수 desc top 10 → 5곡 표시
-//   3. 정리 [0, base) — 클리어 인구수 desc top 10 → 3곡 표시
-// 각 풀에서 표시할 곡은 top 10 중 무작위로 N개 (다양성). 나머지는 pool 에 보충용 보관.
-// 합 picked = 2 + 5 + 3 = 10 (한 풀 부족 시 다른 풀에서 보충).
-export function buildRecsWithPool(
+type ClassKey = 'hard' | 'easy' | 'cleanup';
+type Bucket = Record<ClassKey, RecCandidate[]>;
+const emptyBucket = (): Bucket => ({ hard: [], easy: [], cleanup: [] });
+
+const CATEGORY_OF: Record<ClassKey, RecCandidate['category']> = {
+  hard: 'challenge-hard',
+  easy: 'challenge-easy',
+  cleanup: 'cleanup',
+};
+
+function classify(
+  dv: number,
+  hcEstimate: number | null,
+  baseStar: number,
+  bounds: { hardMin: number; hardMax: number; easyMin: number; easyMax: number },
+  stage: RecStage,
+): ClassKey | null {
+  const { hardMin, hardMax, easyMin, easyMax } = bounds;
+  if (dv >= hardMin && dv <= hardMax && dv > easyMax) return 'hard';
+  if (dv >= easyMin && dv <= easyMax) return 'easy';
+  if (dv < baseStar) {
+    // EC 정리곡: 하드클 추정값이 baseStar - 3 미만이면 너무 쉬워서 제외 (시간 낭비 방지)
+    if (stage === 'ec' && typeof hcEstimate === 'number' && hcEstimate < baseStar - 3) return null;
+    return 'cleanup';
+  }
+  return null;
+}
+
+// 6 버킷 빌더 — underLamp / reached × hard / easy / cleanup.
+//
+// 추천 후보 조건:
+//   - under (lampNum < threshold)  → 해당 stage 미클리어. 무조건 후보.
+//   - reached (isReachedLamp + !isAccuracyOK) → stage 는 깼지만 DJ Level 미달. 정확도 개선 여지.
+//   - 그 외 (더 강한 lamp & 미reached, 또는 reached + DJ 통과) → 제외.
+//   - reached + exScore===0 → dirty data (lamp 있는데 점수 0). 제외.
+function buildPoolsBuckets(
   matched: RecInputChart[],
   baseStar: number,
   stage: RecStage,
-): { picked: RecCandidate[]; pool: RecCandidate[] } {
-  if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
+  recLevelMode: RecLevelMode,
+): { underLamp: Bucket; reached: Bucket } {
+  const underLamp = emptyBucket();
+  const reached = emptyBucket();
+  if (!Number.isFinite(baseStar)) return { underLamp, reached };
   const threshold = STAGE_THRESHOLD[stage];
   const offset = challengeOffset(baseStar);
+  const bounds = poolBounds(baseStar, offset, stage);
   const countField = (stage + '_n') as 'ec_n' | 'hc_n' | 'exh_n';
 
-  // 범위 정의 — stage 별 분기 (EC 는 살짝 아래로 시프트)
-  const { hardMin, hardMax, easyMin, easyMax } = poolBounds(baseStar, offset, stage);
-
-  const hardPool: RecCandidate[] = [];
-  const easyPool: RecCandidate[] = [];
-  const cleanupPool: RecCandidate[] = [];
-
   for (const c of matched) {
-    if (c.lampNum >= threshold) continue;
+    if (recLevelMode === 'lv12' && c.gameLevel !== 12) continue;
+    const under = c.lampNum < threshold;
+    const reachedForDj = isReachedLamp(stage, c.lampNum);
+    if (!under && !reachedForDj) continue;
+    if (reachedForDj && isAccuracyOK(stage, c.djLevel)) continue;
+    if (reachedForDj && c.exScore === 0) continue;
+
     const dv = c[stage];
     if (typeof dv !== 'number') continue;
+    const cls = classify(dv, c.hc, baseStar, bounds, stage);
+    if (cls == null) continue;
     const dn = c[countField];
-    const baseItem = {
+
+    const item: RecCandidate = {
       title: c.title,
       slot: c.slot,
       diff: c.diff,
@@ -188,6 +250,7 @@ export function buildRecsWithPool(
       diffValue: dv,
       diffCount: typeof dn === 'number' ? dn : 0,
       margin: baseStar - dv,
+      category: CATEGORY_OF[cls],
       ereterLevel: c.ereterLevel,
       ereterEc: c.ereterEc,
       ereterHc: c.ereterHc,
@@ -197,64 +260,98 @@ export function buildRecsWithPool(
       ereterExhN: c.ereterExhN,
       gameLevel: c.gameLevel ?? null,
       isRatingFallback: c.isRatingFallback ?? false,
+      reached: reachedForDj,
+      djLevel: c.djLevel,
+      lampNum: c.lampNum,
+      exScore: c.exScore ?? null,
+      noteCount: c.noteCount ?? null,
     };
-    // 하드 우선 (overlap 시 약 도전과 중복 방지)
-    if (dv >= hardMin && dv <= hardMax && dv > easyMax) {
-      hardPool.push({ ...baseItem, category: 'challenge-hard' });
-    } else if (dv >= easyMin && dv <= easyMax) {
-      easyPool.push({ ...baseItem, category: 'challenge-easy' });
-    } else if (dv >= hardMin && dv <= hardMax) {
-      // hard 와 easy 가 overlap 영역인 경우 (고렙 사용자) — easy 로 분류 (이미 위에서 처리됨)
-      // 이 분기는 dv > easyMax 가 false 인 hard 케이스 처리 — 즉 hard 와 easy 모두 매치.
-      // easy 로 이미 가있으니 여기는 unreachable. 안전을 위해 패스.
-    } else if (dv < baseStar) {
-      // EC 정리곡: 하드클 난이도가 baseStar - 3 미만이면 너무 쉬워서 제외 (시간 낭비 방지)
-      if (stage === 'ec' && typeof c.hc === 'number' && c.hc < baseStar - 3) continue;
-      cleanupPool.push({ ...baseItem, category: 'cleanup' });
+    (reachedForDj ? reached : underLamp)[cls].push(item);
+  }
+  return { underLamp, reached };
+}
+
+// 카테고리 내 sample 15곡 = 클리어 인구수 desc top 10 + 그 외 무작위 5.
+function sample15(cat: Bucket, countField: 'ec_n' | 'hc_n' | 'exh_n'): RecCandidate[] {
+  const pool = [...cat.hard, ...cat.easy, ...cat.cleanup];
+  const sorted = [...pool].sort((a, b) => (b[countField] ?? 0) - (a[countField] ?? 0));
+  const top10 = sorted.slice(0, 10);
+  const usedKeys = new Set(top10.map(keyOf));
+  const rest = pool.filter((r) => !usedKeys.has(keyOf(r)));
+  const rand5 = shuffle(rest).slice(0, 5);
+  return [...top10, ...rand5];
+}
+
+// sample 안에서 다시 분류 (hard / easy / cleanup) 별로 그룹핑.
+function regroup(sample: RecCandidate[], cat: Bucket): Bucket {
+  const out = emptyBucket();
+  const tag = new Map<string, ClassKey>();
+  (['hard', 'easy', 'cleanup'] as const).forEach((cls) =>
+    cat[cls].forEach((r) => tag.set(keyOf(r), cls)),
+  );
+  for (const r of sample) {
+    const cls = tag.get(keyOf(r));
+    if (cls) out[cls].push(r);
+  }
+  return out;
+}
+
+// 6 SLOT 추출 — under.hard 1 + reach.hard 1 / under.easy 2 + reach.easy 2 / under.cleanup 2 + reach.cleanup 2.
+// 각 SLOT 부족 시 같은 분류의 반대 카테고리에서 fallback.
+export function buildRecsWithPool(
+  matched: RecInputChart[],
+  baseStar: number,
+  stage: RecStage,
+  recLevelMode: RecLevelMode = 'all',
+): { picked: RecCandidate[]; pool: RecCandidate[] } {
+  if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
+  const { underLamp, reached } = buildPoolsBuckets(matched, baseStar, stage, recLevelMode);
+  const countField = (stage + '_n') as 'ec_n' | 'hc_n' | 'exh_n';
+
+  const underSample = sample15(underLamp, countField);
+  const reachedSample = sample15(reached, countField);
+  const under = regroup(underSample, underLamp);
+  const reach = regroup(reachedSample, reached);
+
+  const SLOTS: { primary: RecCandidate[]; fallback: RecCandidate[]; n: number }[] = [
+    { primary: under.hard,    fallback: reach.hard,    n: 1 },
+    { primary: reach.hard,    fallback: under.hard,    n: 1 },
+    { primary: under.easy,    fallback: reach.easy,    n: 2 },
+    { primary: reach.easy,    fallback: under.easy,    n: 2 },
+    { primary: under.cleanup, fallback: reach.cleanup, n: 2 },
+    { primary: reach.cleanup, fallback: under.cleanup, n: 2 },
+  ];
+
+  const used = new Set<string>();
+  const picks: RecCandidate[] = [];
+  for (const s of SLOTS) {
+    const avail1 = shuffle(s.primary).filter((r) => !used.has(keyOf(r)));
+    const taken1 = avail1.slice(0, s.n);
+    for (const r of taken1) used.add(keyOf(r));
+    picks.push(...taken1);
+    const short = s.n - taken1.length;
+    if (short > 0) {
+      const avail2 = shuffle(s.fallback).filter((r) => !used.has(keyOf(r)));
+      const taken2 = avail2.slice(0, short);
+      for (const r of taken2) used.add(keyOf(r));
+      picks.push(...taken2);
     }
   }
 
-  // 각 풀 → 카운트 desc top 10 + 그 외 풀에서 순 랜덤 5 = 후보 (최대 15곡, 중복 자동 제거)
-  const sample15 = (pool: RecCandidate[]): RecCandidate[] => {
-    const sorted = [...pool].sort((a, b) => b.diffCount - a.diffCount);
-    const top10 = sorted.slice(0, 10);
-    const usedKeys = new Set(top10.map(keyOf));
-    const rest = pool.filter((r) => !usedKeys.has(keyOf(r)));
-    const rand5 = shuffle(rest).slice(0, 5);
-    return [...top10, ...rand5];
-  };
-  const hardCandidates = sample15(hardPool);
-  const easyCandidates = sample15(easyPool);
-  const cleanupCandidates = sample15(cleanupPool);
-
-  // 후보 셔플 → N곡 표시 (하드 2 / 약 도전 5 / 정리 3)
-  const hardPicked = shuffle(hardCandidates).slice(0, 2);
-  const easyPicked = shuffle(easyCandidates).slice(0, 5);
-  const cleanupPicked = shuffle(cleanupCandidates).slice(0, 3);
-
-  const used = new Set<string>([...hardPicked, ...easyPicked, ...cleanupPicked].map(keyOf));
-
-  // 한 풀 부족 시 다른 풀 후보에서 채워서 총 10 유지
-  const allCandidates = [...hardCandidates, ...easyCandidates, ...cleanupCandidates];
-  let need = 10 - hardPicked.length - easyPicked.length - cleanupPicked.length;
-  const extras: RecCandidate[] = [];
+  // 분류 fallback 모두 실패해도 합계가 부족하면 전체 풀 (분류 무관) 에서 마지막 보충
+  const allCands = [...underSample, ...reachedSample];
+  const need = 10 - picks.length;
   if (need > 0) {
-    const rest = allCandidates.filter((r) => !used.has(keyOf(r)));
-    const extra = shuffle(rest).slice(0, need);
-    for (const r of extra) {
-      extras.push(r);
-      used.add(keyOf(r));
-    }
+    const rest = allCands.filter((r) => !used.has(keyOf(r)));
+    const taken = shuffle(rest).slice(0, need);
+    for (const r of taken) used.add(keyOf(r));
+    picks.push(...taken);
   }
 
   // 표시 순서: 카테고리 무관, 전체 10곡 ★ asc 통합 정렬
-  const picked = [...hardPicked, ...easyPicked, ...cleanupPicked, ...extras].sort(
-    (a, b) => a.diffValue - b.diffValue,
-  );
-
-  // pool = 후보 합집합 - picked 사용분 (보충용)
-  const pool = allCandidates.filter((r) => !used.has(keyOf(r)));
-
+  const picked = picks.sort((a, b) => a.diffValue - b.diffValue);
+  // pool = 후보 합집합 - picked (보충용)
+  const pool = allCands.filter((r) => !used.has(keyOf(r)));
   return { picked, pool };
 }
 
@@ -263,27 +360,41 @@ export function buildRecs(
   matched: RecInputChart[],
   baseStar: number,
   stage: RecStage,
+  recLevelMode: RecLevelMode = 'all',
 ): RecCandidate[] {
-  return buildRecsWithPool(matched, baseStar, stage).picked;
+  return buildRecsWithPool(matched, baseStar, stage, recLevelMode).picked;
 }
 
 // EXH 전용 추천 — ohSorry 의 buildExhRecs 포팅.
-//   EXH 미클리어 (lampNum < 6) AND EXH ★ ≤ baseStar (자기 실력 이하) 후보 풀에서:
-//     1. EXH ★ 오름차순 → top 30 (가장 쉬운 30곡)
-//     2. missCount (BP) 오름차순, null 은 뒤 → top 10
-//   "거의 통과한 곡" 우선 — 다음 도전에 클리어 확률 높은 것부터.
-//   refresh 시 보충용으로 picked 외 후보를 pool 에 보관.
+//   조건:
+//     1. recLevelMode='lv12' 시 gameLevel===12 만
+//     2. lampNum >= 6 && djLevel === 'AAA' → 제외 (AAA 도달)
+//     3. lampNum >= 6 && exScore === 0 → 제외 (dirty data)
+//     4. 11.6 ≤ level ≤ 12.7 만 (zasaLevel 범위)
+//     5. exh 추정값 baseStar-2 ≤ exh ≤ baseStar+1
+//   정렬:
+//     a. EXH ★ asc → top 30 (가장 쉬운 30곡)
+//     b. rate = exScore / (noteCount*2) desc (null 은 뒤로) → top 10 ("거의 통과한 곡" 우선)
 export function buildExhRecs(
   matched: RecInputChart[],
   baseStar: number,
+  recLevelMode: RecLevelMode = 'all',
 ): { picked: RecCandidate[]; pool: RecCandidate[] } {
   if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
   const candidates: RecCandidate[] = [];
   for (const c of matched) {
-    if (c.lampNum >= 6) continue; // EXH 클리어한 곡 제외
+    if (recLevelMode === 'lv12' && c.gameLevel !== 12) continue;
+    if (c.lampNum >= 6 && c.djLevel === 'AAA') continue;
+    if (c.lampNum >= 6 && c.exScore === 0) continue;
+    if (c.level < 11.6 || c.level > 12.7) continue;
     if (typeof c.exh !== 'number') continue;
-    if (c.exh > baseStar + 1) continue; // 실력 +1 이상 곡 제외 (도전 살짝 허용)
-    if (c.exh < baseStar - 2) continue; // 실력 -2 미만 곡 제외 (너무 쉬움)
+    if (c.exh > baseStar + 1) continue;
+    if (c.exh < baseStar - 2) continue;
+
+    const rate =
+      typeof c.exScore === 'number' && typeof c.noteCount === 'number' && c.noteCount > 0
+        ? c.exScore / (c.noteCount * 2)
+        : null;
     candidates.push({
       title: c.title,
       slot: c.slot,
@@ -310,19 +421,41 @@ export function buildExhRecs(
       ereterExhN: c.ereterExhN,
       gameLevel: c.gameLevel ?? null,
       isRatingFallback: c.isRatingFallback ?? false,
+      rate,
+      exScore: c.exScore ?? null,
+      noteCount: c.noteCount ?? null,
+      djLevel: c.djLevel,
+      lampNum: c.lampNum,
     });
   }
   // 1. EXH ★ 낮은 순 → top 30
   candidates.sort((a, b) => a.diffValue - b.diffValue);
   const top30 = candidates.slice(0, 30);
-  // 2. missCount 낮은 순 (null 은 뒤로)
-  top30.sort((a, b) => {
-    const ma = a.missCount;
-    const mb = b.missCount;
-    if (ma == null && mb == null) return 0;
-    if (ma == null) return 1;
-    if (mb == null) return -1;
-    return ma - mb;
-  });
+  // 2. rate desc (null 뒤로)
+  top30.sort((a, b) => compareRateDesc(a.rate, b.rate));
   return { picked: top30.slice(0, 10), pool: top30.slice(10) };
+}
+
+// EXH 정렬 비교 — rate desc, null 은 뒤로. App.tsx 의 refreshRecs 와 buildExhRecs 가 공유.
+export function compareRateDesc(ra: number | null | undefined, rb: number | null | undefined): number {
+  if (ra == null && rb == null) return 0;
+  if (ra == null) return 1;
+  if (rb == null) return -1;
+  return rb - ra;
+}
+
+// stage 별 picked / pool 에서 제거할 조건:
+//   - 더 강한 lamp 까지 클리어 (under 도 아니고 reached 도 아닌 lamp) → 제거
+//   - reached + DJ Level 통과 → 제거 (개선 여지 없음)
+export function shouldDropFromRecs(
+  stage: RecStage,
+  lampNum: number,
+  djLevel: string | null | undefined,
+): boolean {
+  const threshold = STAGE_THRESHOLD[stage];
+  const under = lampNum < threshold;
+  const reachedForDj = isReachedLamp(stage, lampNum);
+  if (!under && !reachedForDj) return true;
+  if (reachedForDj && isAccuracyOK(stage, djLevel)) return true;
+  return false;
 }
