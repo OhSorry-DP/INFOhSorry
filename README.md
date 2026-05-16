@@ -79,6 +79,13 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.34 — oldOSR gist fetch + adopt.js (v335E 채택 분기 통합 lib) 도입
+- **oldOSR.js gist fetch 추가** — 기존엔 자체 dp12StarAll (4-scope max) 으로 계산했는데, ohSorry/recompute 의 `oldOSR.inferUser` 와 알고리즘이 미세 차이라 ★ 가 어긋났음. `src/main/osrLib.ts` 에 oldOSR.js gist fetch + cache 추가, App.tsx 에서 로드 + `oldOSRResult` 산출. dp12StarAll 은 DpTable UI 의 4-scope detail 표시 용으로 유지.
+- **adopt.js 도입** — v335E 채택 분기 (group A/B/C base 결정 + group C 2-scope max + OSR135 spread gate + under-blend + 12.5~13.5 blend) 를 ohSorry / recompute / INFOhSorry 가 모두 동일 lib 로 호출하도록 통일.
+  - INFOhSorry 측은 `src/shared/adopt.ts` TS bundle (osr.js 와 동일한 bundle + cache override 패턴) 으로 도입. 첫 부팅 / 오프라인에서도 작동, gist 가 더 최신이면 cache override.
+  - `dp12StarResult` useMemo 가 단순 `adoptFn(input)` 호출로 정리됨. inline 분기 로직 제거.
+- 효과: ohSorry / recompute / INFOhSorry 의 ★ 가 동일 입력에서 동일 출력. 예: group C 케이스에서 5.220 vs 5.167 차이 해소.
+
 ### 0.0.33 — DpTable rename + Reflux healthCheck dynamic interval
 - 컴포넌트 rename: `Dp12Table` → `DpTable` (파일/컴포넌트 이름 + CSS prefix `dp12-*` → `dp-*`, 총 111곳)
 - `RefluxManager.startHealthCheck`: tsv 첫 로드 전까지 30초 간격 → 첫 로드 후 5분 간격으로 자동 전환 (`transitionHealthCheckToSteady`)

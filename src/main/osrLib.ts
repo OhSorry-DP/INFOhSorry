@@ -16,12 +16,22 @@ const OSR_GIST_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/osr.js';
 const OSR135_GIST_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/OSR13.5%2B.js';
+const OLDOSR_GIST_URL =
+  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/oldOSR.js';
+const ADOPT_GIST_URL =
+  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/adopt.js';
 
 function cachePath(): string {
   return join(app.getPath('userData'), 'libs', 'osr.js');
 }
 function cachePath135(): string {
   return join(app.getPath('userData'), 'libs', 'OSR13.5+.js');
+}
+function cachePathOld(): string {
+  return join(app.getPath('userData'), 'libs', 'oldOSR.js');
+}
+function cachePathAdopt(): string {
+  return join(app.getPath('userData'), 'libs', 'adopt.js');
 }
 
 // version 추출 — UMD lib 의 `version: '0.0.X'` 패턴 검색
@@ -144,6 +154,108 @@ export async function checkAndUpdateOsr135Lib(): Promise<{ updated: boolean; ver
 
 export async function getOsr135LibCode(): Promise<{ code: string; version: string | null } | null> {
   const path = cachePath135();
+  if (!existsSync(path)) return null;
+  try {
+    const code = await fsp.readFile(path, 'utf-8');
+    return { code, version: extractVersion(code) };
+  } catch {
+    return null;
+  }
+}
+
+// oldOSR.js (v3.3.3 4-scope inference) — gist 동일 패턴
+export async function checkAndUpdateOldOSRLib(): Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }> {
+  const path = cachePathOld();
+  let cachedVersion: string | null = null;
+  if (existsSync(path)) {
+    try {
+      const cached = await fsp.readFile(path, 'utf-8');
+      cachedVersion = extractVersion(cached);
+    } catch {}
+  }
+  try {
+    const url = OLDOSR_GIST_URL + '?t=' + Date.now();
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'INFOhSorry (+https://github.com/yenkara/INFOhSorry)' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const code = await res.text();
+    const remoteVersion = extractVersion(code);
+    if (!remoteVersion) throw new Error('version 추출 실패');
+
+    if (isNewer(remoteVersion, cachedVersion)) {
+      await fsp.mkdir(dirname(path), { recursive: true });
+      await fsp.writeFile(path, code, 'utf-8');
+      console.log(`[oldOSRLib] 갱신: ${cachedVersion || '(없음)'} → ${remoteVersion}`);
+      return { updated: true, version: remoteVersion, source: 'fetch' };
+    }
+    console.log(`[oldOSRLib] 최신 (${cachedVersion}, remote ${remoteVersion})`);
+    return { updated: false, version: cachedVersion, source: 'cache' };
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.warn(`[oldOSRLib] fetch 실패: ${msg} (캐시 ${cachedVersion ? 'v' + cachedVersion : '없음'} 유지)`);
+    return {
+      updated: false,
+      version: cachedVersion,
+      source: cachedVersion ? 'cache' : 'none',
+      error: msg,
+    };
+  }
+}
+
+export async function getOldOSRLibCode(): Promise<{ code: string; version: string | null } | null> {
+  const path = cachePathOld();
+  if (!existsSync(path)) return null;
+  try {
+    const code = await fsp.readFile(path, 'utf-8');
+    return { code, version: extractVersion(code) };
+  } catch {
+    return null;
+  }
+}
+
+// adopt.js (v335E 채택 분기 통합 lib) — gist 동일 패턴
+export async function checkAndUpdateAdoptLib(): Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }> {
+  const path = cachePathAdopt();
+  let cachedVersion: string | null = null;
+  if (existsSync(path)) {
+    try {
+      const cached = await fsp.readFile(path, 'utf-8');
+      cachedVersion = extractVersion(cached);
+    } catch {}
+  }
+  try {
+    const url = ADOPT_GIST_URL + '?t=' + Date.now();
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'INFOhSorry (+https://github.com/yenkara/INFOhSorry)' },
+    });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const code = await res.text();
+    const remoteVersion = extractVersion(code);
+    if (!remoteVersion) throw new Error('version 추출 실패');
+
+    if (isNewer(remoteVersion, cachedVersion)) {
+      await fsp.mkdir(dirname(path), { recursive: true });
+      await fsp.writeFile(path, code, 'utf-8');
+      console.log(`[adoptLib] 갱신: ${cachedVersion || '(없음)'} → ${remoteVersion}`);
+      return { updated: true, version: remoteVersion, source: 'fetch' };
+    }
+    console.log(`[adoptLib] 최신 (${cachedVersion}, remote ${remoteVersion})`);
+    return { updated: false, version: cachedVersion, source: 'cache' };
+  } catch (e) {
+    const msg = (e as Error).message;
+    console.warn(`[adoptLib] fetch 실패: ${msg} (캐시 ${cachedVersion ? 'v' + cachedVersion : '없음'} 유지)`);
+    return {
+      updated: false,
+      version: cachedVersion,
+      source: cachedVersion ? 'cache' : 'none',
+      error: msg,
+    };
+  }
+}
+
+export async function getAdoptLibCode(): Promise<{ code: string; version: string | null } | null> {
+  const path = cachePathAdopt();
   if (!existsSync(path)) return null;
   try {
     const code = await fsp.readFile(path, 'utf-8');

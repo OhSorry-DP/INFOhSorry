@@ -110,6 +110,21 @@ if (!IS_HOST) {
       checkUpdate: () =>
         callIpc('osrLib:checkUpdate') as ReturnType<Window['infohsorry']['osrLib']['checkUpdate']>,
     },
+    osrLib135: {
+      get: () => callIpc('osrLib135:get') as ReturnType<Window['infohsorry']['osrLib135']['get']>,
+      checkUpdate: () =>
+        callIpc('osrLib135:checkUpdate') as ReturnType<Window['infohsorry']['osrLib135']['checkUpdate']>,
+    },
+    oldOSRLib: {
+      get: () => callIpc('oldOSRLib:get') as ReturnType<Window['infohsorry']['oldOSRLib']['get']>,
+      checkUpdate: () =>
+        callIpc('oldOSRLib:checkUpdate') as ReturnType<Window['infohsorry']['oldOSRLib']['checkUpdate']>,
+    },
+    adoptLib: {
+      get: () => callIpc('adoptLib:get') as ReturnType<Window['infohsorry']['adoptLib']['get']>,
+      checkUpdate: () =>
+        callIpc('adoptLib:checkUpdate') as ReturnType<Window['infohsorry']['adoptLib']['checkUpdate']>,
+    },
     update: {
       check: () =>
         callIpc('update:check') as ReturnType<Window['infohsorry']['update']['check']>,

@@ -23,7 +23,7 @@ import {
 } from './ereter';
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
 import { getRatingData, getRatingCacheStatus } from './rating';
-import { checkAndUpdateOsrLib, getOsrLibCode, checkAndUpdateOsr135Lib, getOsr135LibCode } from './osrLib';
+import { checkAndUpdateOsrLib, getOsrLibCode, checkAndUpdateOsr135Lib, getOsr135LibCode, checkAndUpdateOldOSRLib, getOldOSRLibCode, checkAndUpdateAdoptLib, getAdoptLibCode } from './osrLib';
 import { downloadPortable, runPortable, cleanupOldPortables } from './portableUpdate';
 import { checkForUpdate } from './updateCheck';
 import { startHttpServer } from './http-server';
@@ -106,6 +106,12 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   // OSR13.5+.js auto-update (v3.3.5)
   'osrLib135:get': async () => getOsr135LibCode(),
   'osrLib135:checkUpdate': async () => checkAndUpdateOsr135Lib(),
+  // oldOSR.js auto-update (v3.3.3 4-scope inference 외부화 — INF오소리도 gist 공유)
+  'oldOSRLib:get': async () => getOldOSRLibCode(),
+  'oldOSRLib:checkUpdate': async () => checkAndUpdateOldOSRLib(),
+  // adopt.js auto-update (v335E 채택 분기 통합 lib — 세 lib raw 값 → 최종 ★)
+  'adoptLib:get': async () => getAdoptLibCode(),
+  'adoptLib:checkUpdate': async () => checkAndUpdateAdoptLib(),
 
   // GitHub 최신 릴리즈 체크 — "v0.0.X 있음 → 다운로드" 알림용 (자동 다운로드 X)
   'update:check': async () => checkForUpdate(),
@@ -521,6 +527,8 @@ app.whenReady().then(() => {
   // osr.js 자동 갱신 — 부팅 시 background fetch + cache update (실패해도 무시)
   checkAndUpdateOsrLib().catch((e) => console.warn('[osrLib] 갱신 실패:', (e as Error).message));
   checkAndUpdateOsr135Lib().catch((e) => console.warn('[osrLib135] 갱신 실패:', (e as Error).message));
+  checkAndUpdateOldOSRLib().catch((e) => console.warn('[oldOSRLib] 갱신 실패:', (e as Error).message));
+  checkAndUpdateAdoptLib().catch((e) => console.warn('[adoptLib] 갱신 실패:', (e as Error).message));
 
   // production 빌드에서만 HTTP 서버 시작 (LAN 모드 — 다른 PC 의 Chrome 으로 접속해서 동일 화면 + 원격 제어)
   if (!process.env.ELECTRON_RENDERER_URL) {

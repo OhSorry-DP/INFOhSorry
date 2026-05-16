@@ -5,6 +5,7 @@ import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
 import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
 import { inferUserTiered as osrInferUserTieredBundle, version as osrBundleVersion } from '../../shared/calc-osrating';
+import { adoptStar as adoptStarBundle, version as adoptBundleVersion, type AdoptInput, type AdoptOutput } from '../../shared/adopt';
 import {
   buildExhRecs,
   buildRecsWithPool,
@@ -743,110 +744,125 @@ export default function App() {
     }
   }, [osr135Lib, ereterData, osrChartsInput]);
 
-  // 분기 (표기용, ohSorry 와 동일):
-  //   OSR135 ≥ 13.0                    → OSR135 (13.0+ 영역 가장 정확, MAE 0.121)
-  //   else if group A or B + OSR 결과   → OSR (v0.0.2) — 저클리어 사용자 (lv12 < 30 또는 12.0+ < 30) 는 OSR 채택
-  //   else                              → oldOSR (v3.3.3) — group C (12.0+ ≥ 30) + OSR135 < 13.0 영역
-  //   oldOSR 도 없으면 OSR 로 fallback
-  // group C 에서 oldOSR 채택 시 4종 max 에서 'all-11.6+' scope 제외 — lv11 추정 보강이 잡음으로 작용
-  // 추천 풀 baseStar (ohsorryRecBase) 는 별도로 OSR (newStar) 단독 사용
+  // oldOSR (v3.3.3 4-scope inference) — gist auto-update + cache eval — window.oldOSR 등록
+  // INF오소리의 자체 dp12StarOldResult 가 ohSorry/recompute 와 알고리즘이 미세하게 달라 ★ 값이 어긋나서
+  // gist oldOSR.js 를 INF오소리도 fetch 해서 동일 결과를 쓰도록 통일.
+  const [oldOSRLib, setOldOSRLib] = useState<{ inferUser: (charts: unknown, rating: unknown, ereter: unknown) => unknown; version: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.infohsorry?.oldOSRLib) return;
+    window.infohsorry.oldOSRLib.get().then((cached) => {
+      if (!cached || !cached.code) return;
+      try {
+        new Function(cached.code)();
+        const w = window as unknown as { oldOSR?: { inferUser?: (c: unknown, r: unknown, e: unknown) => unknown; version?: string } };
+        if (typeof w.oldOSR?.inferUser === 'function') {
+          setOldOSRLib({ inferUser: w.oldOSR.inferUser, version: w.oldOSR.version || cached.version || '?' });
+          console.log(`[oldOSR] gist cache v${cached.version} 로드`);
+        }
+      } catch (e) {
+        console.warn('[oldOSR] cache eval 실패:', (e as Error).message);
+      }
+    });
+  }, []);
+
+  // oldOSR 결과 계산 — ratingData + ereterData.charts 필요. starEstimates 의 ereterOnly/lv12Only 는 group C 2-scope max 용.
+  const oldOSRResult = useMemo<{
+    starEstimate: number | null;
+    ereterOnly: number | null;
+    lv12Only: number | null;
+    adopted: string | null;
+  } | null>(() => {
+    if (!oldOSRLib || !ratingData || !ereterData || osrChartsInput.length === 0) return null;
+    try {
+      const r = oldOSRLib.inferUser(osrChartsInput, ratingData, { charts: ereterData.charts }) as {
+        starEstimate: number | null;
+        starEstimates?: { primary?: number | null; ereterOnly?: number | null; lv12Only?: number | null; all?: number | null };
+        adopted?: string | null;
+      };
+      return {
+        starEstimate: typeof r.starEstimate === 'number' ? r.starEstimate : null,
+        ereterOnly: typeof r.starEstimates?.ereterOnly === 'number' ? r.starEstimates.ereterOnly : null,
+        lv12Only: typeof r.starEstimates?.lv12Only === 'number' ? r.starEstimates.lv12Only : null,
+        adopted: r.adopted ?? null,
+      };
+    } catch (e) {
+      console.warn('[oldOSR] inferUser 실패:', (e as Error).message);
+      return null;
+    }
+  }, [oldOSRLib, ratingData, ereterData, osrChartsInput]);
+
+  // adopt.js (v335E 채택 분기 통합 lib) — bundle + override 패턴 (osr.js 와 동일)
+  //   기본: bundle (src/shared/adopt.ts) 사용 → 첫 부팅 / 오프라인에서도 작동
+  //   override: gist cache 가 더 최신이면 cache 사용 → 분기 로직 갱신 즉시 반영
+  // 세 lib (oldOSR/OSR/OSR135) raw 값을 받아 최종 ★ 결정. ohSorry/recompute/INFOhSorry 3곳 동일 lib 호출.
+  const [adoptLibOverride, setAdoptLibOverride] = useState<{ adoptStar: (input: AdoptInput) => AdoptOutput; version: string } | null>(null);
+  useEffect(() => {
+    if (typeof window === 'undefined' || !window.infohsorry?.adoptLib) return;
+    window.infohsorry.adoptLib.get().then((cached) => {
+      if (!cached || !cached.code || !cached.version) return;
+      // version 비교: cache > bundle 일 때만 override
+      const a = cached.version.split('.').map((n) => parseInt(n, 10) || 0);
+      const b = adoptBundleVersion.split('.').map((n) => parseInt(n, 10) || 0);
+      let newer = false;
+      for (let i = 0; i < Math.max(a.length, b.length); i++) {
+        if ((a[i] || 0) > (b[i] || 0)) { newer = true; break; }
+        if ((a[i] || 0) < (b[i] || 0)) break;
+      }
+      if (!newer) {
+        console.log(`[adopt] bundle (v${adoptBundleVersion}) 사용 (cache v${cached.version} 동일 또는 옛 버전)`);
+        return;
+      }
+      try {
+        new Function(cached.code)();
+        const w = window as unknown as { adopt?: { adoptStar?: (input: AdoptInput) => AdoptOutput; version?: string } };
+        if (typeof w.adopt?.adoptStar === 'function') {
+          setAdoptLibOverride({ adoptStar: w.adopt.adoptStar, version: w.adopt.version || cached.version || '?' });
+          console.log(`[adopt] gist cache v${cached.version} 사용 (bundle v${adoptBundleVersion})`);
+        }
+      } catch (e) {
+        console.warn('[adopt] cache eval 실패:', (e as Error).message);
+      }
+    });
+  }, []);
+  const adoptFn = adoptLibOverride?.adoptStar || adoptStarBundle;
+  const adoptVersion = adoptLibOverride?.version || adoptBundleVersion;
+
+  // dp12StarResult — v335E 채택 분기. adopt lib (bundle + gist override) 호출.
+  //   ohSorry/recompute/INFOhSorry 3곳이 동일 lib 호출 → drift 방지.
+  // group A/B/C 분기 + group C 2-scope max + OSR135 spread gate + OSR135_UNDER blend 다 lib 안에서 처리.
+  // 추천 풀 baseStar (ohsorryRecBase) 는 별도로 OSR (newStar) 단독 사용.
   const dp12StarResult = useMemo(() => {
-    const star135 = osr135Result?.star;
-    const newStar = osrTieredResult?.star;
-    const group = osrTieredResult?.group;
-    // group C 면 'all-11.6+' 제외 후 max 재계산, 아니면 기존 4종 max 그대로
-    let oldStar: number | undefined;
-    if (group === 'C' && dp12StarAll) {
-      const filtered = dp12StarAll.filter((x) => x.res != null && x.name !== 'all-11.6+');
-      if (filtered.length > 0) {
-        filtered.sort((a, b) => (b.res!.star ?? 0) - (a.res!.star ?? 0));
-        oldStar = filtered[0].res!.star;
-      } else {
-        oldStar = dp12StarOldResult?.star;
-      }
-    } else {
-      oldStar = dp12StarOldResult?.star;
-    }
-    // 채택 (v335E — 1021명 검증 통과): D3 분기 + spread gate
-    //   [신뢰도 게이트] OSR135 세 분기(EC/HC/EXH) 중 0(데이터 없음) 제외, max-min spread > 2.5 면
-    //                  OSR135 내부 불일치 → 신뢰 X → baseStar2 직행
-    //   spread ≤ 2.5 일 때만 OSR135 사용:
-    //     ≥13.5            → OSR135 직행 (14+ 정확도 핵심)
-    //     12.5 ≤ x < 13.5  → 블렌드: osr > osr135 → 135 직행 / diffBlend × (1-gapW) + osr135 × gapW
-    //                          gapW = clamp((osr135-osr)/3, 0, 1)
-    //     < 12.5           → baseStar2
-    const OSR135_TH = 13.5;
-    const BLEND_W = 1.0;
-    const GAP_GUARD = 3.0;
-    const SPREAD_MAX = 2.5;
-    const isAB = group === 'A' || group === 'B';
-    // group 별 base 값
-    let baseStar2: number | undefined;
-    let groupLib: 'OSR' | 'old';
-    if (isAB) {
-      baseStar2 = typeof newStar === 'number' ? newStar : oldStar;
-      groupLib = typeof newStar === 'number' ? 'OSR' : 'old';
-    } else {
-      // group C: 11~13 은 OSR 가 최강 → OSR값 ≥ 11.0 → OSR / < 11.0 → oldOSR / 10.5~11.0 보간
-      const C_TH = 11.0, C_W = 0.5;
-      if (typeof newStar === 'number' && newStar >= C_TH) {
-        baseStar2 = newStar; groupLib = 'OSR';
-      } else if (typeof newStar === 'number' && newStar >= C_TH - C_W && typeof oldStar === 'number') {
-        const ct = (newStar - (C_TH - C_W)) / C_W;
-        baseStar2 = oldStar * (1 - ct) + newStar * ct;
-        groupLib = 'OSR';
-      } else if (typeof oldStar === 'number') {
-        baseStar2 = oldStar; groupLib = 'old';
-      } else {
-        baseStar2 = newStar; groupLib = 'OSR';
-      }
-    }
-    // OSR135 신뢰도 게이트 — 세 분기 spread > 2.5 면 OSR135 안 씀
-    let osr135Trusted = true;
-    if (osr135Result) {
-      const stages = [osr135Result.ec, osr135Result.hc, osr135Result.exh].filter((v) => typeof v === 'number' && v > 0.01);
-      if (stages.length >= 2 && (Math.max(...stages) - Math.min(...stages)) > SPREAD_MAX) osr135Trusted = false;
-    }
-    let final: number | undefined;
-    let adoptedLib: 'OSR135' | 'OSR' | 'old' | 'blend' | undefined;
-    if (typeof star135 !== 'number') {
-      // OSR135 없음 → baseStar2
-      if (typeof baseStar2 === 'number') { final = baseStar2; adoptedLib = groupLib; }
-    } else if (!osr135Trusted) {
-      // spread > 2.5 → OSR135 불신, baseStar2 직행
-      if (typeof baseStar2 === 'number') { final = baseStar2; adoptedLib = groupLib; }
-      else { final = star135; adoptedLib = 'OSR135'; }
-    } else if (star135 >= OSR135_TH) {
-      final = star135; adoptedLib = 'OSR135';
-    } else if (star135 < OSR135_TH - BLEND_W || typeof baseStar2 !== 'number') {
-      // <12.5 또는 baseStar2 없음
-      if (typeof baseStar2 === 'number') { final = baseStar2; adoptedLib = groupLib; }
-      else { final = star135; adoptedLib = 'OSR135'; }
-    } else if (typeof newStar === 'number' && newStar > star135) {
-      // osr > osr135 → 블렌드가 위로 끌어올림 → OSR135 직행
-      final = star135; adoptedLib = 'OSR135';
-    } else {
-      // 12.5 ≤ x < 13.5 블렌드
-      const t = (star135 - (OSR135_TH - BLEND_W)) / BLEND_W;
-      const diffBlend = baseStar2 * (1 - t) + star135 * t;
-      if (typeof newStar !== 'number') {
-        final = diffBlend; adoptedLib = 'blend';
-      } else {
-        const gapW = Math.max(0, Math.min((star135 - newStar) / GAP_GUARD, 1));
-        final = diffBlend * (1 - gapW) + star135 * gapW;
-        adoptedLib = 'blend';
-      }
-    }
-    // v335E 진단: 어느 lib 채택됐는지 + group / spread 정보 출력
+    const star135 = typeof osr135Result?.star === 'number' ? osr135Result.star : null;
+    const newStar = typeof osrTieredResult?.star === 'number' ? osrTieredResult.star : null;
+    const group = (osrTieredResult?.group as 'A' | 'B' | 'C' | undefined) || null;
+    // oldStar (4-scope max) — gist oldOSR 우선, 없으면 자체 dp12StarOldResult fallback
+    const oldStarBase: number | null = oldOSRResult?.starEstimate ?? dp12StarOldResult?.star ?? null;
+    const starEreterOnly: number | null = oldOSRResult?.ereterOnly ?? null;
+    const starLv12Only: number | null = oldOSRResult?.lv12Only ?? null;
+    const osr135Stages = osr135Result
+      ? { ec: osr135Result.ec, hc: osr135Result.hc, exh: osr135Result.exh }
+      : null;
+
+    const r = adoptFn({
+      starOld: oldStarBase, starNew: newStar, star135: star135,
+      starEreterOnly: starEreterOnly, starLv12Only: starLv12Only,
+      osr135Stages: osr135Stages, group: group,
+    });
+
+    const adoptSrc = adoptLibOverride ? `gist v${adoptVersion}` : `bundle v${adoptVersion}`;
+    const oldSrc = oldOSRResult ? 'gist' : 'local';
     console.log(
-      `[★] 채택=${adoptedLib ?? 'none'} final=${final?.toFixed(3) ?? 'N/A'} | ` +
-      `OSR135=${star135?.toFixed(3) ?? 'null'} OSR=${newStar?.toFixed(3) ?? 'null'} old=${oldStar?.toFixed(3) ?? 'null'} | ` +
-      `group=${group ?? '-'}${group === 'C' ? ' (all-11.6+ excluded)' : ''}` +
-      (osr135Result ? ` | osr135 ec/hc/exh=${osr135Result.ec.toFixed(2)}/${osr135Result.hc.toFixed(2)}/${osr135Result.exh.toFixed(2)}${osr135Trusted ? '' : ' ⚠ spread>2.5'}` : ''),
+      `[★] 채택=${r.adoptedLib ?? 'none'} final=${r.star?.toFixed(3) ?? 'N/A'} | ` +
+      `OSR135=${star135?.toFixed(3) ?? 'null'} OSR=${newStar?.toFixed(3) ?? 'null'} ` +
+      `old=${r.oldStarUsed?.toFixed(3) ?? 'null'} [${oldSrc}] | ` +
+      `group=${group ?? '-'} adopt=${adoptSrc}` +
+      (osr135Result ? ` | osr135 ec/hc/exh=${osr135Result.ec.toFixed(2)}/${osr135Result.hc.toFixed(2)}/${osr135Result.exh.toFixed(2)}${r.osr135Trusted ? '' : ' ⚠ spread>2.5'}` : ''),
     );
-    if (final == null) return dp12StarOldResult;
-    return dp12StarOldResult ? { ...dp12StarOldResult, star: final, _adoptedLib: adoptedLib } as typeof dp12StarOldResult & { _adoptedLib?: string } : null;
-  }, [dp12StarOldResult, osrTieredResult, osr135Result, dp12StarAll]);
+    if (r.star == null) return dp12StarOldResult;
+    return dp12StarOldResult
+      ? { ...dp12StarOldResult, star: r.star, _adoptedLib: r.adoptedLib } as typeof dp12StarOldResult & { _adoptedLib?: string | null }
+      : null;
+  }, [dp12StarOldResult, osrTieredResult, osr135Result, oldOSRResult, adoptFn, adoptLibOverride, adoptVersion]);
 
   // 추천 baseStar — OSR (v0.0.2) 단독 사용 (D2 표기 ★ 와 분리)
   //   이유: OSR135 의 12점대 over-estimation (+0.46 bias) 을 추천 풀 결정에서 배제

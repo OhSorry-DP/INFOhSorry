@@ -75,6 +75,20 @@ const api = {
       ipcRenderer.invoke('osrLib135:checkUpdate'),
   },
 
+  // oldOSR.js auto-update (v3.3.3 4-scope inference 외부화)
+  oldOSRLib: {
+    get: (): Promise<{ code: string; version: string | null } | null> => ipcRenderer.invoke('oldOSRLib:get'),
+    checkUpdate: (): Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }> =>
+      ipcRenderer.invoke('oldOSRLib:checkUpdate'),
+  },
+
+  // adopt.js auto-update (v335E 채택 분기 통합 lib)
+  adoptLib: {
+    get: (): Promise<{ code: string; version: string | null } | null> => ipcRenderer.invoke('adoptLib:get'),
+    checkUpdate: (): Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }> =>
+      ipcRenderer.invoke('adoptLib:checkUpdate'),
+  },
+
   // 포터블 자동 다운로드 + 실행 (v0.0.19+)
   portable: {
     download: (url: string, fileName: string): Promise<string> =>
