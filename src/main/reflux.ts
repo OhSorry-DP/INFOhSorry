@@ -219,9 +219,13 @@ export class RefluxManager extends EventEmitter {
   // Reflux 가 출력한 최근 stdout/stderr 라인 (디버깅용, UI 에도 노출)
   private recentLines: string[] = [];
   private static readonly MAX_RECENT = 30;
-  // health check — Reflux.exe 가 hang/crash 했는지 5분마다 확인 후 재시작
+  // health check — Reflux.exe 가 hang/crash 했는지 주기적으로 확인 후 재시작.
+  // tsv 첫 로드 (= IIDX hook 성공) 전까지는 짧은 간격 (30초) — IIDX 가 늦게 떴을 때 빠른 회복.
+  // 첫 로드 후엔 긴 간격 (5분) — 정상 동작 중 polling 부담 최소.
   private healthCheckTimer: NodeJS.Timeout | null = null;
-  private static readonly HEALTH_CHECK_INTERVAL_MS = 5 * 60 * 1000;
+  private healthCheckInitial = true;  // tsv 첫 로드 전까지 true → INITIAL 간격
+  private static readonly HEALTH_CHECK_INITIAL_MS = 30 * 1000;
+  private static readonly HEALTH_CHECK_STEADY_MS = 5 * 60 * 1000;
   // 이전 세션 정리 (tracker.tsv / tracker.db / sessions/) 는 process lifetime 의 첫 spawn 1회만.
   // 이후 재spawn (health check 자동 재시작, 사용자 stop→start, "데이터 불러오기" 재클릭 등) 에서는
   // tsv 보존 — 앱 재시작 시 데이터 매번 비워지는 문제 방지. (사용자 요청)
@@ -279,9 +283,20 @@ export class RefluxManager extends EventEmitter {
   // ============================================================
   private startHealthCheck(): void {
     if (this.healthCheckTimer) return;
+    this.healthCheckInitial = true;
     this.healthCheckTimer = setInterval(() => {
       void this.healthCheck();
-    }, RefluxManager.HEALTH_CHECK_INTERVAL_MS);
+    }, RefluxManager.HEALTH_CHECK_INITIAL_MS);
+  }
+
+  // tsv 첫 로드 시 호출 — 기존 INITIAL interval 정리 후 STEADY 간격으로 재시작
+  private transitionHealthCheckToSteady(): void {
+    if (!this.healthCheckTimer || !this.healthCheckInitial) return;
+    clearInterval(this.healthCheckTimer);
+    this.healthCheckInitial = false;
+    this.healthCheckTimer = setInterval(() => {
+      void this.healthCheck();
+    }, RefluxManager.HEALTH_CHECK_STEADY_MS);
   }
 
   private stopHealthCheck(): void {
@@ -482,6 +497,7 @@ export class RefluxManager extends EventEmitter {
               if (m !== this.lastTsvMtime) {
                 this.lastTsvMtime = m;
                 this.setState({ stage: 'ready', lastTsvMtime: m });
+                this.transitionHealthCheckToSteady();
               }
             })
             .catch(() => {

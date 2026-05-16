@@ -15,7 +15,7 @@ import {
 } from '../../shared/recommend';
 import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
-import Dp12Table from './Dp12Table';
+import DpTable from './DpTable';
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
@@ -1348,9 +1348,10 @@ export default function App() {
                     }}
                   />
                 )}
-                <Dp12Table
+                <DpTable
                   lv12Charts={dp12Charts}
                   lv11Charts={dp11Charts}
+                  ratingData={ratingData}
                   onPickChart={(target) => {
                     setTab('dp');
                     setScrollTarget(target);
@@ -1653,7 +1654,7 @@ function StarPanel({
             <div style={{ display: 'flex', gap: 6 }}>
               <button
                 type="button"
-                className="dp12-sort-btn"
+                className="dp-sort-btn"
                 onClick={() => {
                   const text = JSON.stringify(unclassifiedJson, null, 2);
                   navigator.clipboard.writeText(text).then(
@@ -1667,7 +1668,7 @@ function StarPanel({
               </button>
               <button
                 type="button"
-                className="dp12-sort-btn"
+                className="dp-sort-btn"
                 onClick={() => {
                   const text = JSON.stringify(unclassifiedJson, null, 2);
                   const blob = new Blob([text], { type: 'application/json' });
@@ -1697,7 +1698,7 @@ function StarPanel({
             <div style={{ display: 'flex', gap: 6 }}>
               <button
                 type="button"
-                className="dp12-sort-btn"
+                className="dp-sort-btn"
                 onClick={() => {
                   const text = JSON.stringify(ratingUnmatchedJson, null, 2);
                   navigator.clipboard.writeText(text).then(
@@ -1711,7 +1712,7 @@ function StarPanel({
               </button>
               <button
                 type="button"
-                className="dp12-sort-btn"
+                className="dp-sort-btn"
                 onClick={() => {
                   const text = JSON.stringify(ratingUnmatchedJson, null, 2);
                   const blob = new Blob([text], { type: 'application/json' });

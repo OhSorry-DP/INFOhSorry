@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.32.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.32-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.33.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.33-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -78,6 +78,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.33 — DpTable rename + Reflux healthCheck dynamic interval
+- 컴포넌트 rename: `Dp12Table` → `DpTable` (파일/컴포넌트 이름 + CSS prefix `dp12-*` → `dp-*`, 총 111곳)
+- `RefluxManager.startHealthCheck`: tsv 첫 로드 전까지 30초 간격 → 첫 로드 후 5분 간격으로 자동 전환 (`transitionHealthCheckToSteady`)
+- INFOhSorry 가 IIDX INFINITAS 보다 먼저 떠도 Reflux 첫 회복까지 5분 → 30초로 단축
 
 ### 0.0.32 — OSR 모델 v0.0.6 (Group C lv11 HC/EXH + Group A 보정 + BAND 확장)
 - `src/shared/calc-osrating.ts` 의 모델 동작 업데이트:
