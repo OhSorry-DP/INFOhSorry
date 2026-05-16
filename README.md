@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.35.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.35-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.36.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.36-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,14 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.36 — 추천곡 DP12/DP11+ 토글 + ★ 모드 서열표 표기 개선
+- **추천곡 헤더에 `DP12 / DP11+` 토글 추가** — `recLevelMode` 를 state 로 빼고 사용자가 직접 전환 가능. 토글 시 EC/HC/EXH 모두 새로 뽑힘 (reroll trigger). 기본값 `DP12`.
+- **★ 모드 서열표 (별 난이도 탭) 의 곡명 표기 개선**:
+  - 곡명 앞 prefix 가 `EC` / `HC` / `EXH` (vType 라벨) → **게임 LEVEL + 채보 약자 (`11H` / `11A` / `12A` / `12L`)** 로 변경 — 곡 자체의 차트 정보를 직접 표시
+  - 곡명 색상이 vType 으로 분기: **EC 연두 (#7bc16a) / HC 기본색 / EXH 금색 (#dcaf45)**. prefix 도 같은 색.
+  - `★ 모드 서열표 한 그룹 안에 lv11 / lv12 의 N/H/A/L 차트가 섞여 있을 때 한 눈에 구분 가능.
+- DP12 / DP11 탭의 표기는 그대로 (LEGGENDARIA `†` 마크 유지).
 
 ### 0.0.35 — 추천곡 로직 v3.3.5 포팅 (under/reached × hard/easy/cleanup)
 - **추천곡 로직 전면 갱신** — ohSorry v3.3.5 의 `buildPools` / `buildRecs` / `buildExhRecs` 를 `src/shared/recommend.ts` 로 이식. 기존 3-pool (하드 / 약도전 / 정리) 구조를 6 버킷 (under/reached × hard/easy/cleanup) 으로 확장.

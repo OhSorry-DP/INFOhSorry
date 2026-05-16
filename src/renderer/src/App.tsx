@@ -1070,7 +1070,15 @@ export default function App() {
 
   // v3.3.5: 추천 baseStar — dp12StarResult.star (D2 표기 ★) 대신 ohsorryRecBase (OSR 단독) 사용
   // recLevelMode — ohSorry 원본은 baseStar≥6 시 'lv12' (lv11 차트 제외). INF DP12 컨텍스트에선 거의 항상 lv12.
-  const recLevelMode: RecLevelMode = ohsorryRecBase != null && ohsorryRecBase >= 6 ? 'lv12' : 'all';
+  // 사용자가 토글로 'all' (DP11+) 로 바꿀 수도 있어서 state 로 관리.
+  const [recLevelMode, setRecLevelMode] = useState<RecLevelMode>('lv12');
+  const handleRecLevelModeChange = (mode: RecLevelMode): void => {
+    setRecLevelMode(mode);
+    // mode 변경 시 EC/HC/EXH 모두 새로 뽑도록 reroll 카운터 강제 증가
+    setRerollEC((k) => k + 1);
+    setRerollHC((k) => k + 1);
+    setRerollEXH((k) => k + 1);
+  };
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEC.current !== rerollEC) {
@@ -1380,6 +1388,8 @@ export default function App() {
                     recsHC={recsHC.picked}
                     recsEXH={recsEXH.picked}
                     baseStar={ohsorryRecBase}
+                    levelMode={recLevelMode}
+                    onLevelModeChange={handleRecLevelModeChange}
                     onRerollEC={() => setRerollEC((k) => k + 1)}
                     onRerollHC={() => setRerollHC((k) => k + 1)}
                     onRerollEXH={() => setRerollEXH((k) => k + 1)}
@@ -1436,6 +1446,8 @@ function Recommendations({
   recsHC,
   recsEXH,
   baseStar,
+  levelMode,
+  onLevelModeChange,
   onRerollEC,
   onRerollHC,
   onRerollEXH,
@@ -1445,6 +1457,8 @@ function Recommendations({
   recsHC: RecCandidate[];
   recsEXH: RecCandidate[];
   baseStar: number;
+  levelMode: RecLevelMode;
+  onLevelModeChange: (mode: RecLevelMode) => void;
   onRerollEC: () => void;
   onRerollHC: () => void;
   onRerollEXH: () => void;
@@ -1456,6 +1470,26 @@ function Recommendations({
         <h3>
           추천곡 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12 }}>★ {baseStar.toFixed(2)} 기준</span>
         </h3>
+        <div className="rec-level-toggle" title="추천 풀에 포함할 게임 LEVEL 선택">
+          <span className="rec-level-label">추천 범위 :</span>
+          <button
+            type="button"
+            className={`rec-level-opt${levelMode === 'lv12' ? ' active' : ''}`}
+            onClick={() => onLevelModeChange('lv12')}
+            title="게임 LEVEL 12 차트만 추천"
+          >
+            DP12
+          </button>
+          <span className="rec-level-sep">|</span>
+          <button
+            type="button"
+            className={`rec-level-opt${levelMode === 'all' ? ' active' : ''}`}
+            onClick={() => onLevelModeChange('all')}
+            title="게임 LEVEL 11 + 12 차트 추천"
+          >
+            DP11+
+          </button>
+        </div>
       </div>
       <div className="rec-cards">
         <RecCard stage="ec" recs={recsEC} onReroll={onRerollEC} onPickChart={onPickChart} />

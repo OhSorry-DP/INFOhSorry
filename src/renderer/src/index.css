@@ -1127,6 +1127,40 @@ body {
 .rec-area-head button:hover {
   background: var(--bg-muted);
 }
+/* 추천곡 헤더의 Lv 범위 토글 (DP12 / DP11+) — generic 버튼 스타일 무시 */
+.rec-area-head .rec-level-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+}
+.rec-area-head .rec-level-label {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.rec-area-head .rec-level-opt {
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-weight: 400;
+  transition: color 0.15s;
+}
+.rec-area-head .rec-level-opt.active {
+  color: var(--text-primary);
+  font-weight: 700;
+}
+.rec-area-head .rec-level-opt:hover {
+  color: var(--text-primary);
+  background: none;
+}
+.rec-area-head .rec-level-sep {
+  color: var(--text-muted);
+  font-size: 11px;
+  user-select: none;
+}
 .rec-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

@@ -66,10 +66,20 @@ const STAR_RANGES: Record<StarMode, { min: number; max: number; label: string }>
   'star-14+': { min: 14, max: Infinity, label: '★14+' },
 };
 
-const STAR_VTYPE_COLOR: Record<StarVType, string> = {
+// ★ 모드 서열표에서 곡명 + prefix 색상 — vType 별로 구분.
+//   EC: 연두, HC: 기본 (undefined → CSS inherit), EXH: 금색.
+const STAR_VTYPE_COLOR: Record<StarVType, string | undefined> = {
   ec: '#7bc16a',
-  hc: '#dc3545',
+  hc: undefined,
   exh: '#dcaf45',
+};
+
+// slot → 단축 표기 (prefix "11H" / "12A" 등의 끝 1글자)
+const SLOT_SHORT: Record<string, string> = {
+  DPN: 'N',
+  DPH: 'H',
+  DPA: 'A',
+  DPL: 'L',
 };
 
 const DIFF_TO_SLOT: Record<string, ChartSlot> = {
@@ -523,15 +533,21 @@ function SongCell({
     >
       <span className={`lamp-box lamp-${c.lamp}`} />
       <span className="dp-song-text">
-        {c.__vType && (
-          <span
-            className="dp-song-prefix"
-            style={{ color: STAR_VTYPE_COLOR[c.__vType] }}
-          >
-            {c.__vType.toUpperCase()}
-          </span>
+        {c.__vType ? (
+          <>
+            <span
+              className="dp-song-prefix"
+              style={{ color: STAR_VTYPE_COLOR[c.__vType] }}
+            >
+              {c.level}{SLOT_SHORT[c.slot] ?? '?'}
+            </span>
+            <span style={STAR_VTYPE_COLOR[c.__vType] ? { color: STAR_VTYPE_COLOR[c.__vType] } : undefined}>
+              {c.title}
+            </span>
+          </>
+        ) : (
+          (isLegg ? '† ' : '') + c.title
         )}
-        {(isLegg ? '† ' : '') + c.title}
       </span>
       {/* NP / letter 없는 곡도 영역만 유지 (글자는 비움) — 곡명 폭 일관성 */}
       <span
