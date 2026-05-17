@@ -508,6 +508,18 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'));
   }
 
+  // prod 에서도 사용자가 devtools 열 수 있게 — Ctrl+Shift+I 로 toggle.
+  // (F12 는 INFINITAS 등 다른 곳과 충돌 우려로 등록 안 함.)
+  // (Menu.setApplicationMenu(null) 이라 메뉴는 없지만 키보드 단축키만 처리.)
+  // window 자체의 input event 라 INFOhSorry 창 포커스 시에만 동작 (globalShortcut 아님).
+  mainWindow.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+    if (input.control && input.shift && input.key.toLowerCase() === 'i') {
+      mainWindow?.webContents.toggleDevTools();
+      event.preventDefault();
+    }
+  });
+
   refluxManager.on('state', (state) => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('reflux:state', state);

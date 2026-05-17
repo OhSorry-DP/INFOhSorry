@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.41.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.41-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.42.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.42-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,10 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.42 — devtools 단축키 + service-status 캐시 제거
+- `main/index.ts` 에 `Ctrl+Shift+I` 단축키 등록 (`webContents.before-input-event`) — prod 빌드에서도 사용자가 devtools 열 수 있게 (F12 는 INFINITAS 충돌 우려로 제외).
+- `src/shared/serviceStatus.ts` 의 5분 메모리 캐시 제거 — 매 upload 직전 fresh fetch. 일시 fetch 실패가 5분 동안 영구 disabled 로 남던 문제 해소. github gist raw CDN 이라 rate limit 부담 무관.
 
 ### 0.0.41 — 마운트 시 readTsv 제거 (race condition 해소) + spawn 완료 시점으로 이동
 - 마운트 시 옛 tsv 를 즉시 읽어서 화면에 표시하던 동작 (0.0.28 의 "재부팅 직후 화면 빔 해소") 제거 — race condition + stale 데이터 영구 노출 문제.
