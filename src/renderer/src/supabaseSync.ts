@@ -12,6 +12,7 @@
 import type { ProfileInfo } from './useProfile';
 import type { StarResult } from '../../shared/star-estimator';
 import type { RecInputChart } from '../../shared/recommend';
+import { fetchServiceStatus } from '../../shared/serviceStatus';
 
 const SUPABASE_URL = 'https://ryesiijulrlmstmhzpnv.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
@@ -31,6 +32,13 @@ export interface UploadInput {
 
 export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; error?: string }> {
   const { appVersion, profile, starResult, charts, unclassifiedCharts, ereterStar } = input;
+
+  // 원격 service status 확인 — uploadEnabled === false 면 upload skip.
+  // fail-closed: fetch 실패 시도 disabled 로 취급 (serviceStatus.ts 가 처리).
+  const status = await fetchServiceStatus();
+  if (!status.uploadEnabled) {
+    return { ok: false, error: status.message || 'upload disabled by remote service status' };
+  }
 
   // iidx_id 정규화 — 하이픈 제거 (게임 메모리에 이미 하이픈 없는 형식이라 그대로지만 안전망)
   const rawId = profile.iidxId;
