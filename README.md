@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.40.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.40-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.41.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.41-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.41 — 마운트 시 readTsv 제거 (race condition 해소) + spawn 완료 시점으로 이동
+- 마운트 시 옛 tsv 를 즉시 읽어서 화면에 표시하던 동작 (0.0.28 의 "재부팅 직후 화면 빔 해소") 제거 — race condition + stale 데이터 영구 노출 문제.
+- 대신 Reflux spawn 완료 (state.spawned: false → true) 시점에 readTsv 1회 자동 호출. 1분 timer 도 그대로 유지.
+- 효과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → cleanup 된 깨끗한 tsv 만 표시.
+- 0.0.22 의 race condition 보호 의도로 회귀 — 단 spawn 후 즉시 readTsv 라 UX 손실 최소화 (1분 timer 만 기다리지 않음).
 
 ### 0.0.40 — 새 supabase 프로젝트 (Tokyo) 로 이전
 - `SUPABASE_URL` / `SUPABASE_KEY` 교체 — 기존 프로젝트 (`ryesiijulrlmstmhzpnv` / 미국) 가 Free tier 1GB 디스크 한계 초과로 crash recovery loop → 복구 불가 → 삭제 후 신규 (`cvxpeecxiawddmrzbdvn` / Northeast Asia Tokyo / Free) 로 이전.

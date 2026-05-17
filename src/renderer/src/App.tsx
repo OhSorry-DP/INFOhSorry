@@ -112,29 +112,41 @@ export default function App() {
     error?: string;
   }>({ stage: 'idle', downloaded: 0, total: 0 });
 
-  // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기 + tracker.tsv 자동 복원
-  // Reflux 가 설치돼있으면 무조건 자동 시작 (5분 health check 가 떴는지 계속 확인).
-  // 미설치면 "데이터 불러오기" 버튼으로 사용자가 직접 install 트리거.
-  // browser 모드 (LAN) 에서는 window.infohsorry 가 HTTP bridge 로 자동 patch (api.ts).
+  // 마운트 시: Reflux state 구독 + tsvPath / 현재 state 가져오기.
+  //
+  // tsv 읽기 정책 (0.0.41 변경):
+  //   - 마운트 시 readTsv 호출 안 함 — 옛 stale tsv 가 race condition 으로 보이던 문제 해소.
+  //   - 대신 Reflux spawn 완료 (spawned: false → true) 시점에 readTsv 1회 자동 호출.
+  //   - 그 후 1분 timer (STAR_REFRESH_INTERVAL_MS) 가 매 60초마다 추가로 자동 갱신.
+  //
+  // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 1분마다 자동 갱신.
+  // (옛 동작: 마운트 즉시 옛 tsv 표시 → race condition 으로 stale 데이터 영구 노출 가능했음)
+  const prevSpawnedRef = useRef(false);
   useEffect(() => {
-    const off = window.infohsorry.reflux.onState((s) => setRefluxState(s));
+    const off = window.infohsorry.reflux.onState((s) => {
+      setRefluxState(s);
+      // spawn false → true transit 감지 → readTsv 1회 자동 호출
+      if (!prevSpawnedRef.current && s.spawned) {
+        void (async () => {
+          const path = await window.infohsorry.reflux.getTsvPath();
+          const r = await window.infohsorry.readTsv(path);
+          if (r.ok && r.rows && r.rows.length > 0) {
+            setRows(r.rows);
+            if (r.mtime) {
+              lastLoadedMtime.current = r.mtime;
+              setTsvMtime(r.mtime);
+            }
+          }
+        })();
+      }
+      prevSpawnedRef.current = s.spawned;
+    });
     void (async () => {
       const path = await window.infohsorry.reflux.getTsvPath();
       setTsvPath(path);
       const state = await window.infohsorry.reflux.getState();
       setRefluxState(state);
-      // tsv 읽기 — RefluxManager 가 cleanup 을 process lifetime 의 첫 spawn 1회만 수행하므로
-      //   재부팅 시 (spawned=false) 이전 세션 tracker.tsv 가 보존됨 → 일단 읽어서 화면에 띄우고,
-      //   그 다음 spawn 으로 INFINITAS 메모리에서 새 tsv dump 시작.
-      //   첫 설치 / 첫 부팅이면 readTsv 가 빈 결과 (파일 없음) — 그냥 0 rows 로 통과, start() 가 진행.
-      const r = await window.infohsorry.readTsv(path);
-      if (r.ok && r.rows && r.rows.length > 0) {
-        setRows(r.rows);
-        if (r.mtime) {
-          lastLoadedMtime.current = r.mtime;
-          setTsvMtime(r.mtime);
-        }
-      }
+      prevSpawnedRef.current = state.spawned;
       if (!state.spawned) {
         // Reflux 미spawn 상태면 자동 시작. 미설치면 startAll 안에서 자동 다운로드 + 설치 후 spawn.
         void window.infohsorry.reflux.start();
