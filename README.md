@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.39.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.39-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.40.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.40-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.40 — 새 supabase 프로젝트 (Tokyo) 로 이전
+- `SUPABASE_URL` / `SUPABASE_KEY` 교체 — 기존 프로젝트 (`ryesiijulrlmstmhzpnv` / 미국) 가 Free tier 1GB 디스크 한계 초과로 crash recovery loop → 복구 불가 → 삭제 후 신규 (`cvxpeecxiawddmrzbdvn` / Northeast Asia Tokyo / Free) 로 이전.
+- 데이터 손실 — user_profiles / user_chart_scores 비어있음. 자동 업데이트 후 INFOhSorry 사용 시 자기 데이터 다시 upload 됨.
+- service-status.json kill-switch 는 그대로 유지 — 다음 사고 대비.
 
 ### 0.0.39 — 원격 service-status.json kill-switch
 - gist (`30c3ba6f87df9847291c42ea216a8d2a`) 의 `service-status.json` 으로 supabase upload 원격 toggle.
