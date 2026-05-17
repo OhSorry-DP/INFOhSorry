@@ -99,6 +99,10 @@ if (!IS_HOST) {
         callIpc('zasa:get', force) as ReturnType<Window['infohsorry']['zasa']['get']>,
       status: () => callIpc('zasa:status') as ReturnType<Window['infohsorry']['zasa']['status']>,
     },
+    serviceStatus: {
+      get: () =>
+        callIpc('serviceStatus:get') as ReturnType<Window['infohsorry']['serviceStatus']['get']>,
+    },
     rating: {
       get: (force?: boolean) =>
         callIpc('rating:get', force) as ReturnType<Window['infohsorry']['rating']['get']>,

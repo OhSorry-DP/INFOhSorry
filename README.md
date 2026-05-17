@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.43.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.43-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.44.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.44-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.44 — user_profiles.charts_json 제거 + chart_score row 에 lamp 추가
+- `supabaseSync.ts` 의 `payload.charts_json` → `null` 로 변경. user_chart_scores 가 single source of truth.
+- `chart_score row` 빌드에 `lamp` 필드 추가 — 게스트 페이지 서열표가 user_chart_scores fallback (`get_user_charts` RPC) 으로 격자 렌더 가능.
+- `api.ts` 의 browser-remote bridge (LAN 모드) 에 `serviceStatus` polyfill 추가 — 0.0.43 의 IPC 추가 분 반영.
+- 효과: user_profiles 의 거대 jsonb (1376 chart × ~200B ≈ 270KB/user) 디스크 부담 제거. 게스트 페이지 / 곡별 랭킹 / ★ 추정 모두 정상 동작 (서열표는 chart_scores fallback 으로 렌더).
 
 ### 0.0.43 — service-status fetch 를 main 프로세스로 이동 (CORS 우회)
 - 0.0.39~0.0.42 동안 `src/shared/serviceStatus.ts` 에서 renderer 가 직접 gist fetch 하던 구조 → renderer 의 Chromium CORS 정책으로 막힐 가능성 있어서 main 으로 이동.

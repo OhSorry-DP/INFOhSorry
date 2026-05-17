@@ -59,6 +59,26 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     if (c.lampNum === 7) fcCount++;
   }
 
+  // chart_score row 빌드 — payload.charts_json 대신 직접 (payload 가 charts_json=null 이라 거기서 못 꺼냄)
+  const allChartsForScores = [...charts, ...(unclassifiedCharts ?? [])];
+  const isDpSlot = (slot: unknown): boolean => (
+    slot === 'DPN' || slot === 'DPH' || slot === 'DPA' || slot === 'DPL'
+  );
+  const scoreDate = new Date().toISOString();
+  const chartScoreRowsRaw = allChartsForScores.filter((c) => isDpSlot(c.slot) && (c.exScore ?? 0) > 0).map((c) => ({
+    played_version: 'INF',
+    level: 'level' in c && typeof c.level === 'number' ? c.level : (c.zasaLevel ?? c.ereterLevel ?? null),
+    title: c.title,
+    iidx_id: iidxIdNorm,
+    dj_name: profile.djName ?? null,
+    diff: c.diff,
+    game_level: c.gameLevel ?? null,
+    dj_level: c.djLevel ?? null,
+    ex_score: c.exScore ?? null,
+    lamp: c.lamp ?? null,
+    date: scoreDate,
+  }));
+
   const payload = {
     iidx_id: iidxIdNorm,
     dj_name: profile.djName ?? null,
@@ -76,27 +96,11 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     exh_count: exhCount,
     level_filter: 'lv12',
     series: 'INF',
-    // tsv lv11/12 전곡 등재 — m.charts (ratingData∩tsv, zasa≤12.7) + m.unclassifiedCharts (tsv \ ratingData)
-    // 의 union = tsvIdx 전체. 게스트 서열표가 zasaLevel > 12.7 곡 / ratingData 미등재 신곡까지 표시 가능.
-    // lamp 통계 (n_played_lv12 등) 는 위 집계 그대로 — m.charts 만 ★ 추정 풀.
-    charts_json: [...charts, ...(unclassifiedCharts ?? [])],
+    // 0.0.44: charts_json=null — user_chart_scores 가 single source of truth.
+    // 게스트 페이지 서열표는 charts_json 없으면 get_user_charts RPC 로 chart_scores fallback.
+    // 디스크 부담 큰 jsonb 제거 + 중복 데이터 정리.
+    charts_json: null,
   };
-  const isDpSlot = (slot: unknown): boolean => (
-    slot === 'DPN' || slot === 'DPH' || slot === 'DPA' || slot === 'DPL'
-  );
-  const scoreDate = new Date().toISOString();
-  const chartScoreRowsRaw = payload.charts_json.filter((c) => isDpSlot(c.slot) && (c.exScore ?? 0) > 0).map((c) => ({
-    played_version: 'INF',
-    level: 'level' in c && typeof c.level === 'number' ? c.level : (c.zasaLevel ?? c.ereterLevel ?? null),
-    title: c.title,
-    iidx_id: iidxIdNorm,
-    dj_name: profile.djName ?? null,
-    diff: c.diff,
-    game_level: c.gameLevel ?? null,
-    dj_level: c.djLevel ?? null,
-    ex_score: c.exScore ?? null,
-    date: scoreDate,
-  }));
   const chartScoreRows = Array.from(chartScoreRowsRaw.reduce((m, r) => {
     const key = `${r.played_version}|${r.iidx_id}|${r.title}|${r.diff}`;
     const prev = m.get(key);
