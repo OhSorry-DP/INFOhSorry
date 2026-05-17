@@ -8,6 +8,7 @@ import type {
   EreterCacheStatus,
   ZasaGetResult,
   ZasaCacheStatus,
+  ServiceStatus,
   RatingGetResult,
   RatingCacheStatus,
   UpdateInfo,
@@ -40,6 +41,9 @@ declare global {
       zasa: {
         get: (force?: boolean) => Promise<ZasaGetResult>;
         status: () => Promise<ZasaCacheStatus>;
+      };
+      serviceStatus: {
+        get: () => Promise<ServiceStatus>;
       };
       rating: {
         get: (force?: boolean) => Promise<RatingGetResult>;

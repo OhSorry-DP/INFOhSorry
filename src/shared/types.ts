@@ -177,6 +177,15 @@ export interface ZasaCacheStatus {
   exists: boolean;
 }
 
+// 원격 service status — gist 의 service-status.json (uploadEnabled / shelfEnabled toggle).
+// main 에서 fetch (Node) → IPC 로 renderer 에 전달.
+export interface ServiceStatus {
+  uploadEnabled: boolean;
+  shelfEnabled: boolean;
+  message?: string;
+  updatedAt?: string;
+}
+
 // ohSorryRating — ohSorry 가 모은 ereter 미등록 lv11/lv12 차트의 EC/HC/EXH ★ 추정값.
 // 추천 풀의 fallback (ereter 매칭 실패 시) — 이레터 데이터 우선, ratingMap 은 보조.
 export interface RatingChart {

@@ -23,6 +23,7 @@ import {
 } from './ereter';
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
 import { getRatingData, getRatingCacheStatus } from './rating';
+import { fetchServiceStatus } from './serviceStatus';
 import { checkAndUpdateOsrLib, getOsrLibCode, checkAndUpdateOsr135Lib, getOsr135LibCode, checkAndUpdateOldOSRLib, getOldOSRLibCode, checkAndUpdateAdoptLib, getAdoptLibCode } from './osrLib';
 import { downloadPortable, runPortable, cleanupOldPortables } from './portableUpdate';
 import { checkForUpdate } from './updateCheck';
@@ -127,6 +128,10 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
   'zasa:status': async () => getZasaCacheStatus(),
+
+  // 원격 service status (gist 의 service-status.json — uploadEnabled / shelfEnabled toggle).
+  // main 에서 fetch (Node) — renderer 의 Chromium CORS 정책 우회. 매 호출 fresh fetch, fail-closed.
+  'serviceStatus:get': async () => fetchServiceStatus(),
 
   // TSV
   'tsv:read': async (...args: never[]) => {

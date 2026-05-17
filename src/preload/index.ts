@@ -8,6 +8,7 @@ import type {
   EreterCacheStatus,
   ZasaGetResult,
   ZasaCacheStatus,
+  ServiceStatus,
   RatingGetResult,
   RatingCacheStatus,
   UpdateInfo,
@@ -52,6 +53,12 @@ const api = {
   zasa: {
     get: (force = false): Promise<ZasaGetResult> => ipcRenderer.invoke('zasa:get', force),
     status: (): Promise<ZasaCacheStatus> => ipcRenderer.invoke('zasa:status'),
+  },
+
+  // 원격 service status (gist 의 service-status.json — uploadEnabled / shelfEnabled toggle).
+  // main 에서 Node fetch — renderer 의 Chromium CORS 정책 우회.
+  serviceStatus: {
+    get: (): Promise<ServiceStatus> => ipcRenderer.invoke('serviceStatus:get'),
   },
 
   // ohSorryRating (ereter 미등록 lv11/lv12 차트 추정값 — 추천 풀 fallback)

@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.42.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.42-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.43.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.43-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.43 — service-status fetch 를 main 프로세스로 이동 (CORS 우회)
+- 0.0.39~0.0.42 동안 `src/shared/serviceStatus.ts` 에서 renderer 가 직접 gist fetch 하던 구조 → renderer 의 Chromium CORS 정책으로 막힐 가능성 있어서 main 으로 이동.
+- 다른 gist 사용 lib 들 (ereter / zasa / rating / osrLib / adopt) 과 동일 패턴 — fetch 는 main (Node fetch), IPC 로 renderer 에 전달.
+- 신규: `src/main/serviceStatus.ts` + `'serviceStatus:get'` IPC handler + `window.infohsorry.serviceStatus.get()` preload expose.
+- 효과: 사용자 PC 의 INFOhSorry 가 비로소 정상 fetch 가능 → INF 데이터 supabase upload 정상화.
 
 ### 0.0.42 — devtools 단축키 + service-status 캐시 제거
 - `main/index.ts` 에 `Ctrl+Shift+I` 단축키 등록 (`webContents.before-input-event`) — prod 빌드에서도 사용자가 devtools 열 수 있게 (F12 는 INFINITAS 충돌 우려로 제외).

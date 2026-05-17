@@ -12,7 +12,6 @@
 import type { ProfileInfo } from './useProfile';
 import type { StarResult } from '../../shared/star-estimator';
 import type { RecInputChart } from '../../shared/recommend';
-import { fetchServiceStatus } from '../../shared/serviceStatus';
 
 const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
@@ -34,8 +33,9 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const { appVersion, profile, starResult, charts, unclassifiedCharts, ereterStar } = input;
 
   // 원격 service status 확인 — uploadEnabled === false 면 upload skip.
-  // fail-closed: fetch 실패 시도 disabled 로 취급 (serviceStatus.ts 가 처리).
-  const status = await fetchServiceStatus();
+  // main 프로세스의 Node fetch 로 IPC 통해 호출 (renderer 의 Chromium CORS 우회).
+  // fail-closed: fetch 실패 시도 disabled 로 취급 (main/serviceStatus.ts 가 처리).
+  const status = await window.infohsorry.serviceStatus.get();
   if (!status.uploadEnabled) {
     return { ok: false, error: status.message || 'upload disabled by remote service status' };
   }
