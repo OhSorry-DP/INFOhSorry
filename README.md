@@ -90,6 +90,15 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.45 — Supabase 새 디비 (users + scores) 마이그레이션 + 강한 norm 통일
+- `src/renderer/src/supabaseSync.ts` 마이그레이션:
+  - 옛 RPC (`upsert_user_profile` + `upsert_user_chart_scores`) → 새 RPC (`upsert_user` + `upsert_scores`).
+  - songs 마스터 캐시 (norm key → `[{ song_id, title, ac }]`) + ac flag `pickSongId` (INF=2 비트). 동명이곡 (raw 같은) 은 INF song 만 매칭.
+  - 같은 PK `(song_id, iidx_id, diff, played_version=0)` 중복 row 안전망 dedup — best ex_score / lamp 유지 (PG 21000 "ON CONFLICT cannot affect row a second time" 회피).
+  - `played_version=0` (INF), `sp_rank/dp_rank=null` (INF 메모리 신뢰성 X), `user_radars` 업로드 X (INF 데이터 없음).
+- `src/shared/match.ts` 의 `norm` 강화 — ohSorry / ohSorryAdmin / ohSorryRating 의 normTitle v0.0.4 와 동일 매핑 (TITLE_ALIASES + NORM_OVERRIDES + denorm 추가). 동명이곡 (`ZEИITH` vs `Zenith` 등 4건) 자동 분리.
+- ohSorry 와 같은 DB 공유 (`iidx_id text PK` 라 namespace 호환). 호출 측 (App.tsx 등) signature 변경 없음.
+
 ### 0.0.44 — user_profiles.charts_json 제거 + chart_score row 에 lamp 추가
 - `supabaseSync.ts` 의 `payload.charts_json` → `null` 로 변경. user_chart_scores 가 single source of truth.
 - `chart_score row` 빌드에 `lamp` 필드 추가 — 게스트 페이지 서열표가 user_chart_scores fallback (`get_user_charts` RPC) 으로 격자 렌더 가능.

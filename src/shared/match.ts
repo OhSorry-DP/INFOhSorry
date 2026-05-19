@@ -1,55 +1,90 @@
-// INFINITAS (Reflux) 차트 ↔ ereter ★ 차트 매칭
+// INFINITAS (Reflux) 차트 ↔ ereter ★ 차트 매칭 + 곡명 정규화 (v0.0.4 동기화)
 //
-// ohSorry 의 norm() 그대로 사용: 곡명을 NFKC 정규화 + 공백/괄호/기호 통일.
+// ohSorry / ohSorryAdmin / ohSorryRating 의 normTitle 과 동일한 강한 norm.
 // 매칭 키 = norm(title) + '|' + diff
 // INFINITAS 의 slot (SPN/DPN/...) 을 ereter 의 diff 명 (NORMAL/HYPER/...) 으로 변환.
+//
+// 정규화 단계 (순서 중요):
+//   0. TITLE_ALIASES — eagate raw → textage raw 치환
+//   1. NORM_OVERRIDES — 동명이곡 (norm 후 같은 키, raw 만 다른) 강제 분리
+//   2. 대문자 Æ → A (lowercase 전)
+//   3. lowercase / NFD diacritic / 공백 제거 / 기호 / 키릴 / 그리스 / 라틴확장 / NFKC
 import type { ChartSlot, EreterChart, SongChart } from './types';
 
-export function norm(s: string): string {
-  return (s || '')
+// eagate raw → textage raw 치환 (norm 으로는 못 잡는 표기 차이)
+const TITLE_ALIASES: Record<string, string> = {
+  '火影': '焱影',                          // eagate '火影' → textage '焱影'
+  'FiZZλ_POT!0N': 'FiZZλ_PØT!OИ',          // eagate '0N' → textage 'ØИ'
+  'FiZZλ_PØT!0И': 'FiZZλ_PØT!OИ',          // zasa '0И' → textage 'OИ'
+  'Xlo': 'Xlø',                            // ereter 'Xlo' → textage 'Xlø'
+  'VOID': 'VØID',                          // ereter 'VOID' → textage 'VØID'
+};
+
+// 동명이곡 (norm 후 같은 키, raw 만 다른) → 강제 norm 키 분리 (신곡 쪽에 '2' suffix)
+const NORM_OVERRIDES: Record<string, string> = {
+  'ZEИITH':         'zenith2',
+  'Shooting Star':  'shootingstar2',
+  'With You':       'withyou2',
+  'take me higher': 'takemehigher2',
+};
+
+// NORM_OVERRIDES reverse — denorm 용
+const NORM_OVERRIDES_REVERSE: Record<string, string> = {};
+for (const rawKey of Object.keys(NORM_OVERRIDES)) {
+  NORM_OVERRIDES_REVERSE[NORM_OVERRIDES[rawKey]] = rawKey;
+}
+
+function basicNorm(s: string): string {
+  return s
+    .replace(/Æ/g, 'A')          // 대문자 Æ — lowercase 전에 처리 (eagate "ÆTHER" → "ATHER")
     .toLowerCase()
-    .replace(/[\s　]+/g, '')
-    // 틸드 종류 (ASCII / 수학 / 일본 wave dash / fullwidth)
-    .replace(/[~∼〜～]/g, '~')
-    .replace(/[!！]/g, '!')
-    .replace(/[?？]/g, '?')
-    .replace(/[(（]/g, '(')
-    .replace(/[)）]/g, ')')
-    // 더블 쿼터 종류 → ASCII " (U+201C/D 좌우 / 일본식 〝〞〟 / 독일 „)
-    .replace(/[“”„‟〝〞〟]/g, '"')
-    // 싱글 쿼터 종류 → ASCII ' (U+2018/9 좌우 / U+201A/B 저상부 / backtick / acute)
-    .replace(/[‘’‚‛`´ʼˈˊˋ]/g, "'")
-    // 라틴 확장 → 기본
-    .replace(/ƒ/g, 'f')              // ƒ "FFFFF"
-    .replace(/[Øø]/g, 'o')      // Ø ø "VØID" "ACTØ"
-    .replace(/[Ææ]/g, 'a')      // Æ æ "ÆTHER" — 클라이언트가 Æ 떼고 ATHER 로 보내는 케이스 호환
-    .replace(/ə/g, 'e')              // ə schwa "uən"
-    .replace(/[Œœ]/g, 'oe')     // Œ œ
-    .replace(/ß/g, 'ss')             // ß
-    // 키릴 → ASCII (homoglyph 으로 쓰인 케이스: "RINИE")
-    .replace(/[Ии]/g, 'n')      // И и
-    .replace(/[Аа]/g, 'a')      // А а
-    .replace(/[Ее]/g, 'e')      // Е е
-    .replace(/[Кк]/g, 'k')      // К к
-    .replace(/[Мм]/g, 'm')      // М м
-    .replace(/[Оо]/g, 'o')      // О о
-    .replace(/[Рр]/g, 'p')      // Р р
-    .replace(/[Сс]/g, 'c')      // С с
-    .replace(/[Тт]/g, 't')      // Т т
-    .replace(/[Хх]/g, 'x')      // Х х
-    // 대시 변종 → ASCII '-' (가타카나 장음 ー U+30FC 는 제외)
-    .replace(/[—–‐‑−]/g, '-')
-    // 장식 기호 / 음악 / 수학 기호 제거
-    .replace(/[♠-♯]/g, '')      // ♠♡♢♣♤♥♦♧♨♩♪♫♬♭♮♯
-    .replace(/[†‡]/g, '')       // † ‡ daggers
-    .replace(/[→←↑↓]/g, '') // ← → ↑ ↓
-    .replace(/[※⁂]/g, '')       // ※ ⁂
-    .replace(/[★☆]/g, '')       // ★ ☆
-    .replace(/[∫∮∂∇∈∞]/g, '') // ∫ ∮ ∂ ∇ ∈ ∞
-    // diacritic 분해 후 라틴 결합 마크 (U+0300~036F) 만 제거 — 일본어 탁점 (U+3099/A) 보존
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
+    .replace(/[\s　]+/g, '')
+    .replace(/[~∼〜～]/g, '~')
+    .replace(/[!！¡]/g, '!')
+    .replace(/[?？¿]/g, '?')
+    .replace(/[(（]/g, '(')
+    .replace(/[)）]/g, ')')
+    .replace(/[“”„‟〝〞〟]/g, '"')
+    .replace(/[‘’‚‛`´ʼˈˊˋ]/g, "'")
+    .replace(/ƒ/g, 'f')
+    .replace(/[Øø]/g, '0')        // eagate Ø → 0 (숫자) — "ACTØ" → "ACT0"
+    .replace(/æ/g, 'ae')          // "Iræ" → "irae"
+    .replace(/[əә]/g, 'e')        // 라틴 + 키릴 schwa
+    .replace(/[Œœ]/g, 'oe')
+    .replace(/ß/g, 'ss')
+    // 키릴 homoglyph
+    .replace(/[Ии]/g, 'n').replace(/[Аа]/g, 'a').replace(/[Ее]/g, 'e').replace(/[Кк]/g, 'k')
+    .replace(/[Мм]/g, 'm').replace(/[Оо]/g, 'o').replace(/[Рр]/g, 'p').replace(/[Сс]/g, 'c')
+    .replace(/[Тт]/g, 't').replace(/[Хх]/g, 'x')
+    // 그리스 → ASCII
+    .replace(/[Ττ]/g, 't').replace(/[Λλ]/g, 'l').replace(/[Οο]/g, 'o').replace(/[Εε]/g, 'e')
+    .replace(/[Σσς]/g, 's').replace(/[Αα]/g, 'a').replace(/[Ρρ]/g, 'r').replace(/[Ηη]/g, 'h')
+    .replace(/[Ιι]/g, 'i').replace(/[Υυ]/g, 'y').replace(/[Νν]/g, 'n').replace(/[Μμ]/g, 'm')
+    .replace(/[Χχ]/g, 'x')
+    // K homoglyph
+    .replace(/[ꓘꞰ꟰Ƙƙʞ]/g, 'k')
+    .replace(/[…・･.]/g, '')       // ellipsis / katakana middle dot / period 제거
+    .replace(/[—–‐‑−]/g, '-')
+    .replace(/[♠-♯]/g, '').replace(/[†‡]/g, '').replace(/[←-↓]/g, '')
+    .replace(/[※⁂]/g, '').replace(/[★☆]/g, '').replace(/[∫∮∂∇∈∞]/g, '')
     .normalize('NFKC');
+}
+
+export function norm(s: string): string {
+  let raw = String(s == null ? '' : s);
+  if (Object.prototype.hasOwnProperty.call(TITLE_ALIASES, raw)) raw = TITLE_ALIASES[raw];
+  if (Object.prototype.hasOwnProperty.call(NORM_OVERRIDES, raw)) return NORM_OVERRIDES[raw];
+  return basicNorm(raw);
+}
+
+// denorm — NORM_OVERRIDES 적용된 키만 raw 복원, 그 외엔 그대로
+export function denorm(k: string | null | undefined): string {
+  if (k == null) return '';
+  const key = String(k);
+  if (Object.prototype.hasOwnProperty.call(NORM_OVERRIDES_REVERSE, key)) return NORM_OVERRIDES_REVERSE[key];
+  return key;
 }
 
 const SLOT_TO_DIFF: Record<ChartSlot, string> = {
