@@ -1161,6 +1161,44 @@ body {
   font-size: 11px;
   user-select: none;
 }
+/* 복습곡 토글 + 추천 범위 토글 묶음 (헤더 우측) */
+.rec-area-head .rec-head-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* 복습곡(reached) 포함/제외 체크박스 — ✓ 연한 회색 / ✔ 기본 글자색 */
+.rec-area-head .rec-review-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: none;
+  padding: 2px 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+.rec-area-head .rec-review-toggle:hover {
+  background: none;
+}
+.rec-area-head .rec-review-toggle .rrt-check {
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-disabled);
+  transition: color 0.15s;
+}
+.rec-area-head .rec-review-toggle .rrt-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  transition: color 0.15s;
+}
+.rec-area-head .rec-review-toggle.active .rrt-check {
+  color: var(--text-primary);
+}
+.rec-area-head .rec-review-toggle.active .rrt-label {
+  color: var(--text-primary);
+  font-weight: 700;
+}
 .rec-cards {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

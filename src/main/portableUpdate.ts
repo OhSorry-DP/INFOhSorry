@@ -116,7 +116,7 @@ export async function downloadPortable(url: string, fileName: string, sender: El
           resolve(filePath);
         });
       });
-      response.on('error', (e) => {
+      response.on('error', (e: Error) => {
         writer?.end();
         reject(e);
       });

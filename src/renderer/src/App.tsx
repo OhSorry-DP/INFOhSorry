@@ -12,6 +12,7 @@ import {
   compareRateDesc,
   shouldDropFromRecs,
   type RecCandidate,
+  type RecDjMode,
   type RecInputChart,
   type RecLevelMode,
   type RecStage,
@@ -985,7 +986,12 @@ export default function App() {
   const lastRerollHC = useRef(-1);
   const lastRerollEXH = useRef(-1);
 
-  function refreshRecs(prev: RecState, stage: RecStage, charts: RecInputChart[]): RecState {
+  function refreshRecs(
+    prev: RecState,
+    stage: RecStage,
+    charts: RecInputChart[],
+    djMode: RecDjMode,
+  ): RecState {
     const map = new Map<string, RecInputChart>();
     for (const c of charts) map.set(c.title + '|' + c.slot, c);
     // 갱신 정책 (ohSorry v3.3.5 reached 모델):
@@ -1025,7 +1031,7 @@ export default function App() {
     for (const r of prev.picked) {
       const c = map.get(r.title + '|' + r.slot);
       if (c) {
-        if (shouldDropFromRecs(stage, c.lampNum, c.djLevel)) {
+        if (shouldDropFromRecs(stage, c.lampNum, c.djLevel, djMode)) {
           droppedCount++;
           pickedChanged = true;
           continue;
@@ -1046,7 +1052,7 @@ export default function App() {
     for (const r of prev.pool) {
       const c = map.get(r.title + '|' + r.slot);
       if (c) {
-        if (shouldDropFromRecs(stage, c.lampNum, c.djLevel)) {
+        if (shouldDropFromRecs(stage, c.lampNum, c.djLevel, djMode)) {
           poolChanged = true;
           continue;
         }
@@ -1091,34 +1097,42 @@ export default function App() {
     setRerollHC((k) => k + 1);
     setRerollEXH((k) => k + 1);
   };
+  // 복습곡(reached — 램프는 깼지만 DJ레벨 미달) 추천 포함 여부. 기본 'off' (제외).
+  const [recDjMode, setRecDjMode] = useState<RecDjMode>('off');
+  const handleRecDjModeChange = (mode: RecDjMode): void => {
+    setRecDjMode(mode);
+    setRerollEC((k) => k + 1);
+    setRerollHC((k) => k + 1);
+    setRerollEXH((k) => k + 1);
+  };
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEC.current !== rerollEC) {
       lastRerollEC.current = rerollEC;
-      setRecsEC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'ec', recLevelMode));
+      setRecsEC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'ec', recLevelMode, recDjMode));
     } else {
-      setRecsEC((prev) => refreshRecs(prev, 'ec', dp12Match.charts));
+      setRecsEC((prev) => refreshRecs(prev, 'ec', dp12Match.charts, recDjMode));
     }
-  }, [rerollEC, dp12Match, ohsorryRecBase, recLevelMode]);
+  }, [rerollEC, dp12Match, ohsorryRecBase, recLevelMode, recDjMode]);
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollHC.current !== rerollHC) {
       lastRerollHC.current = rerollHC;
-      setRecsHC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'hc', recLevelMode));
+      setRecsHC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'hc', recLevelMode, recDjMode));
     } else {
-      setRecsHC((prev) => refreshRecs(prev, 'hc', dp12Match.charts));
+      setRecsHC((prev) => refreshRecs(prev, 'hc', dp12Match.charts, recDjMode));
     }
-  }, [rerollHC, dp12Match, ohsorryRecBase, recLevelMode]);
+  }, [rerollHC, dp12Match, ohsorryRecBase, recLevelMode, recDjMode]);
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEXH.current !== rerollEXH) {
       lastRerollEXH.current = rerollEXH;
       // EXH 는 ohSorry 스타일 별도 로직 — ★ 낮은 30곡 → rate(=exScore/(noteCount*2)) desc 10곡
-      setRecsEXH(buildExhRecs(dp12Match.charts, ohsorryRecBase, recLevelMode));
+      setRecsEXH(buildExhRecs(dp12Match.charts, ohsorryRecBase, recLevelMode, recDjMode));
     } else {
-      setRecsEXH((prev) => refreshRecs(prev, 'exh', dp12Match.charts));
+      setRecsEXH((prev) => refreshRecs(prev, 'exh', dp12Match.charts, recDjMode));
     }
-  }, [rerollEXH, dp12Match, ohsorryRecBase, recLevelMode]);
+  }, [rerollEXH, dp12Match, ohsorryRecBase, recLevelMode, recDjMode]);
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
   const dp12Stats = useMemo(() => {
@@ -1402,6 +1416,8 @@ export default function App() {
                     baseStar={ohsorryRecBase}
                     levelMode={recLevelMode}
                     onLevelModeChange={handleRecLevelModeChange}
+                    djMode={recDjMode}
+                    onDjModeChange={handleRecDjModeChange}
                     onRerollEC={() => setRerollEC((k) => k + 1)}
                     onRerollHC={() => setRerollHC((k) => k + 1)}
                     onRerollEXH={() => setRerollEXH((k) => k + 1)}
@@ -1460,6 +1476,8 @@ function Recommendations({
   baseStar,
   levelMode,
   onLevelModeChange,
+  djMode,
+  onDjModeChange,
   onRerollEC,
   onRerollHC,
   onRerollEXH,
@@ -1471,6 +1489,8 @@ function Recommendations({
   baseStar: number;
   levelMode: RecLevelMode;
   onLevelModeChange: (mode: RecLevelMode) => void;
+  djMode: RecDjMode;
+  onDjModeChange: (mode: RecDjMode) => void;
   onRerollEC: () => void;
   onRerollHC: () => void;
   onRerollEXH: () => void;
@@ -1482,25 +1502,36 @@ function Recommendations({
         <h3>
           추천곡 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12 }}>★ {baseStar.toFixed(2)} 기준</span>
         </h3>
-        <div className="rec-level-toggle" title="추천 풀에 포함할 게임 LEVEL 선택">
-          <span className="rec-level-label">추천 범위 :</span>
+        <div className="rec-head-controls">
           <button
             type="button"
-            className={`rec-level-opt${levelMode === 'lv12' ? ' active' : ''}`}
-            onClick={() => onLevelModeChange('lv12')}
-            title="게임 LEVEL 12 차트만 추천"
+            className={`rec-review-toggle${djMode === 'on' ? ' active' : ''}`}
+            onClick={() => onDjModeChange(djMode === 'on' ? 'off' : 'on')}
+            title="램프는 클리어했지만 DJ레벨이 부족한 곡(복습곡)도 추천에 포함"
           >
-            DP12
+            <span className="rrt-check">{djMode === 'on' ? '✔︎' : '✓︎'}</span>
+            <span className="rrt-label">복습곡 {djMode === 'on' ? '포함' : '제외'}</span>
           </button>
-          <span className="rec-level-sep">|</span>
-          <button
-            type="button"
-            className={`rec-level-opt${levelMode === 'all' ? ' active' : ''}`}
-            onClick={() => onLevelModeChange('all')}
-            title="게임 LEVEL 11 + 12 차트 추천"
-          >
-            DP11+
-          </button>
+          <div className="rec-level-toggle" title="추천 풀에 포함할 게임 LEVEL 선택">
+            <span className="rec-level-label">추천 범위 :</span>
+            <button
+              type="button"
+              className={`rec-level-opt${levelMode === 'lv12' ? ' active' : ''}`}
+              onClick={() => onLevelModeChange('lv12')}
+              title="게임 LEVEL 12 차트만 추천"
+            >
+              DP12
+            </button>
+            <span className="rec-level-sep">|</span>
+            <button
+              type="button"
+              className={`rec-level-opt${levelMode === 'all' ? ' active' : ''}`}
+              onClick={() => onLevelModeChange('all')}
+              title="게임 LEVEL 11 + 12 차트 추천"
+            >
+              DP11+
+            </button>
+          </div>
         </div>
       </div>
       <div className="rec-cards">

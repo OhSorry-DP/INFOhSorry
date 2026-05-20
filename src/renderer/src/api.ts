@@ -129,6 +129,17 @@ if (!IS_HOST) {
       checkUpdate: () =>
         callIpc('adoptLib:checkUpdate') as ReturnType<Window['infohsorry']['adoptLib']['checkUpdate']>,
     },
+    // 브라우저 원격에선 포터블 자동 업데이트 의미 없음 (호스트 exe 를 원격 기기에서 받아 실행 불가) — noop/reject
+    portable: {
+      download: async (): Promise<string> => {
+        throw new Error('원격 접속에서는 자동 업데이트를 사용할 수 없습니다');
+      },
+      run: async (): Promise<{ ok: boolean; error?: string }> => ({
+        ok: false,
+        error: '원격 접속에서는 자동 업데이트를 사용할 수 없습니다',
+      }),
+      onProgress: () => () => {},
+    },
     update: {
       check: () =>
         callIpc('update:check') as ReturnType<Window['infohsorry']['update']['check']>,

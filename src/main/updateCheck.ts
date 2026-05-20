@@ -1,21 +1,12 @@
 // GitHub Releases API 로 최신 버전 체크 + 현재 버전 과 비교.
 // 알림 전용 (electron-updater 같은 자동 다운로드 X) — 사용자가 클릭해서 GitHub 릴리즈 페이지 가서 수동 다운로드.
 import { app } from 'electron';
+// UpdateInfo 는 shared/types.ts 가 단일 정의 — renderer / preload 와 같은 타입 사용 (중복 정의 방지).
+import type { UpdateInfo } from '../shared/types';
+
+export type { UpdateInfo };
 
 const GITHUB_LATEST_RELEASE_URL = 'https://api.github.com/repos/OhSorry-DP/INFOhSorry/releases/latest';
-
-export interface UpdateInfo {
-  hasUpdate: boolean;
-  currentVersion: string;
-  latestVersion: string | null;
-  htmlUrl: string | null; // 릴리즈 페이지 URL — 클릭 시 브라우저에서 열기
-  publishedAt: string | null;
-  // v0.0.19+: 포터블 자동 다운로드용 (방식 B)
-  portableUrl: string | null;     // assets[].browser_download_url (portable .exe)
-  portableName: string | null;    // 저장 파일명
-  portableSize: number | null;    // bytes
-  error?: string;
-}
 
 // "0.0.16" 같은 SemVer 비교. v 접두사 제거 후 dot split + 숫자 비교.
 // a > b 면 양수, a < b 면 음수, 같으면 0.

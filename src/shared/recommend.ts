@@ -102,6 +102,10 @@ export interface RecCandidate {
 
 export type RecStage = 'ec' | 'hc' | 'exh';
 export type RecLevelMode = 'all' | 'lv12';
+// 복습곡(reached — 램프는 깼지만 DJ레벨 미달) 추천 풀 포함 여부.
+//   'on'  = 복습곡 포함 (클리어램프 미달 + DJ레벨 미달 둘 다)
+//   'off' = 클리어램프 미달 곡만
+export type RecDjMode = 'on' | 'off';
 export const STAGE_THRESHOLD: Record<RecStage, number> = { ec: 3, hc: 5, exh: 6 };
 
 // stage 별 "DJ Level 미달이면 reached 풀에 들어갈 lamp" — 해당 stage 깬 곡 중 추가 클리어 단계 미진입
@@ -211,6 +215,7 @@ function buildPoolsBuckets(
   baseStar: number,
   stage: RecStage,
   recLevelMode: RecLevelMode,
+  djMode: RecDjMode,
 ): { underLamp: Bucket; reached: Bucket } {
   const underLamp = emptyBucket();
   const reached = emptyBucket();
@@ -224,6 +229,8 @@ function buildPoolsBuckets(
     if (recLevelMode === 'lv12' && c.gameLevel !== 12) continue;
     const under = c.lampNum < threshold;
     const reachedForDj = isReachedLamp(stage, c.lampNum);
+    // 복습곡 제외 모드 — reached (램프는 깼지만 DJ레벨 미달) 곡은 후보에서 제외
+    if (djMode === 'off' && reachedForDj) continue;
     if (!under && !reachedForDj) continue;
     if (reachedForDj && isAccuracyOK(stage, c.djLevel)) continue;
     if (reachedForDj && c.exScore === 0) continue;
@@ -303,9 +310,10 @@ export function buildRecsWithPool(
   baseStar: number,
   stage: RecStage,
   recLevelMode: RecLevelMode = 'all',
+  djMode: RecDjMode = 'on',
 ): { picked: RecCandidate[]; pool: RecCandidate[] } {
   if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
-  const { underLamp, reached } = buildPoolsBuckets(matched, baseStar, stage, recLevelMode);
+  const { underLamp, reached } = buildPoolsBuckets(matched, baseStar, stage, recLevelMode, djMode);
   const countField = (stage + '_n') as 'ec_n' | 'hc_n' | 'exh_n';
 
   const underSample = sample15(underLamp, countField);
@@ -361,8 +369,9 @@ export function buildRecs(
   baseStar: number,
   stage: RecStage,
   recLevelMode: RecLevelMode = 'all',
+  djMode: RecDjMode = 'on',
 ): RecCandidate[] {
-  return buildRecsWithPool(matched, baseStar, stage, recLevelMode).picked;
+  return buildRecsWithPool(matched, baseStar, stage, recLevelMode, djMode).picked;
 }
 
 // EXH 전용 추천 — ohSorry 의 buildExhRecs 포팅.
@@ -379,11 +388,14 @@ export function buildExhRecs(
   matched: RecInputChart[],
   baseStar: number,
   recLevelMode: RecLevelMode = 'all',
+  djMode: RecDjMode = 'on',
 ): { picked: RecCandidate[]; pool: RecCandidate[] } {
   if (!Number.isFinite(baseStar)) return { picked: [], pool: [] };
   const candidates: RecCandidate[] = [];
   for (const c of matched) {
     if (recLevelMode === 'lv12' && c.gameLevel !== 12) continue;
+    // 복습곡 제외 모드 — EXH 클리어 (lamp>=6) 곡은 후보에서 제외
+    if (djMode === 'off' && c.lampNum >= 6) continue;
     if (c.lampNum >= 6 && c.djLevel === 'AAA') continue;
     if (c.lampNum >= 6 && c.exScore === 0) continue;
     if (c.level < 11.6 || c.level > 12.7) continue;
@@ -447,15 +459,18 @@ export function compareRateDesc(ra: number | null | undefined, rb: number | null
 // stage 별 picked / pool 에서 제거할 조건:
 //   - 더 강한 lamp 까지 클리어 (under 도 아니고 reached 도 아닌 lamp) → 제거
 //   - reached + DJ Level 통과 → 제거 (개선 여지 없음)
+//   - 복습곡 제외 모드(djMode='off') → reached 곡 자체를 제거
 export function shouldDropFromRecs(
   stage: RecStage,
   lampNum: number,
   djLevel: string | null | undefined,
+  djMode: RecDjMode = 'on',
 ): boolean {
   const threshold = STAGE_THRESHOLD[stage];
   const under = lampNum < threshold;
   const reachedForDj = isReachedLamp(stage, lampNum);
   if (!under && !reachedForDj) return true;
+  if (djMode === 'off' && reachedForDj) return true;
   if (reachedForDj && isAccuracyOK(stage, djLevel)) return true;
   return false;
 }

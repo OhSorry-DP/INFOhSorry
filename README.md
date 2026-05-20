@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.45.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.45-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.46.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.46-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,14 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.46 — 추천곡 복습곡 토글 + 포터블 자동 업데이트 타입 정리
+- 추천곡에 **복습곡 포함/제외 토글** 추가 (`recommend.ts` / `App.tsx` / `index.css`):
+  - 복습곡 = reached 풀 (램프는 깼지만 DJ레벨 미달인 곡). 추천곡 헤더에 ✓/✔ 체크박스로 노출, EC/HC/EXH 3섹션 공통 적용, 기본값 "제외" (클리어램프 미달 곡만 추천).
+  - `buildRecsWithPool` / `buildExhRecs` / `shouldDropFromRecs` 에 `djMode` 파라미터 추가 — `'off'` 시 reached 곡을 후보 풀에서 제외.
+- 포터블 자동 업데이트 타입 깨짐 수정 — `UpdateInfo` 가 `updateCheck.ts` 와 `shared/types.ts` 에 이중 정의돼 어긋나 있던 것을 `shared/types.ts` 단일 정의로 통일 (`portableUrl` / `portableName` / `portableSize` 필드 추가).
+  - `api.ts` 의 browser-remote bridge 에 `portable` polyfill 추가 (원격 접속은 자동 업데이트 불가 → reject/noop).
+  - `portableUpdate.ts` 콜백 파라미터 타입 명시. `npm run typecheck` 통과 (기존 12개 에러 해소).
 
 ### 0.0.45 — Supabase 새 디비 (users + scores) 마이그레이션 + 강한 norm 통일
 - `src/renderer/src/supabaseSync.ts` 마이그레이션:

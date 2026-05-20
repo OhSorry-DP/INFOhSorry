@@ -219,12 +219,16 @@ export interface RatingCacheStatus {
   exists: boolean;
 }
 
-// GitHub 최신 릴리즈 체크 결과 — 알림 전용 (자동 다운로드 X)
+// GitHub 최신 릴리즈 체크 결과 — main/updateCheck.ts 와 renderer 가 공유하는 단일 정의.
 export interface UpdateInfo {
   hasUpdate: boolean;
   currentVersion: string;
   latestVersion: string | null;
   htmlUrl: string | null; // 릴리즈 페이지 URL
   publishedAt: string | null;
+  // v0.0.19+: 포터블 자동 다운로드용 — GitHub 릴리즈 assets 의 portable .exe
+  portableUrl: string | null; // assets[].browser_download_url (portable .exe)
+  portableName: string | null; // 저장 파일명
+  portableSize: number | null; // bytes
   error?: string;
 }
