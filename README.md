@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.46.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.46-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.47.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.47-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,13 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.47 — INFINITAS 미수록 차트 필터 (notInINF) + 미해금 곡 자물쇠 표기
+- **INFINITAS 미수록 차트 필터** — `service-status.json` 에 `notInINF` 배열 추가 (`{ title, diff }`, diff 는 slot 표기 DPN/DPH/DPA/DPL):
+  - 아케이드에는 있지만 INFINITAS 에 수록되지 않은 차트 (실제 플레이 불가) 를 추천 / DP 서열표 / supabase 업로드 / 통계에서 모두 제외.
+  - main 의 `serviceStatus` fetch 경로 재사용 — 별도 gist 파일 없이 서버 토글과 한 곳에서 관리. 앱 부팅 시 fetch.
+  - `App.tsx` 의 `dp12Match` / `dp12Charts` / `dp11Charts` 에 `notInInfSet` 필터 적용.
+- **미해금 곡 자물쇠 표기** — 추천곡 중 미해금 차트 (`unlocked=false`) 는 곡명 앞에 🔒 표기 (추천 풀에는 그대로 유지). `RecCandidate.unlocked` 필드 추가.
 
 ### 0.0.46 — 추천곡 복습곡 토글 + 포터블 자동 업데이트 타입 정리
 - 추천곡에 **복습곡 포함/제외 토글** 추가 (`recommend.ts` / `App.tsx` / `index.css`):

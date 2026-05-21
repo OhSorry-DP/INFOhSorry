@@ -1328,6 +1328,11 @@ body {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* 미해금 곡 자물쇠 — 곡명 앞에 표기 */
+.rec-row .rec-lock {
+  margin-right: 3px;
+  font-size: 0.85em;
+}
 .rec-row .rec-lamp {
   order: 3;
   flex-shrink: 0;

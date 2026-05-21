@@ -12,6 +12,7 @@
 //      각 SLOT 부족 시 같은 분류의 반대 카테고리에서 fallback, 그래도 부족하면 전체 풀에서 보충
 //   4. EXH 는 별도 buildExhRecs — EXH ★ 낮은 30곡 → rate(=exScore/(noteCount*2)) desc 10곡
 //   5. recLevelMode='lv12' 시 gameLevel===12 만 풀에 포함 (baseStar≥6 default)
+//   6. unlocked===false (미해금 채보) 도 추천에 포함 — RecCandidate.unlocked 로 UI 에 자물쇠 표기
 //
 // 매번 random shuffle 이라 호출할 때마다 결과 바뀜 ("다시 뽑기" 효과).
 import type { ChartSlot, Lamp } from './types';
@@ -52,7 +53,7 @@ export interface RecInputChart {
   zasaLevel?: number | null; // zasa★ (10.2~12.7)
   isRatingFallback?: boolean; // true: ereter 미등재 (UI 색 구분 / 추정값 표시 fallback)
   // Reflux TSV 추가 정보 (supabase 업로드용)
-  unlocked?: boolean;
+  unlocked?: boolean; // false = 미해금 채보 → 추천에 포함하되 UI 에 자물쇠 표기
   exScore?: number | null;
   noteCount?: number | null;
   djPoints?: number | null;
@@ -98,6 +99,8 @@ export interface RecCandidate {
   noteCount?: number | null;
   djLevel?: string | null;
   lampNum?: number;
+  // 미해금 채보 여부 — false 면 UI 에 자물쇠 표기 (추천에서 제외하진 않음).
+  unlocked?: boolean;
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';
@@ -272,6 +275,7 @@ function buildPoolsBuckets(
       lampNum: c.lampNum,
       exScore: c.exScore ?? null,
       noteCount: c.noteCount ?? null,
+      unlocked: c.unlocked,
     };
     (reachedForDj ? reached : underLamp)[cls].push(item);
   }
@@ -438,6 +442,7 @@ export function buildExhRecs(
       noteCount: c.noteCount ?? null,
       djLevel: c.djLevel,
       lampNum: c.lampNum,
+      unlocked: c.unlocked,
     });
   }
   // 1. EXH ★ 낮은 순 → top 30

@@ -177,6 +177,13 @@ export interface ZasaCacheStatus {
   exists: boolean;
 }
 
+// 추천 / DP 서열표에서 제외할 차트 — INFINITAS 미수록 (아케이드 전용 채보 등).
+// diff 는 slot 표기 — 'DPN' | 'DPH' | 'DPA' | 'DPL' (INFOhSorry 는 DP 전용).
+export interface NotInInfChart {
+  title: string;
+  diff: string;
+}
+
 // 원격 service status — gist 의 service-status.json (uploadEnabled / shelfEnabled toggle).
 // main 에서 fetch (Node) → IPC 로 renderer 에 전달.
 export interface ServiceStatus {
@@ -184,6 +191,8 @@ export interface ServiceStatus {
   shelfEnabled: boolean;
   message?: string;
   updatedAt?: string;
+  // INFINITAS 미수록 차트 — 추천 / 서열표에서 표시 제외 (service-status.json 의 notInINF 배열).
+  notInINF?: NotInInfChart[];
 }
 
 // ohSorryRating — ohSorry 가 모은 ereter 미등록 lv11/lv12 차트의 EC/HC/EXH ★ 추정값.

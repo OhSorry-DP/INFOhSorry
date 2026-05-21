@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { ChartSlot, EreterCacheStatus, EreterData, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
+import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
@@ -100,6 +100,8 @@ export default function App() {
   // ohSorryRating — ereter 미등록 lv11/lv12 차트 추정값 (추천 풀 fallback)
   // 우선순위: ereter > rating. ereter 매칭 곡은 절대 rating 으로 덮지 않음.
   const [ratingData, setRatingData] = useState<RatingData | null>(null);
+  // service-status.json 의 notInINF — INFINITAS 미수록 차트 제외 목록
+  const [notInINF, setNotInINF] = useState<NotInInfChart[]>([]);
 
   // GitHub 최신 릴리즈 체크 결과 — 새 버전 있으면 헤더 배너 노출.
   // 사용자가 "이번 버전 보지 않기" 클릭 시 localStorage 에 dismissed 버전 저장.
@@ -194,25 +196,50 @@ export default function App() {
     })();
   }, []);
 
-  // 마운트 시 GitHub 최신 릴리즈 체크 (5초 지연 후 — 초기 로딩 우선).
-  // 실패 / 네트워크 끊김 / 같은 버전이면 배너 안 뜸.
+  // 마운트 시 service-status.json fetch — notInINF (INFINITAS 미수록 차트 제외 목록).
+  // 실패해도 무시 — 목록 없으면 필터 미적용 (기존 동작 유지).
   useEffect(() => {
-    const t = setTimeout(() => {
-      void (async () => {
-        try {
-          const info = await window.infohsorry.update.check();
-          if (info.hasUpdate && info.latestVersion) {
-            const dismissed = localStorage.getItem('infohsorry.update.dismissed');
-            if (dismissed !== info.latestVersion) {
-              setUpdateInfo(info);
+    void (async () => {
+      try {
+        const s = await window.infohsorry.serviceStatus.get();
+        if (Array.isArray(s.notInINF)) setNotInINF(s.notInINF);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
+  // GitHub 최신 릴리즈 체크 — 마운트 5초 후 1회 + 이후 10분마다 반복.
+  // 실패 / 네트워크 끊김 / 같은 버전이면 배너 안 뜸. 업데이트 배너를 띄우면 폴링 중단.
+  useEffect(() => {
+    let interval: ReturnType<typeof setInterval> | null = null;
+    const check = async (): Promise<void> => {
+      try {
+        const info = await window.infohsorry.update.check();
+        if (info.hasUpdate && info.latestVersion) {
+          const dismissed = localStorage.getItem('infohsorry.update.dismissed');
+          if (dismissed !== info.latestVersion) {
+            setUpdateInfo(info);
+            // 배너를 띄웠으면 더 폴링할 필요 없음 — interval 정리
+            if (interval) {
+              clearInterval(interval);
+              interval = null;
             }
           }
-        } catch {
-          /* ignore */
         }
-      })();
+      } catch {
+        /* ignore */
+      }
+    };
+    // 초기 로딩 우선 — 5초 지연 후 첫 체크, 그 다음 10분 간격 반복
+    const t = setTimeout(() => {
+      void check();
+      interval = setInterval(() => void check(), 10 * 60 * 1000);
     }, 5000);
-    return () => clearTimeout(t);
+    return () => {
+      clearTimeout(t);
+      if (interval) clearInterval(interval);
+    };
   }, []);
 
   // ereter 갱신 — force=true 면 24h 안 지났어도 강제 갱신
@@ -295,11 +322,20 @@ export default function App() {
     return { total, unlocked, played };
   }, [rows, tab]);
 
+  // INFINITAS 미수록 차트 제외 Set — service-status.json 의 notInINF 기반. key: norm(title)+'|'+slot
+  const notInInfSet = useMemo(
+    () => new Set(notInINF.map((e) => norm(e.title) + '|' + e.diff)),
+    [notInINF],
+  );
+
   // DP ☆12 차트 추출 — 서열표 input
   // 매칭 우선순위: ereter ★ → ohSorryRating (gameLevel===12) zasaLevel (둘 다 없으면 미분류).
   // ratingMap 만 매칭된 차트는 추천 / ★값 추정엔 사용 X — 격자 분류만 영향.
+  // notInInfSet (INFINITAS 미수록) 곡은 추출 단계에서 제외.
   const dp12Charts = useMemo(() => {
-    const charts = extractCharts(rows, { slots: DP_SLOTS, level: 12 });
+    const charts = extractCharts(rows, { slots: DP_SLOTS, level: 12 }).filter(
+      (c) => !notInInfSet.has(norm(c.title) + '|' + c.slot),
+    );
     if (!ereterData && !ratingData && !zasaData) return charts;
     const ereterIdx = ereterData ? buildEreterIndex(ereterData.charts).index : null;
     // ohSorryRating (lv12) 인덱스 — norm(title)+'|'+diff → zasaLevel
@@ -327,12 +363,14 @@ export default function App() {
       if (typeof zlv === 'number') return { ...c, ereterLevel: zlv };
       return c;
     });
-  }, [rows, ereterData, ratingData, zasaData]);
+  }, [rows, ereterData, ratingData, zasaData, notInInfSet]);
 
   // DP ☆11 차트 추출 — ohSorryRating.ratings (gameLevel === 11) 의 zasaLevel 매칭
   //   ereter 는 ★12 만 등재 → lv11 격자는 ohSorryRating 의 zasaLevel 로 그룹화
   const dp11Charts = useMemo(() => {
-    const charts = extractCharts(rows, { slots: DP_SLOTS, level: 11 });
+    const charts = extractCharts(rows, { slots: DP_SLOTS, level: 11 }).filter(
+      (c) => !notInInfSet.has(norm(c.title) + '|' + c.slot),
+    );
     if (!ratingData && !zasaData) return charts;
     const ratingIdx = new Map<string, number>(); // key → zasaLevel
     if (ratingData) {
@@ -356,7 +394,7 @@ export default function App() {
       if (typeof zlv === 'number') return { ...c, ereterLevel: zlv };
       return c;
     });
-  }, [rows, ratingData, zasaData]);
+  }, [rows, ratingData, zasaData, notInInfSet]);
 
   // 서열표 미분류 곡 JSON payload — ereter / ratingMap / zasaData 셋 다 매칭 안 된 곡 (lv11+lv12).
   const unclassifiedJson = useMemo(() => {
@@ -440,6 +478,8 @@ export default function App() {
         ratingMissedInTsv.push({ title: rt.title, diff: rt.diff, gameLevel: rt.gameLevel, zasaLevel: rt.zasaLevel, normKey });
         continue;
       }
+      // INFINITAS 미수록 차트 — 추천 / 서열표 / supabase 모두에서 제외
+      if (notInInfSet.has(norm(rt.title) + '|' + hit.slot)) continue;
       const c = hit.c;
       const e = ereterIdx.get(normKey);
       const hasEreter = !!e && e.level <= 12.7;
@@ -492,6 +532,7 @@ export default function App() {
     const unclassifiedCharts: Omit<RecInputChart, 'level'>[] = [];
     for (const [key, hit] of tsvIdx) {
       if (ratingKeyset.has(key)) continue;
+      if (notInInfSet.has(norm(hit.title) + '|' + hit.slot)) continue; // INFINITAS 미수록 제외
       tsvMissedInRating.push({ title: hit.title, diff: hit.diff, gameLevel: hit.c.level, lamp: hit.c.lamp, normKey: key });
       const c = hit.c;
       unclassifiedCharts.push({
@@ -545,7 +586,7 @@ export default function App() {
 
     console.log(`[dp12Match] 풀=${charts.length}곡 (ratingData 등재). 3중매칭=${matched}, ereter 미등재=${ratingOnlyCount}, tsv 미반영=${ratingMissCount}, tsv-only=${tsvMissedInRating.length}`);
     return { charts, unclassifiedCharts, matched, unmatched, unmatchedSamples, unmatchedAll, ratingUnmatchedJson };
-  }, [rows, ereterData, ratingData, zasaData]);
+  }, [rows, ereterData, ratingData, zasaData, notInInfSet]);
 
   // 별값 추정 input — dp12Match 에서 derive
   // v3.3.3: 4종 fitData scope 동시 수집 (ohSorry 와 동일).
@@ -1642,6 +1683,11 @@ function RecCard({
                   style={titleColor ? { color: titleColor } : undefined}
                   title={titleTooltip}
                 >
+                  {r.unlocked === false && (
+                    <span className="rec-lock" title="미해금 곡 — 아직 INFINITAS 에서 해금하지 않음">
+                      🔒
+                    </span>
+                  )}
                   {r.title}
                 </span>
                 <span className="rec-diff" style={{ color: DIFF_COLOR[r.diff] || '#888' }}>
