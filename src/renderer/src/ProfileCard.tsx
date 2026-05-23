@@ -116,7 +116,7 @@ export function ProfileCard({
       {/* 6각형 차트 — info(단위 포함) 바로 오른쪽. row 없으면 영역 숨김. */}
       {dpRadar && (
         <div className="profile-card-radar" title="DP 노트레이더 (eagate djdata 기반)">
-          <NotesRadar data={dpRadar} size={130} />
+          <NotesRadar data={dpRadar} />
         </div>
       )}
       {starResult && (

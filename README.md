@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.52.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.52-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.53.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.53-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,9 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.53 — DP 노트레이더 ProfileCard 의 size 명시 제거 (0.0.52 누락 fix)
+- `ProfileCard.tsx` 의 `<NotesRadar data={dpRadar} size={130} />` 에서 `size={130}` 명시 prop 제거. 0.0.52 에서 NotesRadar default 를 50 으로 바꿨지만 ProfileCard 의 명시 prop 이 default 를 override 해서 build 후에도 130 그대로 그려지던 버그 fix.
 
 ### 0.0.52 — DP 노트레이더 size 50 + 격자·spoke 부활 + 카드 padding 무시
 - `size` 35 → **50** (ohSorryWeb 130 의 약 38%).
