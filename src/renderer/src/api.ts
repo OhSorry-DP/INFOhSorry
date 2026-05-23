@@ -16,29 +16,82 @@ async function callIpc(channel: string, ...args: unknown[]): Promise<unknown> {
   return json.result;
 }
 
-// Reflux state polling — host 측 webContents.send 가 없으니 client 가 5초마다 fetch
+// Reflux state subscribe — SSE (/api/events) 로 PC1 에서 push 받음. EventSource 가 끊김 시 자동 재연결.
+// SSE 가 영구 실패 (네트워크 / 옛 버전 PC1) 면 안전망으로 30초 polling fallback. (이전엔 5초 polling 강제였음)
 function makeRefluxStatePoller(): (cb: (s: RefluxState) => void) => () => void {
   return (cb) => {
     let alive = true;
     let lastJson = '';
-    const tick = async (): Promise<void> => {
-      if (!alive) return;
-      try {
-        const s = (await callIpc('reflux:state')) as RefluxState;
-        const j = JSON.stringify(s);
-        if (j !== lastJson) {
-          lastJson = j;
-          cb(s);
-        }
-      } catch {
-        /* 일시 끊김은 무시 — 다음 tick 에서 재시도 */
+    let es: EventSource | null = null;
+    let fallbackTimer: number | null = null;
+    let consecutiveErrors = 0;
+
+    const deliver = (s: RefluxState): void => {
+      const j = JSON.stringify(s);
+      if (j !== lastJson) {
+        lastJson = j;
+        cb(s);
       }
     };
-    void tick();
-    const timer = window.setInterval(tick, 5000);
+
+    const startFallbackPolling = (): void => {
+      if (fallbackTimer !== null) return;
+      const tick = async (): Promise<void> => {
+        if (!alive) return;
+        try {
+          deliver((await callIpc('reflux:state')) as RefluxState);
+        } catch {
+          /* 일시 끊김은 무시 */
+        }
+      };
+      void tick();
+      fallbackTimer = window.setInterval(tick, 30000);
+    };
+
+    const stopFallbackPolling = (): void => {
+      if (fallbackTimer !== null) {
+        window.clearInterval(fallbackTimer);
+        fallbackTimer = null;
+      }
+    };
+
+    try {
+      es = new EventSource('/api/events');
+      es.addEventListener('reflux:state', (ev) => {
+        consecutiveErrors = 0;
+        stopFallbackPolling();
+        try {
+          deliver(JSON.parse((ev as MessageEvent).data) as RefluxState);
+        } catch {
+          /* malformed payload 무시 */
+        }
+      });
+      es.addEventListener('open', () => {
+        consecutiveErrors = 0;
+        stopFallbackPolling();
+      });
+      es.addEventListener('error', () => {
+        // EventSource 가 자동 재연결 — readyState 가 CLOSED 거나 errors 가 누적되면 fallback 으로 전환
+        consecutiveErrors++;
+        if (es && es.readyState === EventSource.CLOSED) {
+          startFallbackPolling();
+        } else if (consecutiveErrors >= 3) {
+          // 재연결 시도 중에도 데이터는 멈춰있지 않게 polling 병행
+          startFallbackPolling();
+        }
+      });
+    } catch {
+      // EventSource 미지원 (구형 브라우저) — polling 으로 동작
+      startFallbackPolling();
+    }
+
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stopFallbackPolling();
+      if (es) {
+        es.close();
+        es = null;
+      }
     };
   };
 }

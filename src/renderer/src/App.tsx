@@ -1288,7 +1288,7 @@ export default function App() {
           <span>
             🆕 새 버전 <b>v{updateInfo.latestVersion}</b> 있음 (현재 v{updateInfo.currentVersion})
           </span>
-          {updateDownload.stage === 'idle' && updateInfo.portableUrl && updateInfo.portableName && (
+          {!IS_BROWSER_REMOTE && updateDownload.stage === 'idle' && updateInfo.portableUrl && updateInfo.portableName && (
             <button
               type="button"
               onClick={async () => {
@@ -1363,7 +1363,7 @@ export default function App() {
               )}
             </span>
           )}
-          {updateDownload.stage === 'idle' && !updateInfo.portableUrl && updateInfo.htmlUrl && (
+          {updateDownload.stage === 'idle' && (IS_BROWSER_REMOTE || !updateInfo.portableUrl) && updateInfo.htmlUrl && (
             <a
               href={updateInfo.htmlUrl}
               target="_blank"

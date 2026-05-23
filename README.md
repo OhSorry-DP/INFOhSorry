@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.53.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.53-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.54.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.54-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,13 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.54 — PC2 (LAN 원격) reflux 상태 실시간 push (SSE) + PC2 자동 업데이트 버튼 숨김
+- **SSE**: 기존 PC2 의 `api.ts` 가 5초마다 `reflux:state` 를 polling → 곡 선택 진입 / tracker.tsv 갱신 시 최대 5초 delay.
+  - `src/main/http-server.ts` 에 SSE endpoint `GET /api/events` (text/event-stream) 추가. `RefluxManager.on('state', ...)` 받아서 접속한 PC2 들에 broadcast. 연결 즉시 현재 state 1회 push (초기 sync). 15초 keep-alive ping (idle proxy 끊김 방지).
+  - `src/renderer/src/api.ts` 의 `makeRefluxStatePoller` 를 `EventSource` 기반으로 교체. EventSource 가 끊김 시 자동 재연결 처리. 안전망으로 30초 polling fallback (영구 실패 / EventSource 미지원 / 옛 버전 PC1 케이스).
+  - 효과: PC2 의 lamp / 곡 선택 / 메모리 라인이 PC1 변화 직후 즉시 반영.
+- **PC2 자동 업데이트 버튼 숨김**: PC2 (브라우저 원격) 의 신버전 배너에서 "⬇ 자동 다운로드 + 실행" 버튼 제거 (`!IS_BROWSER_REMOTE` 조건 추가). PC2 에서 누르면 어차피 PC1 의 IPC 가 호출돼서 헷갈렸음 (그리고 bridge 가 막아서 에러 메시지만 떴음). 대신 PC2 에서도 "다운로드 페이지 열기 →" 링크는 항상 보이게 (PC1 가서 받든 PC2 에서 다른 용도로 받든 위치 안내).
 
 ### 0.0.53 — DP 노트레이더 ProfileCard 의 size 명시 제거 (0.0.52 누락 fix)
 - `ProfileCard.tsx` 의 `<NotesRadar data={dpRadar} size={130} />` 에서 `size={130}` 명시 prop 제거. 0.0.52 에서 NotesRadar default 를 50 으로 바꿨지만 ProfileCard 의 명시 prop 이 default 를 override 해서 build 후에도 130 그대로 그려지던 버그 fix.
