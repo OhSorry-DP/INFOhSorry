@@ -24,7 +24,7 @@ import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
 import { useProfile } from './useProfile';
-import { uploadProfile } from './supabaseSync';
+import { uploadProfile, fetchUserPublic, type UserPublicInfo } from './supabaseSync';
 import { IS_BROWSER_REMOTE } from './api';
 
 // 빌드 시 electron-vite 의 define 으로 package.json 의 version 자동 주입.
@@ -930,6 +930,22 @@ export default function App() {
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
 
+  // 유저 공개 정보 (DP 노트레이더 + SP/DP 단위) — supabase 에서 iidxId 감지 시 1회 fetch.
+  // 메모리 리딩이 단위를 못 가져오는 케이스가 있어 supabase 저장값 (getInfRadar.js 가 eagate djdata 에서 채움) 으로 보강.
+  // 데이터 없는 필드는 ProfileCard 가 영역 자체 숨김.
+  const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, spRank: null, dpRank: null });
+  useEffect(() => {
+    if (!profile.iidxId || !/^[A-Z]\d{12}$/.test(profile.iidxId)) {
+      setUserPublic({ dpRadar: null, spRank: null, dpRank: null });
+      return;
+    }
+    let cancelled = false;
+    fetchUserPublic(profile.iidxId).then((r) => {
+      if (!cancelled) setUserPublic(r);
+    });
+    return () => { cancelled = true; };
+  }, [profile.iidxId]);
+
   // 실력값 추정 + Supabase 업로드 — 1분 주기 (이전엔 Reflux mtime 이벤트 + 3분 upload).
   // 새 동작: 1분마다 tracker.tsv 강제 재읽기 → rows 갱신 → dp12StarResult 자동 재계산 → upload.
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
@@ -1400,6 +1416,9 @@ export default function App() {
             profile={profile}
             starResult={dp12StarResult}
             osrStar={osrTieredResult?.star ?? null}
+            dpRadar={userPublic.dpRadar}
+            spRank={userPublic.spRank}
+            dpRank={userPublic.dpRank}
           />
           <nav className="tabs">
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>

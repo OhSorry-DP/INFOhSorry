@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.47.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.47-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.48.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.48-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.48 — 프로필 카드에 SP/DP 단위 + DP 노트레이더 (SVG 6각형)
+- 메모리에서 `iidxId` 감지 시 supabase 의 `user_radars` + `users` 를 병렬 fetch (`fetchUserPublic`). 메모리 리딩으로는 단위가 안 잡히는 케이스가 있어 supabase 저장값으로 보강.
+- **DJ NAME 옆에 SP/DP 단위** (int → 한자 매핑 `12=皆伝 / 11=中伝 / 10~1=十段~初段 / 0=一級 / -8~-1=九級~二級`). SP/DP 둘 다 라벨은 항상 같이 표시하고, 값 없는 쪽은 `-` (예: `SP - DP 十段`). 둘 다 null 이면 단위 영역 자체 숨김.
+- **단위 바로 오른쪽에 DP 노트레이더** (SVG 6각형, 새 컴포넌트 `NotesRadar.tsx`). 지표 순서 12시 시작 시계방향: NOTES / CHORD / PEAK / CHARGE / SCRATCH / SOF-LAN — eagate djdata / IIDX 게임 내 표기와 동일. row 없으면 영역 숨김. **마우스 호버 시에만 라벨 + 지표값 표시** (평소엔 차트만, 호버하면 NOTES 123.02 식으로). `.profile-card-info` 의 `flex: 0 1 auto` 로 단위 오른쪽에 차트가 딱 붙도록, `.profile-card-star` 의 `margin-left: auto` 로 ★ 는 오른쪽 끝.
+- 데이터 채우는 주체: `ohSorryAdmin/getInfRadar.js` (eagate djdata 페이지에서 batch fetch). INFOhSorry 자체는 `user_radars` / `users.sp_rank` / `users.dp_rank` 어느 것도 업셋하지 않음 — `upsert_user` 호출 시 `p_sp_rank: null` / `p_dp_rank: null` 보내 RPC COALESCE 가 기존 값 유지 (주석으로 명세화).
 
 ### 0.0.47 — INFINITAS 미수록 차트 필터 (notInINF) + 미해금 곡 자물쇠 표기
 - **INFINITAS 미수록 차트 필터** — `service-status.json` 에 `notInINF` 배열 추가 (`{ title, diff }`, diff 는 slot 표기 DPN/DPH/DPA/DPL):

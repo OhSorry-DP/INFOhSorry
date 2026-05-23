@@ -89,6 +89,71 @@ function pickSongId(candidates: SongEntry[] | undefined, playedVersion: number):
   return filtered[0].song_id;
 }
 
+// user_radars 한 row 의 6 지표.
+export interface DpRadarRow {
+  notes: number | null;
+  chord: number | null;
+  peak: number | null;
+  charge: number | null;
+  scratch: number | null;
+  soft: number | null;
+}
+
+// supabase 에서 한 유저의 공개 정보 — DP 노트레이더 + SP/DP 단위.
+// INFOhSorry 메모리 리딩이 단위를 못 가져오는 케이스가 있어 supabase 저장값 (eagate djdata 기반) 으로 대체.
+// 채워두는 주체: ohSorryAdmin/getInfRadar.js (INF 유저 대상 batch).
+export interface UserPublicInfo {
+  dpRadar: DpRadarRow | null;
+  spRank: number | null;   // int 매핑 — setup_users.sql 의 매핑 (12=皆伝 / 11=中伝 / 10~1=十段~初段 / 0=一級 / -8~-1=九級~二級)
+  dpRank: number | null;
+}
+
+const EMPTY_PUBLIC: UserPublicInfo = { dpRadar: null, spRank: null, dpRank: null };
+
+// supabase user_radars (DP) + users (sp_rank/dp_rank) 를 병렬 fetch.
+// 둘 중 한 쪽이 비어도 다른 쪽은 채워서 반환 (부분 데이터 OK). 네트워크 실패 / 데이터 없음 → 그 필드만 null.
+export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
+  const id = iidxId.replace(/-/g, '').trim();
+  if (!id) return EMPTY_PUBLIC;
+
+  const radarUrl =
+    `${SUPABASE_URL}/rest/v1/user_radars` +
+    `?iidx_id=eq.${encodeURIComponent(id)}` +
+    `&play_style=eq.1` +
+    `&select=notes,chord,peak,charge,scratch,soft` +
+    `&limit=1`;
+  const userUrl =
+    `${SUPABASE_URL}/rest/v1/users` +
+    `?iidx_id=eq.${encodeURIComponent(id)}` +
+    `&select=sp_rank,dp_rank` +
+    `&limit=1`;
+
+  const [radarResult, userResult] = await Promise.allSettled([
+    fetch(radarUrl, { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as DpRadarRow[] : []),
+    fetch(userUrl,  { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as Array<{ sp_rank: number | null; dp_rank: number | null }> : []),
+  ]);
+
+  let dpRadar: DpRadarRow | null = null;
+  if (radarResult.status === 'fulfilled' && radarResult.value.length > 0) {
+    const r = radarResult.value[0];
+    const hasAny =
+      typeof r.notes === 'number' || typeof r.chord === 'number' ||
+      typeof r.peak === 'number'  || typeof r.charge === 'number' ||
+      typeof r.scratch === 'number' || typeof r.soft === 'number';
+    if (hasAny) dpRadar = r;
+  }
+
+  let spRank: number | null = null;
+  let dpRank: number | null = null;
+  if (userResult.status === 'fulfilled' && userResult.value.length > 0) {
+    const u = userResult.value[0];
+    spRank = typeof u.sp_rank === 'number' ? u.sp_rank : null;
+    dpRank = typeof u.dp_rank === 'number' ? u.dp_rank : null;
+  }
+
+  return { dpRadar, spRank, dpRank };
+}
+
 export interface UploadInput {
   appVersion: string; // package.json version, e.g. '0.0.9'
   profile: ProfileInfo;
@@ -133,6 +198,9 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         p_dj_name: profile.djName ?? null,
         p_star: Number(starResult.star.toFixed(4)),
         p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
+        // SP/DP 단위는 절대 업셋하지 않음 — null 보내 RPC COALESCE 가 기존 값 유지.
+        // 단위 채우는 책임: ohSorryAdmin/getInfRadar.js (eagate djdata 페이지에서 fetch).
+        // INFOhSorry 메모리 리딩에서 단위가 안 잡혀도 supabase 저장값을 fetchUserPublic 으로 받아 ProfileCard 에 표시.
         p_sp_rank: null,
         p_dp_rank: null,
       }),

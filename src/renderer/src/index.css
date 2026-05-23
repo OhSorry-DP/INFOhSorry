@@ -2406,7 +2406,8 @@ body {
   border-bottom: 1px solid var(--border-primary);
 }
 .profile-card-info {
-  flex: 1;
+  /* content 크기만 차지 — 단위 오른쪽에 노트레이더가 딱 붙도록 (flex:1 이면 가운데 공백 큼). */
+  flex: 0 1 auto;
   min-width: 0;
 }
 /* 한 줄: DJ NAME + SP단위 | DP단위 */
@@ -2486,6 +2487,8 @@ body {
   text-align: center;
   padding: 0 8px;
   min-width: 80px;
+  /* info(=DJ NAME+단위) 와 radar 가 왼쪽에 붙고, star 만 오른쪽 끝으로. */
+  margin-left: auto;
 }
 .profile-card-star-value {
   font-size: 24px;
@@ -2498,6 +2501,37 @@ body {
   font-size: 10px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+/* DP 노트레이더 — profile-card 오른쪽 끝. supabase user_radars 에서 fetch (없으면 영역 자체 숨김). */
+.profile-card-radar {
+  flex-shrink: 0;
+  padding: 0 4px;
+}
+.notes-radar-svg {
+  display: block;
+}
+.notes-radar-axis-label {
+  font-size: 9px;
+  font-weight: 600;
+  fill: var(--text-muted);
+  letter-spacing: 0.3px;
+  /* 평소엔 숨김 — 호버 시에만 값 + 라벨 표시. */
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.notes-radar-axis-value {
+  font-size: 9px;
+  fill: var(--text-secondary, var(--text-muted));
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.15s;
+  pointer-events: none;
+}
+.profile-card-radar:hover .notes-radar-axis-label,
+.profile-card-radar:hover .notes-radar-axis-value {
+  opacity: 1;
 }
 
 /* ============================================================
