@@ -4,10 +4,12 @@
 //   - 시계방향 12시 시작 지표 순서: NOTES → PEAK → SCRATCH → SOF-LAN → CHARGE → CHORD
 //   - RADAR_MAX = 100 으로 정규화 — 실제 데이터값은 0~200 범위지만 100 으로 over-driven 해서
 //     데이터 폴리곤이 격자 밖으로 뻗으며 라벨을 일부 덮는 IIDX 표준 시각화.
+//   - 외곽 6각형 + 50% 격자 + 6 spoke (다크 테마용 색).
 //   - 폴리곤 fill: 가장 높은 지표의 색 (NOTES 핑크 / PEAK 주황 / SCRATCH 빨강 / SOF-LAN 청록 / CHARGE 보라 / CHORD 초록)
-//   - SVG 안에 라벨만 표시 (컬러, 데이터 폴리곤에 일부 가려짐), 값은 SVG 밖 호버 toast 에서 6 지표 + 합계.
+//   - SVG 안에 라벨 표시 (컬러, 데이터 폴리곤에 일부 가려짐), 값은 SVG 밖 호버 toast 에서 6 지표 + 합계.
 //
-// ProfileCard 높이를 유지하기 위해 size=70 (ohSorryWeb 의 130 의 절반 정도).
+// ProfileCard 높이를 유지하기 위해 size=28 (ohSorryWeb 의 130 의 약 1/5).
+// fontSize / R / LR 비율은 ohSorryWeb 와 동일하게 size 의 일정 비율.
 // supabase user_radars 한 row (SP=0 / DP=1) 입력. INFOhSorry 는 DP 만 사용.
 
 export interface RadarValues {
@@ -21,7 +23,7 @@ export interface RadarValues {
 
 interface NotesRadarProps {
   data: RadarValues | null;
-  size?: number;  // SVG 한 변 (px). 기본 35 — 프로필 카드 안에서 컴팩트.
+  size?: number;  // SVG 한 변 (px). 기본 50.
 }
 
 // 시각 정규화 max. 실제 지표값은 0~200 까지 가능하지만 100 으로 over-driven 해서
@@ -61,23 +63,25 @@ function pickNum(v: number | null | undefined): number {
   return typeof v === 'number' && v >= 0 ? v : 0;
 }
 
-export function NotesRadar({ data, size = 35 }: NotesRadarProps): JSX.Element | null {
+export function NotesRadar({ data, size = 50 }: NotesRadarProps): JSX.Element | null {
   if (!data) return null;
 
   const cx = size / 2;
   const cy = size / 2;
-  // ohSorryWeb 비율 그대로 — R(데이터 정규화 반지름)/size ≈ 0.29, LR(라벨 거리)/size ≈ 0.385.
-  // 격자/spoke 가 없으니 R 은 데이터 폴리곤 정규화에만 사용.
+  // ohSorryWeb 비율 그대로 — R(격자·데이터 정규화 반지름)/size ≈ 0.29, LR(라벨 거리)/size ≈ 0.385.
   const R = size * 0.29;
   const LR = size * 0.385;
-  const fontSize = Math.max(3, Math.round(size * 0.08));  // size=35 → 3, size=70 → 6, size=130 → 10.
+  // ohSorryWeb 의 비율 그대로 — fontSize=8/size=130 ≈ 0.0615. size=28 → 2.
+  const fontSize = Math.max(2, Math.round(size * 0.0615));
 
   const svgValues = SVG_ORDER.map((a) => pickNum(data[a.key]));
   // 가장 높은 지표 색 — 데이터 폴리곤 fill 에 사용.
   const topIdx = svgValues.reduce((maxI, v, i) => (v > svgValues[maxI] ? i : maxI), 0);
   const dataColor = SVG_ORDER[topIdx].color;
 
-  const dataPoly = SVG_ORDER.map((_, i) => vertex(i, R, Math.max(svgValues[i] / RADAR_MAX, 0), cx, cy)).join(' ');
+  const bgPoly    = SVG_ORDER.map((_, i) => vertex(i, R, 1,   cx, cy)).join(' ');
+  const innerPoly = SVG_ORDER.map((_, i) => vertex(i, R, 0.5, cx, cy)).join(' ');
+  const dataPoly  = SVG_ORDER.map((_, i) => vertex(i, R, Math.max(svgValues[i] / RADAR_MAX, 0), cx, cy)).join(' ');
 
   const toastRows = TOAST_ORDER.map((a) => ({ ...a, value: pickNum(data[a.key]) }));
   const total = toastRows.reduce((s, r) => s + r.value, 0);
@@ -93,6 +97,19 @@ export function NotesRadar({ data, size = 35 }: NotesRadarProps): JSX.Element | 
         role="img"
         aria-label="DP 노트레이더"
       >
+        {/* 외곽 6각형 — 다크 테마용 fill / stroke 은 CSS 에서. */}
+        <polygon points={bgPoly} className="notes-radar-bg" />
+        {/* 50% 격자 */}
+        <polygon points={innerPoly} className="notes-radar-grid" />
+        {/* 6 spoke (중심 → 꼭짓점) */}
+        {SVG_ORDER.map((_, i) => {
+          const ang = -Math.PI / 2 + (i / 6) * 2 * Math.PI;
+          const ex = (cx + Math.cos(ang) * R).toFixed(1);
+          const ey = (cy + Math.sin(ang) * R).toFixed(1);
+          return (
+            <line key={`s${i}`} x1={cx} y1={cy} x2={ex} y2={ey} className="notes-radar-spoke" />
+          );
+        })}
         {/* 라벨 (컬러) — 데이터 폴리곤보다 먼저 그려서 폴리곤(opacity 0.55) 에 일부 가려짐. */}
         {SVG_ORDER.map((a, i) => {
           const ang = -Math.PI / 2 + (i / 6) * 2 * Math.PI;

@@ -2503,10 +2503,12 @@ body {
   margin-top: 2px;
 }
 
-/* DP 노트레이더 — profile-card 의 단위 옆. supabase user_radars 에서 fetch (없으면 영역 자체 숨김). */
+/* DP 노트레이더 — profile-card 의 단위 옆. supabase user_radars 에서 fetch (없으면 영역 자체 숨김).
+   profile-card 의 padding(12px 20px) 을 negative margin 으로 무시 — radar 가 카드 가장자리까지 차지. */
 .profile-card-radar {
   flex-shrink: 0;
   padding: 0;
+  margin: -12px -20px -12px 0;
 }
 .notes-radar-wrap {
   position: relative;
@@ -2514,6 +2516,21 @@ body {
 }
 .notes-radar-svg {
   display: block;
+}
+/* 격자 / spoke — 다크 테마용 색 (ohSorryWeb 의 흰 배경용 색을 다크에 맞게). */
+.notes-radar-bg {
+  fill: rgba(255, 255, 255, 0.04);
+  stroke: rgba(255, 255, 255, 0.25);
+  stroke-width: 0.6;
+}
+.notes-radar-grid {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.15);
+  stroke-width: 0.4;
+}
+.notes-radar-spoke {
+  stroke: rgba(255, 255, 255, 0.12);
+  stroke-width: 0.4;
 }
 
 /* 호버 시 표시되는 toast — 6 지표 + 합계 레이더 스코어. SVG 의 오른쪽에 절대 위치. */

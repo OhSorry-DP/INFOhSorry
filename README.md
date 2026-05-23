@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.50.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.50-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.52.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.52-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.52 — DP 노트레이더 size 50 + 격자·spoke 부활 + 카드 padding 무시
+- `size` 35 → **50** (ohSorryWeb 130 의 약 38%).
+- `fontSize` 계수 0.08 → **0.0615** — ohSorryWeb (130 → 8) 와 동일 비율. size=50 → fontSize=3.
+- **격자 + spoke 부활** — 외곽 6각형 + 50% 격자 + 6 spoke 가 다크 테마용 색 (`rgba(255,255,255,0.04~0.25)`) 으로 표시.
+- `.profile-card-radar` 에 `margin: -12px -20px -12px 0` — profile-card 의 padding(12px 20px) 을 negative margin 으로 무시하고 카드 우측 가장자리까지 radar 가 차지.
 
 ### 0.0.50 — DP 노트레이더 크기 반으로 축소
 - `NotesRadar` 의 `size` 기본값 70 → **35** (이전의 절반). 라벨 글씨 크기도 fontSize min 6 → 3 으로 함께 축소 (`Math.max(3, Math.round(size * 0.08))`). 프로필 카드 안에서 더 컴팩트한 표시.
