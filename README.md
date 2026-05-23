@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.48.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.48-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.49.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.49-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,15 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.49 — DP 노트레이더 시각화 ohSorryWeb 일치 + 호버 toast
+- `NotesRadar.tsx` 를 ohSorry 본체 `ohsorryRender` 의 차트와 동일한 방식으로 재작성:
+  - **시계방향 12시 시작 순서**: NOTES → PEAK → SCRATCH → SOF-LAN → CHARGE → CHORD (IIDX 게임 / eagate djdata 표준).
+  - **격자 / spoke / 외곽선 모두 제거** — 데이터 폴리곤 fill 만. 가장 높은 지표의 색으로 채움 (NOTES 핑크 / PEAK 주황 / SCRATCH 빨강 / SOF-LAN 청록 / CHARGE 보라 / CHORD 초록).
+  - **라벨 (지표별 컬러)** 평소 표시 — 데이터 폴리곤(opacity 0.55) 에 일부 가려지는 IIDX 표준 시각화.
+  - `RADAR_MAX = 100` 시각 정규화 (실제 데이터 0~200 중 100 으로 over-driven 해서 폴리곤이 라벨을 덮는 효과).
+- **호버 toast** — SVG 옆 (`left: calc(100% + 8px)`) 에 절대 위치. NOTES/CHORD/PEAK/CHARGE/SCRATCH/SOF-LAN 6 지표 (컬러 라벨 + 값) + 합계 레이더 스코어. opacity transition 0.12s.
+- 차트 size 130 → 70 (ohSorryWeb 의 절반) — 프로필 카드 높이 유지.
 
 ### 0.0.48 — 프로필 카드에 SP/DP 단위 + DP 노트레이더 (SVG 6각형)
 - 메모리에서 `iidxId` 감지 시 supabase 의 `user_radars` + `users` 를 병렬 fetch (`fetchUserPublic`). 메모리 리딩으로는 단위가 안 잡히는 케이스가 있어 supabase 저장값으로 보강.

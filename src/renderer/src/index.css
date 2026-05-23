@@ -2503,35 +2503,66 @@ body {
   margin-top: 2px;
 }
 
-/* DP 노트레이더 — profile-card 오른쪽 끝. supabase user_radars 에서 fetch (없으면 영역 자체 숨김). */
+/* DP 노트레이더 — profile-card 의 단위 옆. supabase user_radars 에서 fetch (없으면 영역 자체 숨김). */
 .profile-card-radar {
   flex-shrink: 0;
-  padding: 0 4px;
+  padding: 0;
+}
+.notes-radar-wrap {
+  position: relative;
+  display: inline-block;
 }
 .notes-radar-svg {
   display: block;
 }
-.notes-radar-axis-label {
-  font-size: 9px;
-  font-weight: 600;
-  fill: var(--text-muted);
-  letter-spacing: 0.3px;
-  /* 평소엔 숨김 — 호버 시에만 값 + 라벨 표시. */
+
+/* 호버 시 표시되는 toast — 6 지표 + 합계 레이더 스코어. SVG 의 오른쪽에 절대 위치. */
+.notes-radar-toast {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 8px);
+  z-index: 100;
+  background: rgba(20, 20, 24, 0.95);
+  border: 1px solid var(--border-primary, #343a40);
+  border-radius: 6px;
+  padding: 6px 10px;
+  min-width: 130px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
   opacity: 0;
-  transition: opacity 0.15s;
+  visibility: hidden;
+  transition: opacity 0.12s, visibility 0.12s;
   pointer-events: none;
+  font-size: 11px;
+  line-height: 1.6;
 }
-.notes-radar-axis-value {
-  font-size: 9px;
-  fill: var(--text-secondary, var(--text-muted));
-  font-variant-numeric: tabular-nums;
-  opacity: 0;
-  transition: opacity 0.15s;
-  pointer-events: none;
-}
-.profile-card-radar:hover .notes-radar-axis-label,
-.profile-card-radar:hover .notes-radar-axis-value {
+.notes-radar-wrap:hover .notes-radar-toast {
   opacity: 1;
+  visibility: visible;
+}
+.notes-radar-toast-row,
+.notes-radar-toast-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 10px;
+}
+.notes-radar-toast-total {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid rgba(255, 255, 255, 0.15);
+}
+.notes-radar-toast-label {
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+.notes-radar-toast-total .notes-radar-toast-label {
+  color: var(--text-secondary, #adb5bd);
+  font-weight: 600;
+}
+.notes-radar-toast-value {
+  color: #f8f9fa;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
 }
 
 /* ============================================================
