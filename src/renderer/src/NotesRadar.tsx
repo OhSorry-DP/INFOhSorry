@@ -21,7 +21,7 @@ export interface RadarValues {
 
 interface NotesRadarProps {
   data: RadarValues | null;
-  size?: number;
+  size?: number;  // SVG 한 변 (px). 기본 35 — 프로필 카드 안에서 컴팩트.
 }
 
 // 시각 정규화 max. 실제 지표값은 0~200 까지 가능하지만 100 으로 over-driven 해서
@@ -61,7 +61,7 @@ function pickNum(v: number | null | undefined): number {
   return typeof v === 'number' && v >= 0 ? v : 0;
 }
 
-export function NotesRadar({ data, size = 70 }: NotesRadarProps): JSX.Element | null {
+export function NotesRadar({ data, size = 35 }: NotesRadarProps): JSX.Element | null {
   if (!data) return null;
 
   const cx = size / 2;
@@ -70,7 +70,7 @@ export function NotesRadar({ data, size = 70 }: NotesRadarProps): JSX.Element | 
   // 격자/spoke 가 없으니 R 은 데이터 폴리곤 정규화에만 사용.
   const R = size * 0.29;
   const LR = size * 0.385;
-  const fontSize = Math.max(6, Math.round(size * 0.08));  // size=70 → 6, size=130 → 10.
+  const fontSize = Math.max(3, Math.round(size * 0.08));  // size=35 → 3, size=70 → 6, size=130 → 10.
 
   const svgValues = SVG_ORDER.map((a) => pickNum(data[a.key]));
   // 가장 높은 지표 색 — 데이터 폴리곤 fill 에 사용.

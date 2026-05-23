@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.49.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.49-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.50.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.50-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,9 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.50 — DP 노트레이더 크기 반으로 축소
+- `NotesRadar` 의 `size` 기본값 70 → **35** (이전의 절반). 라벨 글씨 크기도 fontSize min 6 → 3 으로 함께 축소 (`Math.max(3, Math.round(size * 0.08))`). 프로필 카드 안에서 더 컴팩트한 표시.
 
 ### 0.0.49 — DP 노트레이더 시각화 ohSorryWeb 일치 + 호버 toast
 - `NotesRadar.tsx` 를 ohSorry 본체 `ohsorryRender` 의 차트와 동일한 방식으로 재작성:
