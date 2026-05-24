@@ -20,6 +20,7 @@ import {
 import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
 import DpTable from './DpTable';
+import Analysis from './Analysis';
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
@@ -36,9 +37,9 @@ const APP_VERSION = __APP_VERSION__;
 // 계정 전환 후 Reflux 가 한참 dump 안 하면 stale 한 채로 머묾 → 분리해서 strict 1분 주기.
 // 1분마다: tracker.tsv 강제 재읽기 → rows 업데이트 → dp12StarResult 자동 재계산 → upload.
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
-const STAR_REFRESH_INTERVAL_MS = 60 * 1000;
+const STAR_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 
-type Tab = 'sp' | 'dp' | 'dp12';
+type Tab = 'sp' | 'dp' | 'dp12' | 'analysis';
 
 // "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
 function formatRelativeTime(epochMs: number): string {
@@ -952,6 +953,8 @@ export default function App() {
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
   const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match, tsvPath });
   uploadStateRef.current = { profile, dp12StarResult, dp12Match, tsvPath };
+  // Analysis 의 vec 재계산 + supabase upsert 트리거 — 동일 timer 가 star upload 후 증가시킴
+  const [vecRecomputeKey, setVecRecomputeKey] = useState(0);
 
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
@@ -993,13 +996,17 @@ export default function App() {
     (window as unknown as { updateSupabase: () => void }).updateSupabase = (): void =>
       tryUpload('manual');
 
-    // 1분마다: tsv 강제 재읽기 → 500ms 뒤 (useMemo 재계산 시간) 업로드
+    // 3분마다: tsv 강제 재읽기 → 500ms 뒤 star upload → 추가 200ms 뒤 vec 재계산 + upsert.
+    //   순차처리: rows 갱신 → star (dp12StarResult) upload → Analysis 의 vec 재계산 + supabase os_* upsert.
     const interval = window.setInterval(() => {
       const path = uploadStateRef.current.tsvPath;
       if (path) void loadTsv(path);
-      setTimeout(() => tryUpload('auto'), 500);
+      setTimeout(() => {
+        tryUpload('auto');
+        setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
+      }, 500);
     }, STAR_REFRESH_INTERVAL_MS);
-    console.log(`[supabase] 실력값 추정 + 업로드 활성화 — ${STAR_REFRESH_INTERVAL_MS / 1000}초 간격, 수동: updateSupabase()`);
+    console.log(`[supabase] 실력값 추정 + 업로드 + pattern vec 활성화 — ${STAR_REFRESH_INTERVAL_MS / 1000}초 간격, 수동: updateSupabase()`);
 
     // 노출 — 새 useEffect 에서 초기 업로드 트리거할 수 있도록
     (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial = (): void =>
@@ -1419,6 +1426,10 @@ export default function App() {
             dpRadar={userPublic.dpRadar}
             spRank={userPublic.spRank}
             dpRank={userPublic.dpRank}
+            onStarClick={IS_BROWSER_REMOTE ? undefined : () => {
+              // tsv 재로드 → rows → dp12StarResult + Analysis vec 모두 재계산. DB upload 없음.
+              if (tsvPath) void loadTsv(tsvPath);
+            }}
           />
           <nav className="tabs">
             <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
@@ -1432,6 +1443,12 @@ export default function App() {
               onClick={() => setTab('dp12')}
             >
               DP RECOMMEND
+            </button>
+            <button
+              className={tab === 'analysis' ? 'tab active' : 'tab'}
+              onClick={() => setTab('analysis')}
+            >
+              ANALYSIS
             </button>
             <span className="tab-stats">
               {tab === 'dp12'
@@ -1448,7 +1465,19 @@ export default function App() {
           </nav>
 
           <main className="content">
-            {tab === 'dp12' ? (
+            {tab === 'analysis' ? (
+              <Analysis
+                charts={[...dp12Charts, ...dp11Charts]}
+                ratingData={ratingData}
+                zasaData={zasaData}
+                iidxId={profile.iidxId || undefined}
+                recomputeKey={vecRecomputeKey}
+                onPickChart={(title, slot) => {
+                  setTab('dp');
+                  setScrollTarget({ title, slot: slot as 'DPN' | 'DPH' | 'DPA' | 'DPL', gameLevel: null });
+                }}
+              />
+            ) : tab === 'dp12' ? (
               <>
                 {!IS_BROWSER_REMOTE && devMode && (
                   <StarPanel

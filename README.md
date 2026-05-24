@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.54.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.54-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.55.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.55-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,17 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.55 — Analysis 탭 신규 + pattern vec supabase upsert + star upload 통합 (3분 주기) + ★ 클릭 재계산
+- **신규 Analysis 탭** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — ohSorryWeb 분석탭 포팅.
+  - mount 시 gist fetch (patterns-all-slim.json + rate-reference-slim.json + calcWeakness.js + normTitle.js)
+  - SongChart (TSV) → calcWeakness chart 변환 (slot→diff, lamp→lampNum) + vec 계산 (rateRef 모드)
+  - 막대그래프 (vec − userMean mix), feature 클릭 시 헤더 + percentile (supabase RPC `get_pattern_vec_percentiles`) + 기여곡 Top 5 (vRel 정렬) + 추천곡 Top 5 (vRel 회복량 + 자동 cutoff 단계 올림). TSV 의 noteCount 활용해서 "현재 → 목표 EXSCORE -차이" 표시.
+  - 추천곡 풀: 사용자가 친 차트만 (TSV 안). NP 곡은 추천 X.
+  - 곡 클릭 → DP 탭 + 해당 row 스크롤 (기존 `onPickChart` 재사용).
+- **supabase pattern vec upsert** — `upsert_user_pattern_vec` RPC 호출. 처음 vec 계산 + 단일 timer 주기마다 (사전 조건: ohSorryAdmin `migrate_add_os_vec_columns.sql` + `setup_pattern_vec_rpc.sql` 적용).
+- **단일 timer 통합** — `STAR_REFRESH_INTERVAL_MS` **1분 → 3분**. App 의 단일 timer 가 tsv 재로드 → star upload → vecRecomputeKey 증가 (Analysis 재계산 + pattern vec upsert) 순차처리. 별도 timer 제거.
+- **★ 클릭 재계산** — [ProfileCard.tsx](src/renderer/src/ProfileCard.tsx) 의 `★X.XX` 클릭 시 tsv 재로드 트리거 (DB upload 없이 재계산만). 30초 cooldown (cursor `wait` + opacity 0.5). Browser remote 면 disabled.
 
 ### 0.0.54 — PC2 (LAN 원격) reflux 상태 실시간 push (SSE) + PC2 자동 업데이트 버튼 숨김
 - **SSE**: 기존 PC2 의 `api.ts` 가 5초마다 `reflux:state` 를 polling → 곡 선택 진입 / tracker.tsv 갱신 시 최대 5초 delay.

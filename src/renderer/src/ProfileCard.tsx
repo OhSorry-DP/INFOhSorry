@@ -1,9 +1,12 @@
 // ProfileCard — DP12 RECOMMEND 상단에 표시되는 사용자 프로필 카드.
 // ohSorry 의 e-amusement 프로필 카드 스타일 따라함 (DJ NAME / IIDX ID / ★).
 // 프로필 데이터는 INFINITAS 메모리에서 직접 읽음 (useProfile).
+import { useState } from 'react';
 import type { ProfileInfo } from './useProfile';
 import type { StarResult } from '../../shared/star-estimator';
 import type { DpRadarRow } from './supabaseSync';
+
+const STAR_CLICK_COOLDOWN_MS = 30 * 1000;
 import { NotesRadar } from './NotesRadar';
 
 interface ProfileCardProps {
@@ -17,6 +20,8 @@ interface ProfileCardProps {
   // int 매핑 — setup_users.sql: 12=皆伝 / 11=中伝 / 10~1=十段~初段 / 0=一級 / -8~-1=九級~二級.
   spRank?: number | null;
   dpRank?: number | null;
+  // ★ 표시 클릭 시 호출 — tsv 재로드 트리거 (DB upload 없이 재계산만).
+  onStarClick?: () => void;
 }
 
 // supabase 의 int 단위 코드 → 한자 표기 (eagate djdata 와 동일).
@@ -75,8 +80,16 @@ export function ProfileCard({
   dpRadar,
   spRank,
   dpRank,
+  onStarClick,
 }: ProfileCardProps): JSX.Element | null {
   const { djName, iidxId, iidxIdFormatted } = profile;
+  const [starCooling, setStarCooling] = useState(false);
+  const handleStarClick = (): void => {
+    if (starCooling || !onStarClick) return;
+    setStarCooling(true);
+    onStarClick();
+    window.setTimeout(() => setStarCooling(false), STAR_CLICK_COOLDOWN_MS);
+  };
   const spRankStr = rankIntToKanji(spRank);
   const dpRankStr = rankIntToKanji(dpRank);
 
@@ -121,7 +134,14 @@ export function ProfileCard({
       )}
       {starResult && (
         <div className="profile-card-star">
-          <div className="profile-card-star-value">★{starResult.star.toFixed(2)}</div>
+          <div
+            className="profile-card-star-value"
+            onClick={onStarClick ? handleStarClick : undefined}
+            title={onStarClick ? (starCooling ? '재계산 쿨다운 중 (30초)' : '클릭 시 재계산 (DB upload 없이)') : undefined}
+            style={onStarClick ? { cursor: starCooling ? 'wait' : 'pointer', opacity: starCooling ? 0.5 : 1 } : undefined}
+          >
+            ★{starResult.star.toFixed(2)}
+          </div>
           {osrNote ? (
             <div className="profile-card-star-note" title="OSR (osr v0.0.2) 추정값">
               OSR: ★{osrNote.value.toFixed(2)}{' '}
