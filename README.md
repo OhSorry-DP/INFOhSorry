@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.58.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.58-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.59.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.59-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.59 — 분석탭 추천 INF 수록곡 필터 + 전 레벨 supabase scores 업로드
+- **추천 INF 수록곡 필터** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — INF 유저 (iidx_id 첫 글자 알파벳) 면 supabase songs cache 의 `ac` flag (INF 비트 = 2) 활용해서 AC 전용 (INF 미수록) 곡을 추천에서 제외. 기존: AC 전용 곡이 추천에 떠도 INFOhSorry 의 TSV 에 없어서 noteCount lookup 실패 → "현재 → 목표 EXSCORE" 자리에 "목표 69%" 만 표시되던 회귀.
+- **전 레벨 supabase 업로드** ([App.tsx](src/renderer/src/App.tsx)) — `tsvIdx` 빌드 시 `c.level !== 11 && c.level !== 12` 필터 제거 → lv1~10 / 13+ 차트도 supabase `scores` 테이블 업로드. m.charts (★ 추정 / 추천 풀) 는 `ratingData.ratings` 의 gameLevel===11||12 필터 별도 → 영향 없음.
+- 의존: [supabaseSync.ts](src/renderer/src/supabaseSync.ts) 에 `getInfChartChecker()` export 추가 (songs cache 활용).
+- 사전 조건: gist `analysisRender.js` 가 `extraRecFilter` 옵션 지원 (이미 push).
 
 ### 0.0.58 — Analysis 탭 HTML 빌더 gist 모듈화 (ohSorryWeb 과 공유)
 - [Analysis.tsx](src/renderer/src/Analysis.tsx) 의 막대그래프 / 헤더 / 기여곡 / 추천곡 JSX 렌더링 로직을 모두 제거하고, gist 의 `analysisRender.js` (`window.OhsorryAnalysisRender`) 호출로 교체.

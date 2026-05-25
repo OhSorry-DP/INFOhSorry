@@ -75,6 +75,18 @@ async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
   return byNorm;
 }
 
+// songs cache 의 ac flag (1=AC, 2=INF) 기반 — title → INF 수록 여부 sync checker.
+// 분석탭 추천에서 INF 미수록곡 (AC 전용) 제외용. 곡 단위 판단 (차트 단위는 X).
+export async function getInfChartChecker(): Promise<(title: string) => boolean> {
+  const byNorm = await getSongsCache();
+  return function isChartInInf(title: string): boolean {
+    if (!title) return false;
+    const candidates = byNorm.get(norm(title));
+    if (!candidates || candidates.length === 0) return false;
+    return candidates.some((c) => (c.ac & 2) !== 0);
+  };
+}
+
 // normKey 후보 array + played_version → song_id 단일 선택
 //   played_version 0 = INF (ac & 2), > 0 = AC (ac & 1)
 //   INFOhSorry 는 항상 INF — wantInf = true 고정

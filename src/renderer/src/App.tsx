@@ -454,7 +454,8 @@ export default function App() {
       for (const slot of DP_SLOTS) {
         const c = r.charts[slot];
         if (!c) continue;
-        if (c.level !== 11 && c.level !== 12) continue;
+        // lv 필터 제거 — 전 레벨 차트를 supabase scores 에 업로드 (unclassifiedCharts 경로).
+        // m.charts (dp12Match) 는 ratingData.ratings 의 gameLevel===11||12 필터로 별도 제한.
         const diff = slotToDiff(slot);
         const normKey = norm(r.title) + '|' + diff;
         tsvIdx.set(normKey, { title: r.title, slot, diff, c, type: r.type ?? null, label: r.label ?? null });

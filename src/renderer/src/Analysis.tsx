@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SongChart, RatingData, ZasaData } from '../../shared/types';
 import { IS_BROWSER_REMOTE } from './api';
+import { getInfChartChecker } from './supabaseSync';
 
 const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
 const PATTERNS_URL = `${GIST_RAW}/patterns-all-slim.json`;
@@ -131,6 +132,9 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   const { charts, ratingData, zasaData, iidxId, recomputeKey = 0, onPickChart } = props;
   const [libsReady, setLibsReady] = useState(false);
   const [percentiles, setPercentiles] = useState<PercentileMap | null>(null);
+  // INF 유저 (iidx_id 첫 글자 알파벳) 면 추천에서 INF 미수록곡 제외용 sync checker.
+  // INFOhSorry 는 사실상 항상 INF — 그래도 안전망으로 알파벳 체크.
+  const [isInfChart, setIsInfChart] = useState<((title: string) => boolean) | null>(null);
   const [error, setError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const libsRef = useRef<{ weaknessLib?: any; normLib?: any; renderLib?: any; patternsMap?: any; rateRef?: any }>({});
@@ -175,6 +179,16 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     fetchPercentiles(iidxId).then((p) => { if (!cancelled) setPercentiles(p); });
     return () => { cancelled = true; };
   }, [iidxId, recomputeKey]);
+
+  // INF chart checker — iidxId 첫 글자 알파벳일 때만. songs cache fetch 실패 시 필터 skip.
+  useEffect(() => {
+    if (!iidxId || !/^[A-Za-z]/.test(iidxId)) { setIsInfChart(null); return; }
+    let cancelled = false;
+    getInfChartChecker()
+      .then((fn) => { if (!cancelled) setIsInfChart(() => fn); })
+      .catch((e) => console.warn('[Analysis] songs cache fetch 실패 (INF 필터 skip):', e?.message || e));
+    return () => { cancelled = true; };
+  }, [iidxId]);
 
   // 3. vec 계산
   const vecResult = useMemo(() => {
@@ -249,6 +263,8 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       noteCountResolver: (_songId: string, _chartName: string, title: string, diff: string) => {
         return noteCountMap.get(title + '|' + diff) ?? null;
       },
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      extraRecFilter: isInfChart ? (c: any) => isInfChart(c.title) : null,
       weaknessLib: libs.weaknessLib,
     };
     if (!controllerRef.current) {
@@ -261,7 +277,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       controllerRef.current.setOpts(opts);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libsReady, vecResult, percentiles, ratingData, zasaData, noteCountMap]);
+  }, [libsReady, vecResult, percentiles, ratingData, zasaData, noteCountMap, isInfChart]);
 
   if (error) {
     return <div style={{ padding: 20, color: '#ff6b6b' }}>오류: {error}</div>;
