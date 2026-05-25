@@ -11,7 +11,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SongChart, RatingData, ZasaData } from '../../shared/types';
 import { IS_BROWSER_REMOTE } from './api';
-import { getInfChartChecker } from './supabaseSync';
 
 const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
 const PATTERNS_URL = `${GIST_RAW}/patterns-all-slim.json`;
@@ -132,9 +131,6 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   const { charts, ratingData, zasaData, iidxId, recomputeKey = 0, onPickChart } = props;
   const [libsReady, setLibsReady] = useState(false);
   const [percentiles, setPercentiles] = useState<PercentileMap | null>(null);
-  // INF 유저 (iidx_id 첫 글자 알파벳) 면 추천에서 INF 미수록곡 제외용 sync checker.
-  // chartName = 'DP_LEG' 면 songs.legen, 그 외는 songs.ac — 차트 단위 정확 필터.
-  const [isInfChart, setIsInfChart] = useState<((title: string, chartName?: string) => boolean) | null>(null);
   const [error, setError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const libsRef = useRef<{ weaknessLib?: any; normLib?: any; renderLib?: any; patternsMap?: any; rateRef?: any }>({});
@@ -179,16 +175,6 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     fetchPercentiles(iidxId).then((p) => { if (!cancelled) setPercentiles(p); });
     return () => { cancelled = true; };
   }, [iidxId, recomputeKey]);
-
-  // INF chart checker — iidxId 첫 글자 알파벳일 때만. songs cache fetch 실패 시 필터 skip.
-  useEffect(() => {
-    if (!iidxId || !/^[A-Za-z]/.test(iidxId)) { setIsInfChart(null); return; }
-    let cancelled = false;
-    getInfChartChecker()
-      .then((fn) => { if (!cancelled) setIsInfChart(() => fn); })
-      .catch((e) => console.warn('[Analysis] songs cache fetch 실패 (INF 필터 skip):', e?.message || e));
-    return () => { cancelled = true; };
-  }, [iidxId]);
 
   // 3. vec 계산
   const vecResult = useMemo(() => {
@@ -263,8 +249,17 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       noteCountResolver: (_songId: string, _chartName: string, title: string, diff: string) => {
         return noteCountMap.get(title + '|' + diff) ?? null;
       },
+      // INF 수록 필터 — TSV (INF only) 에 noteCount 있는 차트 = INF 수록.
+      //   supabase songs.ac/legen 데이터 정확도와 무관하게 TSV 만으로 정확 판단.
+      //   chartName 'DP_NOR'/'DP_HYP'/'DP_ANO'/'DP_LEG' → diff 매핑 후 noteCountMap lookup.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      extraRecFilter: isInfChart ? (c: any) => isInfChart(c.title, c.chartName) : null,
+      extraRecFilter: (c: any) => {
+        const CHART2DIFF: Record<string, string> = {
+          DP_NOR: 'NORMAL', DP_HYP: 'HYPER', DP_ANO: 'ANOTHER', DP_LEG: 'LEGGENDARIA',
+        };
+        const recDiff = CHART2DIFF[c.chartName as string] || c.diff || '';
+        return noteCountMap.has(c.title + '|' + recDiff);
+      },
       weaknessLib: libs.weaknessLib,
     };
     if (!controllerRef.current) {
@@ -277,7 +272,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       controllerRef.current.setOpts(opts);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libsReady, vecResult, percentiles, ratingData, zasaData, noteCountMap, isInfChart]);
+  }, [libsReady, vecResult, percentiles, ratingData, zasaData, noteCountMap]);
 
   if (error) {
     return <div style={{ padding: 20, color: '#ff6b6b' }}>오류: {error}</div>;

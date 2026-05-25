@@ -18,6 +18,8 @@ const TITLE_ALIASES: Record<string, string> = {
   'FiZZλ_PØT!0И': 'FiZZλ_PØT!OИ',          // zasa '0И' → textage 'OИ'
   'Xlo': 'Xlø',                            // ereter 'Xlo' → textage 'Xlø'
   'VOID': 'VØID',                          // ereter 'VOID' → textage 'VØID'
+  // INF 메모리 dump 가 부제목까지 포함하지만 songs.title 은 본곡명만 — 매칭용 alias.
+  'CROSSROAD ~Left Story~': 'CROSSROAD',
 };
 
 // 동명이곡 (norm 후 같은 키, raw 만 다른) → 강제 norm 키 분리 (신곡 쪽에 '2' suffix)

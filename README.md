@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.60.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.60-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.61.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.61-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.61 — 분석탭 INF 필터 TSV 기반으로 전환 + supabaseSync 신곡 자동 등록
+- **INF 필터 TSV 기반** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — 0.0.60 의 supabase `songs.ac/legen` 기반 필터는 데이터 정확도에 의존 (legen 값이 잘못 채워진 곡이 있어 LEGGENDARIA 미수록곡이 추천에 노출되던 회귀). TSV (INFINITAS 메모리 dump) 에 noteCount 있는 차트 = INF 수록이라는 정의로 전환 — `noteCountMap.has(title + '|' + diff)` 만으로 추천 필터. supabase 의존 제거, 정확도 100%.
+- **supabaseSync 신곡 자동 등록** ([supabaseSync.ts](src/renderer/src/supabaseSync.ts)) — songs 마스터에 없는 INF 곡을 만나면 `ensure_song` RPC 자동 호출 → songId 받아서 cache + score row 작성. RPC 실패 시 graceful (기존처럼 unmatched skip). `autoEnsured` 카운트 로깅.
+- 사전 조건: ohSorryAdmin/sql/setup_song_master.sql 의 ensure_song RPC 적용 (이미 적용됨).
+- **norm 룰**: `shared/match.ts` 의 `TITLE_ALIASES` 에 `'CROSSROAD ~Left Story~' → 'CROSSROAD'` 추가 (INF 메모리 dump 가 부제목 포함하는 케이스).
 
 ### 0.0.60 — INF 수록 필터 LEGGENDARIA 차트 단위로 정확화 (`songs.legen` 활용)
 - 0.0.59 의 `songs.ac & 2` 필터는 곡 단위만 판단 → "본곡은 INF 수록이지만 LEGGENDARIA 만 AC 전용" 케이스 (예: 鏡像都市 — `ac=3 legen=0`) 는 추천에 떠서 noteCount lookup 실패.

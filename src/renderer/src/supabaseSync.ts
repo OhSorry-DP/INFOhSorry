@@ -248,17 +248,49 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   let unmatched = 0;
   let invalidDiff = 0;
   const unmatchedSamples: string[] = [];
+  let autoEnsured = 0;
+  const autoEnsuredSamples: string[] = [];
   for (const c of allChartsForScores) {
     if (!isDpSlot(c.slot)) continue;
     if ((c.exScore ?? 0) <= 0) continue; // 미플레이 skip
     const diffInt = DIFF_MAP[c.diff];
     if (diffInt == null) { invalidDiff++; continue; }
     const candidates = songMap.get(norm(c.title));
-    const songId = pickSongId(candidates, PLAYED_VERSION_INF);
+    let songId = pickSongId(candidates, PLAYED_VERSION_INF);
     if (songId == null) {
-      unmatched++;
-      if (unmatchedSamples.length < 10) unmatchedSamples.push(c.title);
-      continue;
+      // songs 마스터 미등록 신곡 — ensure_song RPC 로 자동 등록. 실패 시 graceful skip.
+      // INFOhSorry 는 항상 INF (PLAYED_VERSION_INF=0) → ac/legen 의 INF 비트(2) set.
+      const isLeg = c.diff === 'LEGGENDARIA';
+      try {
+        const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/ensure_song`, {
+          method: 'POST',
+          headers: HEADERS,
+          body: JSON.stringify({
+            p_title: c.title,
+            p_textage_song_id: null,
+            p_ac:    isLeg ? null : 2,
+            p_legen: isLeg ? 2 : null,
+          }),
+        });
+        if (!res.ok) throw new Error(`ensure_song HTTP ${res.status}`);
+        const ensured = await res.json();
+        const newId = typeof ensured === 'number' ? ensured : parseInt(ensured, 10);
+        if (!Number.isFinite(newId) || newId <= 0) throw new Error('ensure_song returned non-numeric');
+        songId = newId;
+        const k = norm(c.title);
+        if (!songMap.has(k)) songMap.set(k, []);
+        songMap.get(k)!.push({
+          song_id: songId, title: c.title,
+          ac:    isLeg ? 0 : 2,
+          legen: isLeg ? 2 : 0,
+        });
+        autoEnsured++;
+        if (autoEnsuredSamples.length < 10) autoEnsuredSamples.push(c.title);
+      } catch (e) {
+        unmatched++;
+        if (unmatchedSamples.length < 10) unmatchedSamples.push(c.title + ' (' + (e as Error).message + ')');
+        continue;
+      }
     }
     const lampInt = c.lamp != null && LAMP_MAP[c.lamp] != null ? LAMP_MAP[c.lamp] : null;
     const exScore = c.exScore != null ? Number(c.exScore) : null;
@@ -284,6 +316,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     }
   }
   const scoreRows = [...dedup.values()];
+  if (autoEnsured > 0) console.log(`[supabaseSync] songs 마스터 자동 등록 (ensure_song) ${autoEnsured}건:`, autoEnsuredSamples);
   if (unmatched > 0) console.warn(`[supabaseSync] song 매칭 실패 ${unmatched}건 (skip). 샘플:`, unmatchedSamples);
   if (invalidDiff > 0) console.warn(`[supabaseSync] diff 변환 실패 ${invalidDiff}건 (skip)`);
   console.log(`[supabaseSync] appVersion=${appVersion} scores upsert: ${scoreRows.length}건 (전체 ${allChartsForScores.length}건 중, dedup 후)`);
