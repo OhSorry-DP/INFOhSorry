@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.56.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.56-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.57.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.57-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.57 — Analysis 탭 React #310 (conditional hook) 검은화면 fix
+- 0.0.55 / 0.0.56 에서 Analysis 탭 진입 시 lib 로드 완료 직후 검은화면 + 콘솔에 `Minified React error #310` (Rendered more hooks than during the previous render).
+- 원인: [Analysis.tsx](src/renderer/src/Analysis.tsx) 의 `noteCountMap` `useMemo` 가 `if (!vecResult) return` early return 보다 아래에 있어서, 첫 렌더 (vecResult=null → early return) 와 다음 렌더 (vecResult 있음 → useMemo 호출) 의 hook 카운트가 달라짐.
+- fix: `noteCountMap` `useMemo` 를 early return 위로 이동.
 
 ### 0.0.56 — Analysis 탭 gist fetch CSP 차단 fix
 - 0.0.55 에서 Analysis 탭 진입 시 "Failed to fetch" 회귀.

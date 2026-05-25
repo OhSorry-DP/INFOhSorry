@@ -251,6 +251,19 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     });
   }, [iidxId, vecResult, recomputeKey]);
 
+  // SongChart (TSV) 의 noteCount lookup — 기여곡/추천곡 row 의 EX SCORE 표시용
+  // early return 위에 둬야 conditional hook 위반 (#310) 안 남.
+  const noteCountMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const c of charts) {
+      if (c.noteCount > 0) {
+        const diff = SLOT_TO_DIFF[c.slot];
+        if (diff) m.set(c.title + '|' + diff, c.noteCount);
+      }
+    }
+    return m;
+  }, [charts]);
+
   if (error) {
     return <div style={{ padding: 20, color: '#ff6b6b' }}>오류: {error}</div>;
   }
@@ -264,17 +277,6 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   }
 
   const { vec, byChartData, sumPtPerFeat } = vecResult;
-  // SongChart (TSV) 의 noteCount lookup — 기여곡/추천곡 row 의 EX SCORE 표시용
-  const noteCountMap = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const c of charts) {
-      if (c.noteCount > 0) {
-        const diff = SLOT_TO_DIFF[c.slot];
-        if (diff) m.set(c.title + '|' + diff, c.noteCount);
-      }
-    }
-    return m;
-  }, [charts]);
   const valsRaw = FEATS.map((f) => vec[f.k] || 0);
   const userMean = valsRaw.reduce((s, v) => s + v, 0) / valsRaw.length;
   const vals = valsRaw.map((v) => v - userMean);
