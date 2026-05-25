@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.55.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.55-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.56.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.56-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.56 — Analysis 탭 gist fetch CSP 차단 fix
+- 0.0.55 에서 Analysis 탭 진입 시 "Failed to fetch" 회귀.
+- 원인: [src/renderer/index.html](src/renderer/index.html) 의 CSP `connect-src` 가 `'self' https://*.supabase.co http://localhost:*` 만 허용 → patterns / rateRef / calcWeakness / normTitle gist fetch 가 차단됨.
+- fix: `connect-src` 에 `https://gist.githubusercontent.com` 추가.
 
 ### 0.0.55 — Analysis 탭 신규 + pattern vec supabase upsert + star upload 통합 (3분 주기) + ★ 클릭 재계산
 - **신규 Analysis 탭** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — ohSorryWeb 분석탭 포팅.
