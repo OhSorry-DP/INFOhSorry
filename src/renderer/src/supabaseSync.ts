@@ -34,7 +34,7 @@ const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANO
 const LAMP_MAP: Record<string, number> = { NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7 };
 const PLAYED_VERSION_INF = 0;
 
-interface SongEntry { song_id: number; title: string; ac: number }
+interface SongEntry { song_id: number; title: string; ac: number; legen: number }
 
 // songs 마스터 캐시 (norm(title) → SongEntry[]) — 페이징 fetch + 메모리 보관
 let songsCache: Map<string, SongEntry[]> | null = null;
@@ -45,7 +45,7 @@ async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
   let offset = 0;
   let totalFetched = 0;
   while (true) {
-    const url = `${SUPABASE_URL}/rest/v1/songs?select=song_id,title,ac&order=song_id.asc&limit=${pageSize}&offset=${offset}`;
+    const url = `${SUPABASE_URL}/rest/v1/songs?select=song_id,title,ac,legen&order=song_id.asc&limit=${pageSize}&offset=${offset}`;
     const res = await fetch(url, { headers: HEADERS });
     if (!res.ok) throw new Error(`songs fetch HTTP ${res.status}`);
     const rows = (await res.json()) as SongEntry[];
@@ -53,7 +53,7 @@ async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
       if (!r.title) continue;
       const k = norm(r.title);
       if (!k) continue;
-      const entry: SongEntry = { song_id: r.song_id, title: r.title, ac: r.ac };
+      const entry: SongEntry = { song_id: r.song_id, title: r.title, ac: r.ac, legen: r.legen };
       if (!byNorm.has(k)) byNorm.set(k, []);
       byNorm.get(k)!.push(entry);
       // Ø/ø 곡은 eagate 표기가 일관되지 않음 — 'O' 알파벳 alias 도 등록
@@ -75,15 +75,19 @@ async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
   return byNorm;
 }
 
-// songs cache 의 ac flag (1=AC, 2=INF) 기반 — title → INF 수록 여부 sync checker.
-// 분석탭 추천에서 INF 미수록곡 (AC 전용) 제외용. 곡 단위 판단 (차트 단위는 X).
-export async function getInfChartChecker(): Promise<(title: string) => boolean> {
+// songs cache 의 ac / legen flag (bit1 = INF) 기반 — (title, chartName) → INF 수록 여부 sync checker.
+// chartName = 'DP_LEG' 면 legen 컬럼 활용, 그 외는 ac. 차트 단위 정확 필터.
+export async function getInfChartChecker(): Promise<(title: string, chartName?: string) => boolean> {
   const byNorm = await getSongsCache();
-  return function isChartInInf(title: string): boolean {
+  return function isChartInInf(title: string, chartName?: string): boolean {
     if (!title) return false;
     const candidates = byNorm.get(norm(title));
     if (!candidates || candidates.length === 0) return false;
-    return candidates.some((c) => (c.ac & 2) !== 0);
+    const isLeg = chartName === 'DP_LEG' || chartName === 'SP_LEG';
+    return candidates.some((c) => {
+      const v = isLeg ? c.legen : c.ac;
+      return typeof v === 'number' && (v & 2) !== 0;
+    });
   };
 }
 

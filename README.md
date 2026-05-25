@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.59.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.59-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.60.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.60-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.60 — INF 수록 필터 LEGGENDARIA 차트 단위로 정확화 (`songs.legen` 활용)
+- 0.0.59 의 `songs.ac & 2` 필터는 곡 단위만 판단 → "본곡은 INF 수록이지만 LEGGENDARIA 만 AC 전용" 케이스 (예: 鏡像都市 — `ac=3 legen=0`) 는 추천에 떠서 noteCount lookup 실패.
+- fix: [supabaseSync.ts](src/renderer/src/supabaseSync.ts) songs cache 에 `legen` 컬럼 같이 fetch. `getInfChartChecker()` 시그니처를 `(title, chartName?)` 로 확장 — chartName === 'DP_LEG' 면 `legen & 2`, 그 외는 `ac & 2` 확인.
+- [Analysis.tsx](src/renderer/src/Analysis.tsx) 의 `extraRecFilter` 도 `(c) => isInfChart(c.title, c.chartName)` 로 갱신.
 
 ### 0.0.59 — 분석탭 추천 INF 수록곡 필터 + 전 레벨 supabase scores 업로드
 - **추천 INF 수록곡 필터** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — INF 유저 (iidx_id 첫 글자 알파벳) 면 supabase songs cache 의 `ac` flag (INF 비트 = 2) 활용해서 AC 전용 (INF 미수록) 곡을 추천에서 제외. 기존: AC 전용 곡이 추천에 떠도 INFOhSorry 의 TSV 에 없어서 noteCount lookup 실패 → "현재 → 목표 EXSCORE" 자리에 "목표 69%" 만 표시되던 회귀.

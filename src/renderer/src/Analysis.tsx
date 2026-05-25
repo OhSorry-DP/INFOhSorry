@@ -133,8 +133,8 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   const [libsReady, setLibsReady] = useState(false);
   const [percentiles, setPercentiles] = useState<PercentileMap | null>(null);
   // INF 유저 (iidx_id 첫 글자 알파벳) 면 추천에서 INF 미수록곡 제외용 sync checker.
-  // INFOhSorry 는 사실상 항상 INF — 그래도 안전망으로 알파벳 체크.
-  const [isInfChart, setIsInfChart] = useState<((title: string) => boolean) | null>(null);
+  // chartName = 'DP_LEG' 면 songs.legen, 그 외는 songs.ac — 차트 단위 정확 필터.
+  const [isInfChart, setIsInfChart] = useState<((title: string, chartName?: string) => boolean) | null>(null);
   const [error, setError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const libsRef = useRef<{ weaknessLib?: any; normLib?: any; renderLib?: any; patternsMap?: any; rateRef?: any }>({});
@@ -264,7 +264,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
         return noteCountMap.get(title + '|' + diff) ?? null;
       },
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      extraRecFilter: isInfChart ? (c: any) => isInfChart(c.title) : null,
+      extraRecFilter: isInfChart ? (c: any) => isInfChart(c.title, c.chartName) : null,
       weaknessLib: libs.weaknessLib,
     };
     if (!controllerRef.current) {
