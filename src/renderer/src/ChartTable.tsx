@@ -119,6 +119,11 @@ export default function ChartTable({ rows, style, scrollTarget, onScrollDone }: 
   const [hideLocked, setHideLocked] = useState(false);
   const [collapsed, setCollapsed] = useState(true);
 
+  // 페이징 — 전체 row 한 번에 렌더하면 DOM 폭발해서 렉. 검색/필터는 페이징 전 단계에 적용되므로
+  // 검색어 입력하면 전체 row 에서 검색 + 그 결과만 페이징됨 (페이지 무관 검색).
+  const [pageSize, setPageSize] = useState<number>(50);
+  const [page, setPage] = useState<number>(1);
+
   // 필터 영역도 sticky → thead 의 top 을 필터 높이만큼 내림
   const filtersRef = useRef<HTMLDivElement>(null);
   const [filtersHeight, setFiltersHeight] = useState(0);
@@ -239,6 +244,17 @@ export default function ChartTable({ rows, style, scrollTarget, onScrollDone }: 
       return a.title.localeCompare(b.title);
     });
   }, [charts, sortKey, sortDir, slotIdx]);
+
+  // 검색/필터/정렬/페이지사이즈 변경 시 1페이지로 리셋.
+  useEffect(() => { setPage(1); }, [search, activeLevels, activeLamps, hideLocked, sortKey, sortDir, pageSize, style]);
+
+  // 페이징 적용 — sorted 의 일부만 렌더.
+  const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+  const safePage = Math.min(Math.max(1, page), totalPages);
+  const paged = useMemo(
+    () => sorted.slice((safePage - 1) * pageSize, safePage * pageSize),
+    [sorted, safePage, pageSize],
+  );
 
   // key 별 기본 정렬 방향 — miss 만 오름차순 우선, 나머지는 내림차순 우선
   function defaultDirFor(key: SortKey): SortDir {
@@ -382,13 +398,76 @@ export default function ChartTable({ rows, style, scrollTarget, onScrollDone }: 
         })}
       </div>
       <div className="ct-tbody">
-        {sorted.map((c, i) => (
-          <ChartRow key={`${c.title}|${c.slot}|${i}`} c={c} />
+        {paged.map((c, i) => (
+          <ChartRow key={`${c.title}|${c.slot}|${(safePage - 1) * pageSize + i}`} c={c} />
         ))}
       </div>
+      <Pager
+        page={safePage}
+        totalPages={totalPages}
+        pageSize={pageSize}
+        totalRows={sorted.length}
+        onPageChange={setPage}
+        onPageSizeChange={setPageSize}
+      />
       </div>
     </div>
   );
+}
+
+interface PagerProps {
+  page: number;
+  totalPages: number;
+  pageSize: number;
+  totalRows: number;
+  onPageChange: (p: number) => void;
+  onPageSizeChange: (s: number) => void;
+}
+function Pager({ page, totalPages, pageSize, totalRows, onPageChange, onPageSizeChange }: PagerProps): JSX.Element {
+  if (totalRows === 0) return <></>;
+  const start = (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalRows);
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+      gap: 12, padding: '8px 12px', borderTop: '1px solid #2a2d34',
+      background: '#1a1c20', color: '#adb5bd', fontSize: 13, flexWrap: 'wrap',
+    }}>
+      <div>
+        <span style={{ marginRight: 6 }}>페이지당</span>
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSizeChange(parseInt(e.target.value, 10))}
+          style={{ background: '#23262b', color: '#e9ecef', border: '1px solid #3a3d44', borderRadius: 4, padding: '2px 6px' }}
+        >
+          {[30, 50, 100].map((n) => <option key={n} value={n}>{n}곡</option>)}
+        </select>
+        <span style={{ marginLeft: 12, color: '#868e96' }}>{totalRows}곡 중 {start}~{end}</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <button onClick={() => onPageChange(1)} disabled={page <= 1}
+          style={pagerBtn(page <= 1)}>«</button>
+        <button onClick={() => onPageChange(page - 1)} disabled={page <= 1}
+          style={pagerBtn(page <= 1)}>‹</button>
+        <span style={{ minWidth: 80, textAlign: 'center', color: '#e9ecef', fontWeight: 600 }}>
+          {page} / {totalPages}
+        </span>
+        <button onClick={() => onPageChange(page + 1)} disabled={page >= totalPages}
+          style={pagerBtn(page >= totalPages)}>›</button>
+        <button onClick={() => onPageChange(totalPages)} disabled={page >= totalPages}
+          style={pagerBtn(page >= totalPages)}>»</button>
+      </div>
+    </div>
+  );
+}
+function pagerBtn(disabled: boolean): React.CSSProperties {
+  return {
+    background: disabled ? '#1f2125' : '#23262b',
+    color: disabled ? '#4d5358' : '#e9ecef',
+    border: '1px solid #3a3d44', borderRadius: 4,
+    padding: '4px 10px', cursor: disabled ? 'default' : 'pointer',
+    fontFamily: 'inherit', fontSize: 13,
+  };
 }
 
 function ChartRow({ c }: { c: SongChart }) {

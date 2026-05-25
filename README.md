@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.61.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.61-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.62.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.62-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.62 — DP/SP 뷰어 페이징 추가 (렉 해소)
+- [ChartTable.tsx](src/renderer/src/ChartTable.tsx) 가 전 row 한 번에 렌더하던 구조 → DOM 폭발로 렉.
+- 페이징 도입: 페이지당 30/50/100곡 선택 (default 50), 표 하단에 페이저 UI (`«‹ N/M ›»`).
+- 검색은 페이징 전 단계에 적용 → 검색어 입력 시 전체 row 에서 검색되고 그 결과만 페이징됨 (페이지 무관).
+- 검색/필터/정렬/페이지사이즈 변경 시 자동으로 page=1 리셋.
 
 ### 0.0.61 — 분석탭 INF 필터 TSV 기반으로 전환 + supabaseSync 신곡 자동 등록
 - **INF 필터 TSV 기반** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — 0.0.60 의 supabase `songs.ac/legen` 기반 필터는 데이터 정확도에 의존 (legen 값이 잘못 채워진 곡이 있어 LEGGENDARIA 미수록곡이 추천에 노출되던 회귀). TSV (INFINITAS 메모리 dump) 에 noteCount 있는 차트 = INF 수록이라는 정의로 전환 — `noteCountMap.has(title + '|' + diff)` 만으로 추천 필터. supabase 의존 제거, 정확도 100%.
