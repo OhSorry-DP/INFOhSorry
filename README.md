@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.57.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.57-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.58.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.58-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,13 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.58 — Analysis 탭 HTML 빌더 gist 모듈화 (ohSorryWeb 과 공유)
+- [Analysis.tsx](src/renderer/src/Analysis.tsx) 의 막대그래프 / 헤더 / 기여곡 / 추천곡 JSX 렌더링 로직을 모두 제거하고, gist 의 `analysisRender.js` (`window.OhsorryAnalysisRender`) 호출로 교체.
+- 흐름: `attachClickHandlers(panelRef, opts, { onChartClick })` → 모듈이 panel 에 `innerHTML` + 클릭 위임. 곡 클릭 시 React 의 `onPickChart` 콜백 호출 (handlerRef 로 최신 props 참조).
+- noteCount lookup 은 `noteCountResolver(songId, chartName, title, diff)` 로 추상화 — INFOhSorry 는 TSV `title + diff` 기반 lookup, ohSorryWeb 은 textage-meta `songId` 기반 lookup.
+- 효과: 분석탭 UI 수정 시 gist `analysisRender.js` 한 번만 push 하면 ohSorryWeb + INFOhSorry 양쪽에 즉시 반영. INFOhSorry 측은 빌드/릴리즈 불필요.
+- React 컴포넌트 코드 약 200줄 감소.
 
 ### 0.0.57 — Analysis 탭 React #310 (conditional hook) 검은화면 fix
 - 0.0.55 / 0.0.56 에서 Analysis 탭 진입 시 lib 로드 완료 직후 검은화면 + 콘솔에 `Minified React error #310` (Rendered more hooks than during the previous render).
