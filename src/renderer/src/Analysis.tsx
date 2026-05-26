@@ -100,10 +100,16 @@ async function fetchUserFeatureScore(iidxId: string): Promise<UserFeatureScore |
   } catch { return null; }
 }
 
-// percentile 계산용 — 모든 user 의 os_pattern_score fetch (랭킹만, 목록 표시 X).
-//   페이지네이션 (PostgREST 기본 max 1000). 5분 module-level cache 로 카드 전환마다 재fetch 안 함.
+// percentile + 인라인 랭킹표용 — 모든 user 의 dj_name + os_pattern_score fetch.
+//   users 테이블 + user_ohsorry_radars nested select (play_style=1 DP row).
+//   ohSorryWeb api.js fetchAllUsersUncached 와 동일 형태 — analysisRender 가 dj_name / iidx_id / os_pattern_score 한 번에 활용.
+//   페이지네이션 (PostgREST 기본 max 1000). 10분 module-level cache 로 카드 전환마다 재fetch 안 함.
 const OS_FEATS = ['NOTES', 'CHORD', 'PEAK', 'CHARGE', 'SCRATCH', 'SOF-LAN', 'PHRASE', 'JACK', 'TRILL', 'RAND'] as const;
-interface AllUserScoreRow { iidx_id: string; os_pattern_score: Record<string, number | null>; }
+interface AllUserScoreRow {
+  iidx_id: string;
+  dj_name: string | null;
+  os_pattern_score: Record<string, number | null>;
+}
 let _allUsersFsCache: { data: AllUserScoreRow[]; ts: number } | null = null;
 const ALL_USERS_FS_TTL_MS = 10 * 60 * 1000;  // 10분 — 분석탭 열린 동안 자동 갱신 주기와 동기화
 
@@ -114,21 +120,28 @@ async function fetchAllUsersFeatureScores(): Promise<AllUserScoreRow[]> {
   const out: AllUserScoreRow[] = [];
   let offset = 0;
   for (;;) {
-    const url = `${SUPABASE_URL}/rest/v1/user_ohsorry_radars`
-      + `?play_style=eq.1`
-      + `&select=iidx_id,notes,chord,peak,charge,scratch,soflan,phrase,jack,trill,rand`
+    const url = `${SUPABASE_URL}/rest/v1/users`
+      + `?select=iidx_id,dj_name,user_ohsorry_radars(play_style,notes,chord,peak,charge,scratch,soflan,phrase,jack,trill,rand)`
       + `&limit=${PAGE}&offset=${offset}`;
     const res = await fetch(url, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
     if (!res.ok) break;
     const rows = await res.json();
     if (!Array.isArray(rows) || rows.length === 0) break;
     for (const r of rows) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const dpRow = Array.isArray(r.user_ohsorry_radars)
+        ? r.user_ohsorry_radars.find((rr: { play_style: number }) => rr.play_style === 1)
+        : null;
       out.push({
         iidx_id: r.iidx_id,
-        os_pattern_score: {
-          NOTES: r.notes, CHORD: r.chord, PEAK: r.peak,
-          CHARGE: r.charge, SCRATCH: r.scratch, 'SOF-LAN': r.soflan,
-          PHRASE: r.phrase, JACK: r.jack, TRILL: r.trill, RAND: r.rand,
+        dj_name: r.dj_name ?? null,
+        os_pattern_score: dpRow ? {
+          NOTES: dpRow.notes, CHORD: dpRow.chord, PEAK: dpRow.peak,
+          CHARGE: dpRow.charge, SCRATCH: dpRow.scratch, 'SOF-LAN': dpRow.soflan,
+          PHRASE: dpRow.phrase, JACK: dpRow.jack, TRILL: dpRow.trill, RAND: dpRow.rand,
+        } : {
+          NOTES: null, CHORD: null, PEAK: null, CHARGE: null, SCRATCH: null,
+          'SOF-LAN': null, PHRASE: null, JACK: null, TRILL: null, RAND: null,
         },
       });
     }
@@ -213,6 +226,8 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   const [libsReady, setLibsReady] = useState(false);
   const [userFeatureScore, setUserFeatureScore] = useState<UserFeatureScore | null>(null);
   const [percentiles, setPercentiles] = useState<Record<string, { rank: number; total: number; percentile: number | null }> | null>(null);
+  // 인라인 랭킹표 (피처별 랭킹보기 토글) 용 — fetchAllUsersFeatureScores 결과 그대로.
+  const [allUserScores, setAllUserScores] = useState<AllUserScoreRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const libsRef = useRef<{ weaknessLib?: any; normLib?: any; renderLib?: any; patternsMap?: any; rateRef?: any; featureScores?: any }>({});
@@ -267,7 +282,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   //   목록 표시는 안 함 (목록 UI 없음). 분석탭 헤더 "X위 / Y명" 행 + 막대그래프 percentile 평균 대비 ± 만 갱신.
   //   fetchAllUsersFeatureScores 가 10분 cache 라 카드 전환마다 재fetch 하지 않음.
   useEffect(() => {
-    if (!iidxId || !userFeatureScore) { setPercentiles(null); return; }
+    if (!iidxId || !userFeatureScore) { setPercentiles(null); setAllUserScores(null); return; }
     let cancelled = false;
     const refresh = async () => {
       try {
@@ -275,6 +290,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
         if (cancelled) return;
         const pcts = computeOsPercentilesFromList(userFeatureScore, all);
         setPercentiles(pcts);
+        setAllUserScores(all);
       } catch (e) {
         console.warn('[Analysis] percentiles 계산 실패:', (e as Error).message);
       }
@@ -387,8 +403,11 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       },
       weaknessLib: libs.weaknessLib,
       featureScores: libs.featureScores,
-      // INF 도 percentile 계산 (수치만, 목록 표시 X). allUserScores 는 일부러 안 넘김 → "랭킹보기" 토글 숨김 자동.
+      // 피처별 랭킹보기 — percentiles + allUserScores + myIidxId 셋 다 넘기면 analysisRender 가 "랭킹보기" 토글 노출.
+      //   supabase iidx_id 는 하이픈 없는 형식이라 myIidxId 도 동일하게 정규화.
       percentiles,
+      allUserScores,
+      myIidxId: iidxId ? iidxId.replace(/-/g, '') : null,
     };
     if (!controllerRef.current) {
       controllerRef.current = libs.renderLib.attachClickHandlers(
@@ -400,7 +419,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       controllerRef.current.setOpts(opts);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libsReady, vecResult, userFeatureScore, percentiles, ratingData, zasaData, noteCountMap]);
+  }, [libsReady, vecResult, userFeatureScore, percentiles, allUserScores, ratingData, zasaData, noteCountMap, iidxId]);
 
   if (error) {
     return <div style={{ padding: 20, color: '#ff6b6b' }}>오류: {error}</div>;

@@ -90,11 +90,15 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
-### (next, 빌드 전) Analysis 탭 기여곡 표 곡 점수 = quantile score
-- [Analysis.tsx](src/renderer/src/Analysis.tsx) — `FEATURE_SCORES_URL` 상수 추가, `useEffect` lib 로딩에 `feature-scores-slim.json` 같이 fetch (graceful) → `libsRef.current.featureScores` 저장 → `attachClickHandlers` opts 에 `featureScores` 전달.
-- 효과: Analysis 탭 기여곡 표의 곡 점수가 dbConn v0.0.407 백필과 같은 quantile score (0~100) 로 표시.
-- gist `analysisRender.js` v0.0.12 (`opts.featureScores` 지원) 와 짝.
-- fetch 실패 시 fallback (`c.pt`).
+### (next, 빌드 전) Analysis 탭 기여곡 표 곡 점수 = quantile score + 피처별 랭킹보기 토글 노출
+- **기여곡 표 곡 점수 = quantile score** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — `FEATURE_SCORES_URL` 상수 추가, `useEffect` lib 로딩에 `feature-scores-slim.json` 같이 fetch (graceful) → `libsRef.current.featureScores` 저장 → `attachClickHandlers` opts 에 `featureScores` 전달.
+  - 효과: Analysis 탭 기여곡 표의 곡 점수가 dbConn v0.0.407 백필과 같은 quantile score (0~100) 로 표시.
+  - gist `analysisRender.js` v0.0.12 (`opts.featureScores` 지원) 와 짝.
+  - fetch 실패 시 fallback (`c.pt`).
+- **피처별 랭킹보기 토글 노출** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — ohSorryWeb 분석탭에 이미 있던 기능 (`analysisRender` v0.0.39+ 의 "랭킹보기" ↔ "스킬곡 보기" 인라인 토글) 이 INFOhSorry 에서는 `allUserScores` 미전달로 숨겨져 있던 회귀 해소.
+  - `fetchAllUsersFeatureScores` 의 쿼리를 `user_ohsorry_radars` 직접 → `users` 테이블 + `user_ohsorry_radars` nested select 로 교체. `dj_name` 동시 fetch (랭킹 표 표시용).
+  - `AllUserScoreRow` 타입에 `dj_name` 추가. state `allUserScores` 신설, percentile useEffect 에서 fetch 후 같이 `setAllUserScores`.
+  - `attachClickHandlers` opts 에 `allUserScores` + `myIidxId` (하이픈 제거 — supabase 형식 일치) 추가 → "랭킹보기" 토글 자동 노출, 본인 row 강조.
 
 ### 0.0.63 — 분석탭 percentile 표시 (전체 유저 랭킹) + supabase upsert 형식 fix
 - **percentile 계산 도입** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — `fetchAllUsersFeatureScores` (모든 user_ohsorry_radars 페이지네이션 fetch + 10분 cache) + `computeOsPercentilesFromList` (본인 myScore + allUsers → feature 별 `{ rank, total, percentile }`) 추가. 처음 1회 fetch + 10분 interval 자동 refetch. `opts.percentiles` 로 analysisRender 에 전달 → 분석탭 헤더 "X위 / Y명 · 상위 N%" 행 + 막대그래프 percentile 평균 대비 ± 표시.
