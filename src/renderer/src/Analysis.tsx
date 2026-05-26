@@ -18,6 +18,9 @@ const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
 const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
 const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
 const ANALYSIS_RENDER_URL = `${GIST_RAW}/analysisRender.js`;
+// feature-scores-slim.json — 차트별 11 feature quantile score (0~100). 분석탭 기여곡 표의 곡 점수.
+//   dbConn v0.0.407 의 user_ohsorry_radars feature score 백필 알고리즘과 동일 데이터 — DB 값과 일관성 있게 표시.
+const FEATURE_SCORES_URL = `${GIST_RAW}/feature-scores-slim.json`;
 
 const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2eHBlZWN4aWF3ZGRtcnpiZHZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5ODMxMzQsImV4cCI6MjA5NDU1OTEzNH0.lWnnSsSIFFLs7NsJq5yI6fe9HPiT9yQ3Pj-8sgfGuxI';
@@ -70,27 +73,105 @@ function songChartsToWeaknessCharts(charts: SongChart[]): {
   return out;
 }
 
-interface Percentile { rank: number | null; total: number; percentile: number | null; }
-type PercentileMap = Record<string, Percentile>;
+// 본인 user_ohsorry_radars 10 feature score (quantile score 평균, 0~100). 빈 {} 가능.
+type UserFeatureScore = Record<string, number | null>;
 
-async function fetchPercentiles(iidxId: string): Promise<PercentileMap | null> {
+// user_ohsorry_radars REST 로 본인 DP row 직접 fetch (RPC 안 씀). 분석탭 헤더 score 용.
+//   INFOhSorry 는 유저 목록 화면 미보유. percentile/rank 계산만 위해
+//   별도 fetchAllUsersFeatureScores 가 전체 row 받음 (목록 표시 X, 순위 계산만).
+async function fetchUserFeatureScore(iidxId: string): Promise<UserFeatureScore | null> {
   if (!iidxId) return null;
+  const id = iidxId.replace(/-/g, '');
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/get_pattern_vec_percentiles`, {
-      method: 'POST',
-      headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ p_iidx_id: iidxId.replace(/-/g, '') }),
-    });
+    const cols = 'notes,chord,peak,charge,scratch,soflan,phrase,jack,trill,rand';
+    const res = await fetch(
+      `${SUPABASE_URL}/rest/v1/user_ohsorry_radars?iidx_id=eq.${encodeURIComponent(id)}&play_style=eq.1&select=${cols}`,
+      { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } },
+    );
     if (!res.ok) return null;
-    return await res.json();
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const r = rows[0];
+    return {
+      NOTES: r.notes, CHORD: r.chord, PEAK: r.peak,
+      CHARGE: r.charge, SCRATCH: r.scratch, 'SOF-LAN': r.soflan,
+      PHRASE: r.phrase, JACK: r.jack, TRILL: r.trill, RAND: r.rand,
+    };
   } catch { return null; }
 }
 
-async function upsertPatternVec(iidxId: string, vec: Record<string, number>): Promise<boolean> {
+// percentile 계산용 — 모든 user 의 os_pattern_score fetch (랭킹만, 목록 표시 X).
+//   페이지네이션 (PostgREST 기본 max 1000). 5분 module-level cache 로 카드 전환마다 재fetch 안 함.
+const OS_FEATS = ['NOTES', 'CHORD', 'PEAK', 'CHARGE', 'SCRATCH', 'SOF-LAN', 'PHRASE', 'JACK', 'TRILL', 'RAND'] as const;
+interface AllUserScoreRow { iidx_id: string; os_pattern_score: Record<string, number | null>; }
+let _allUsersFsCache: { data: AllUserScoreRow[]; ts: number } | null = null;
+const ALL_USERS_FS_TTL_MS = 10 * 60 * 1000;  // 10분 — 분석탭 열린 동안 자동 갱신 주기와 동기화
+
+async function fetchAllUsersFeatureScores(): Promise<AllUserScoreRow[]> {
+  const now = Date.now();
+  if (_allUsersFsCache && (now - _allUsersFsCache.ts) < ALL_USERS_FS_TTL_MS) return _allUsersFsCache.data;
+  const PAGE = 1000;
+  const out: AllUserScoreRow[] = [];
+  let offset = 0;
+  for (;;) {
+    const url = `${SUPABASE_URL}/rest/v1/user_ohsorry_radars`
+      + `?play_style=eq.1`
+      + `&select=iidx_id,notes,chord,peak,charge,scratch,soflan,phrase,jack,trill,rand`
+      + `&limit=${PAGE}&offset=${offset}`;
+    const res = await fetch(url, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
+    if (!res.ok) break;
+    const rows = await res.json();
+    if (!Array.isArray(rows) || rows.length === 0) break;
+    for (const r of rows) {
+      out.push({
+        iidx_id: r.iidx_id,
+        os_pattern_score: {
+          NOTES: r.notes, CHORD: r.chord, PEAK: r.peak,
+          CHARGE: r.charge, SCRATCH: r.scratch, 'SOF-LAN': r.soflan,
+          PHRASE: r.phrase, JACK: r.jack, TRILL: r.trill, RAND: r.rand,
+        },
+      });
+    }
+    if (rows.length < PAGE) break;
+    offset += PAGE;
+  }
+  _allUsersFsCache = { data: out, ts: now };
+  return out;
+}
+
+// 본인 myScore + 전체 allUsers → feature 별 { rank, total, percentile }.
+//   ohSorryWeb 의 computeOsPercentiles 와 같은 알고리즘 — analysisRender 가 percentile 행 + 막대그래프 percentile 평균 대비 ± 표시에 사용.
+function computeOsPercentilesFromList(
+  myScore: UserFeatureScore | null,
+  allUsers: AllUserScoreRow[],
+): Record<string, { rank: number; total: number; percentile: number | null }> | null {
+  if (!myScore) return null;
+  const out: Record<string, { rank: number; total: number; percentile: number | null }> = {};
+  for (const f of OS_FEATS) {
+    const myVal = myScore[f];
+    if (typeof myVal !== 'number') { out[f] = { rank: 0, total: 0, percentile: null }; continue; }
+    let rank = 1, total = 0;
+    for (const u of allUsers) {
+      const v = u.os_pattern_score?.[f];
+      if (typeof v !== 'number') continue;
+      total++;
+      if (v > myVal) rank++;
+    }
+    out[f] = { rank, total, percentile: total > 0 ? (rank / total) * 100 : null };
+  }
+  return out;
+}
+
+// supabase user_ohsorry_radars 컬럼 upsert vec — weaknessLib.computePatternScoreVec 호출.
+//   backfill-pattern-score.js (ohSorryRating) 및 ohSorry dbConn 과 동일 알고리즘을 calcWeakness 가 통합 제공.
+//   diff 매핑 (NORMAL/HYPER/ANOTHER/LEGGENDARIA) 필요 — songChartsToWeaknessCharts 의 SLOT_TO_DIFF 그대로 활용.
+
+// RPC 인자명 (p_os_*) 은 옛 시그니처 유지 — DB RPC 내부에서 컬럼 매핑.
+async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): Promise<boolean> {
   const numOrNull = (v: number | undefined): number | null =>
     typeof v === 'number' && isFinite(v) ? v : null;
   try {
-    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_pattern_vec`, {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_feature_score`, {
       method: 'POST',
       headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -130,10 +211,11 @@ interface RenderController {
 export default function Analysis(props: AnalysisProps): JSX.Element {
   const { charts, ratingData, zasaData, iidxId, recomputeKey = 0, onPickChart } = props;
   const [libsReady, setLibsReady] = useState(false);
-  const [percentiles, setPercentiles] = useState<PercentileMap | null>(null);
+  const [userFeatureScore, setUserFeatureScore] = useState<UserFeatureScore | null>(null);
+  const [percentiles, setPercentiles] = useState<Record<string, { rank: number; total: number; percentile: number | null }> | null>(null);
   const [error, setError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const libsRef = useRef<{ weaknessLib?: any; normLib?: any; renderLib?: any; patternsMap?: any; rateRef?: any }>({});
+  const libsRef = useRef<{ weaknessLib?: any; normLib?: any; renderLib?: any; patternsMap?: any; rateRef?: any; featureScores?: any }>({});
   const panelRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<RenderController | null>(null);
   // 콜백 ref — attachClickHandlers 가 마운트 1회만 부착되므로, props 변경에도 최신 onPickChart 가 호출되도록 ref 통과.
@@ -148,9 +230,13 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
         await loadGistModule(CALC_WEAKNESS_URL, 'OhsorryWeakness');
         await loadGistModule(ANALYSIS_RENDER_URL, 'OhsorryAnalysisRender');
         const w = window as unknown as Record<string, unknown>;
-        const [patternsMap, rateRef] = await Promise.all([
+        const [patternsMap, rateRef, featureScores] = await Promise.all([
           loadJson(PATTERNS_URL),
           loadJson(RATE_REF_URL),
+          loadJson(FEATURE_SCORES_URL).catch((e) => {
+            console.warn('[Analysis] feature-scores fetch 실패 (곡 점수 fallback):', e?.message);
+            return null;
+          }),
         ]);
         if (cancelled) return;
         libsRef.current = {
@@ -159,6 +245,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
           renderLib: w.OhsorryAnalysisRender,
           patternsMap,
           rateRef,
+          featureScores,
         };
         setLibsReady(true);
       } catch (e) {
@@ -168,13 +255,34 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     return () => { cancelled = true; };
   }, []);
 
-  // 2. percentile fetch — iidxId 변경 시 + recomputeKey (App timer) 마다
+  // 2. 본인 user_ohsorry_radars feature score fetch — iidxId 변경 시 + recomputeKey (App timer) 마다
   useEffect(() => {
-    if (!iidxId) { setPercentiles(null); return; }
+    if (!iidxId) { setUserFeatureScore(null); return; }
     let cancelled = false;
-    fetchPercentiles(iidxId).then((p) => { if (!cancelled) setPercentiles(p); });
+    fetchUserFeatureScore(iidxId).then((p) => { if (!cancelled) setUserFeatureScore(p); });
     return () => { cancelled = true; };
   }, [iidxId, recomputeKey]);
+
+  // 2.5. percentile 계산 — 처음 마운트 시 1회 fetch + 10분 interval 자동 refetch.
+  //   목록 표시는 안 함 (목록 UI 없음). 분석탭 헤더 "X위 / Y명" 행 + 막대그래프 percentile 평균 대비 ± 만 갱신.
+  //   fetchAllUsersFeatureScores 가 10분 cache 라 카드 전환마다 재fetch 하지 않음.
+  useEffect(() => {
+    if (!iidxId || !userFeatureScore) { setPercentiles(null); return; }
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const all = await fetchAllUsersFeatureScores();
+        if (cancelled) return;
+        const pcts = computeOsPercentilesFromList(userFeatureScore, all);
+        setPercentiles(pcts);
+      } catch (e) {
+        console.warn('[Analysis] percentiles 계산 실패:', (e as Error).message);
+      }
+    };
+    refresh();
+    const timer = setInterval(refresh, ALL_USERS_FS_TTL_MS);  // 10분마다 자동 갱신
+    return () => { cancelled = true; clearInterval(timer); };
+  }, [iidxId, userFeatureScore]);
 
   // 3. vec 계산
   const vecResult = useMemo(() => {
@@ -199,17 +307,30 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [libsReady, charts, ratingData, zasaData, recomputeKey]);
 
-  // 4. supabase upsert
+  // 4. supabase upsert — weaknessLib.computePatternScoreVec (chart_score × score_rate top 30 가중합).
+  //    backfill 알고리즘과 동일. 이전엔 vecResult.vec (calcWeakness 잔차, -1~1) 을 그대로 upsert → 형식 불일치 → 수정.
   const lastUpsertedRef = useRef<string | null>(null);
   useEffect(() => {
     if (IS_BROWSER_REMOTE || !iidxId || !vecResult) return;
-    const key = iidxId + ':' + (vecResult.vec.NOTES || 0).toFixed(4) + ':' + recomputeKey;
+    const libs = libsRef.current;
+    if (!libs.weaknessLib || !libs.featureScores || !libs.patternsMap || !libs.normLib) return;
+    // diff 키 (NORMAL/HYPER/ANOTHER/LEGGENDARIA) 로 변환된 charts 가 필요 — songChartsToWeaknessCharts 결과 활용 가능.
+    const weaknessCharts = songChartsToWeaknessCharts(charts);
+    const patternVec = libs.weaknessLib.computePatternScoreVec({
+      charts: weaknessCharts,
+      featureScores: libs.featureScores,
+      patternsMap: libs.patternsMap,
+      normFn: libs.normLib.norm,
+    });
+    if (!patternVec) return;
+    const key = iidxId + ':' + (patternVec.NOTES || 0).toFixed(2) + ':' + recomputeKey;
     if (lastUpsertedRef.current === key) return;
     lastUpsertedRef.current = key;
-    upsertPatternVec(iidxId, vecResult.vec).then((ok) => {
-      if (ok) console.log('[Analysis] pattern vec upsert 성공');
-      else console.warn('[Analysis] pattern vec upsert 실패');
+    upsertFeatureScore(iidxId, patternVec).then((ok: boolean) => {
+      if (ok) console.log('[Analysis] feature score upsert 성공 (NOTES=' + (patternVec.NOTES || 0).toFixed(1) + ')');
+      else console.warn('[Analysis] feature score upsert 실패');
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [iidxId, vecResult, recomputeKey]);
 
   // noteCount lookup — title + diff → noteCount.
@@ -245,7 +366,11 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       allCharts: vecResult.allCharts,
       baseStar: null,  // INFOhSorry 는 ★ 추정 X → analyzeFeature 가 알아서 동작 (zasa 필터 off)
       normFn: libs.normLib.norm,
-      percentiles,
+      // analysisRender 의 opts 키 호환 (userPatternScore). 내부 변수명만 *FeatureScore.
+      userPatternScore: userFeatureScore,
+      // feature-scores _meta.maxScoreByFeat — 막대그래프 max% 환산용 (analysisRender v0.0.20+).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      maxScoreByFeat: (libs.featureScores as any)?._meta?.maxScoreByFeat,
       noteCountResolver: (_songId: string, _chartName: string, title: string, diff: string) => {
         return noteCountMap.get(title + '|' + diff) ?? null;
       },
@@ -261,6 +386,9 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
         return noteCountMap.has(c.title + '|' + recDiff);
       },
       weaknessLib: libs.weaknessLib,
+      featureScores: libs.featureScores,
+      // INF 도 percentile 계산 (수치만, 목록 표시 X). allUserScores 는 일부러 안 넘김 → "랭킹보기" 토글 숨김 자동.
+      percentiles,
     };
     if (!controllerRef.current) {
       controllerRef.current = libs.renderLib.attachClickHandlers(
@@ -272,7 +400,7 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       controllerRef.current.setOpts(opts);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libsReady, vecResult, percentiles, ratingData, zasaData, noteCountMap]);
+  }, [libsReady, vecResult, userFeatureScore, percentiles, ratingData, zasaData, noteCountMap]);
 
   if (error) {
     return <div style={{ padding: 20, color: '#ff6b6b' }}>오류: {error}</div>;

@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.62.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.62-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.63.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.63-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,18 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### (next, 빌드 전) Analysis 탭 기여곡 표 곡 점수 = quantile score
+- [Analysis.tsx](src/renderer/src/Analysis.tsx) — `FEATURE_SCORES_URL` 상수 추가, `useEffect` lib 로딩에 `feature-scores-slim.json` 같이 fetch (graceful) → `libsRef.current.featureScores` 저장 → `attachClickHandlers` opts 에 `featureScores` 전달.
+- 효과: Analysis 탭 기여곡 표의 곡 점수가 dbConn v0.0.407 백필과 같은 quantile score (0~100) 로 표시.
+- gist `analysisRender.js` v0.0.12 (`opts.featureScores` 지원) 와 짝.
+- fetch 실패 시 fallback (`c.pt`).
+
+### 0.0.63 — 분석탭 percentile 표시 (전체 유저 랭킹) + supabase upsert 형식 fix
+- **percentile 계산 도입** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — `fetchAllUsersFeatureScores` (모든 user_ohsorry_radars 페이지네이션 fetch + 10분 cache) + `computeOsPercentilesFromList` (본인 myScore + allUsers → feature 별 `{ rank, total, percentile }`) 추가. 처음 1회 fetch + 10분 interval 자동 refetch. `opts.percentiles` 로 analysisRender 에 전달 → 분석탭 헤더 "X위 / Y명 · 상위 N%" 행 + 막대그래프 percentile 평균 대비 ± 표시.
+  - 목록 UI 는 의도적으로 없음 (`allUserScores` 미전달) — analysisRender 의 "랭킹보기" 토글 버튼 자동 숨김. 순위 수치만 표시.
+- **supabase upsert vec 형식 fix** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — 이전엔 `calcWeakness.calcUserWeakness` 의 잔차값 (-1~1) 을 그대로 `upsertFeatureScore` 에 넘김 → `user_ohsorry_radars` 컬럼이 다른 source (`backfill-pattern-score.js` / `ohSorry dbConn`) 의 chart_score 가중합 (0~1500) 과 형식 불일치 → INF user 의 헤더 score / percentile 부정확. 수정: `weaknessLib.computePatternScoreVec` (gist `calcWeakness.js` 신규 export) 호출 → backfill 과 동일 가중합 형식으로 upsert.
+- gist `calcWeakness.js` 신규 함수들과 짝 — `computePatternScoreVec` (위) + `chartStrengthMatchByHand` / `chartWeaknessMatchByHand` (FLIP 배치 비교, 손 분리 vec `__vecL`/`__vecR` 활용 — 아직 호출처 0, 향후 사용).
 
 ### 0.0.62 — DP/SP 뷰어 페이징 추가 (렉 해소)
 - [ChartTable.tsx](src/renderer/src/ChartTable.tsx) 가 전 row 한 번에 렌더하던 구조 → DOM 폭발로 렉.
