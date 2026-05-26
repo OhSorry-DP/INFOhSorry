@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.63.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.63-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.64.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.64-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -90,7 +90,7 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
-### (next, 빌드 전) Analysis 탭 기여곡 표 곡 점수 = quantile score + 피처별 랭킹보기 토글 노출
+### 0.0.64 — Analysis 탭 기여곡 표 곡 점수 = quantile score + 피처별 랭킹보기 토글 노출
 - **기여곡 표 곡 점수 = quantile score** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — `FEATURE_SCORES_URL` 상수 추가, `useEffect` lib 로딩에 `feature-scores-slim.json` 같이 fetch (graceful) → `libsRef.current.featureScores` 저장 → `attachClickHandlers` opts 에 `featureScores` 전달.
   - 효과: Analysis 탭 기여곡 표의 곡 점수가 dbConn v0.0.407 백필과 같은 quantile score (0~100) 로 표시.
   - gist `analysisRender.js` v0.0.12 (`opts.featureScores` 지원) 와 짝.
