@@ -90,6 +90,15 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### 0.0.65 — supabaseSync 가 ensure_song 호출 시 textage-meta lookup 으로 p_textage_song_id 전달
+- 배경: songs cache stale 또는 norm 미세 차이로 옛 row 매칭 실패 → ensure_song 이 `series_no=99` 새 row 생성. 시간 지나면 누적되어 동명이곡이 series_no=99 로 분산.
+- fix [supabaseSync.ts](src/renderer/src/supabaseSync.ts):
+  - `TEXTAGE_META_URL` 상수 추가 — gist `c3da608.../textage-meta.json`.
+  - `getTextageByTitle()` — textage-meta gist 한 번 fetch + cache. `norm(title)` → `textage_song_id` Map 빌드. 실패 시 빈 Map (= 기존 동작 fallback).
+  - `ensure_song` 호출 직전 lookup → 매칭되면 `p_textage_song_id` 전달. RPC 의 `ON CONFLICT (textage_song_id)` 분기로 옛 row 와 자동 통합 → `series_no=99` 새 row 생성 안 됨.
+- norm 동기화 [match.ts](src/shared/match.ts): `TITLE_ALIASES` 에 ohSorry normTitle v0.0.6 의 alias 추가 — `CROSSROAD ～Left Story～` (full-width tilde 변종), `Space Battleship S4TO ↔ S4TØ`, `メテオラ-meteor- ↔ メテオラ -meteor-` (공백 표기).
+- 사전 조건: ohSorryAdmin `setup_song_master.sql` 의 `ensure_song(text, text, int, int)` 시그니처 (이미 적용됨).
+
 ### 0.0.64 — Analysis 탭 기여곡 표 곡 점수 = quantile score + 피처별 랭킹보기 토글 노출
 - **기여곡 표 곡 점수 = quantile score** ([Analysis.tsx](src/renderer/src/Analysis.tsx)) — `FEATURE_SCORES_URL` 상수 추가, `useEffect` lib 로딩에 `feature-scores-slim.json` 같이 fetch (graceful) → `libsRef.current.featureScores` 저장 → `attachClickHandlers` opts 에 `featureScores` 전달.
   - 효과: Analysis 탭 기여곡 표의 곡 점수가 dbConn v0.0.407 백필과 같은 quantile score (0~100) 로 표시.
