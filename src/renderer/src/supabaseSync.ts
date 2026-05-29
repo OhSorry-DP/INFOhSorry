@@ -36,6 +36,35 @@ const PLAYED_VERSION_INF = 0;
 
 interface SongEntry { song_id: number; title: string; ac: number; legen: number }
 
+// textage-meta gist — title (raw) → textage_song_id 매핑 빌드. ensure_song 호출 시
+//   p_textage_song_id 전달 → ON CONFLICT (textage_song_id) 분기로 옛 row 와 자동 통합.
+//   supabase songs cache 가 stale 한 케이스 (옛 row 와 norm 매칭 실패) 에서 textage-meta 가 fresh 면
+//   textage_song_id UNIQUE 키로 매칭 → series_no=99 새 row 생성 안 됨.
+const TEXTAGE_META_URL =
+  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/textage-meta.json';
+let textageByTitle: Map<string, string> | null = null;
+async function getTextageByTitle(): Promise<Map<string, string>> {
+  if (textageByTitle) return textageByTitle;
+  textageByTitle = new Map<string, string>();
+  try {
+    const r = await fetch(TEXTAGE_META_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error(`textage-meta HTTP ${r.status}`);
+    const meta = (await r.json()) as { songs?: Record<string, { title?: string }> };
+    if (meta && meta.songs) {
+      for (const sid of Object.keys(meta.songs)) {
+        const e = meta.songs[sid];
+        if (!e || !e.title) continue;
+        const k = norm(e.title);
+        if (!k) continue;
+        if (!textageByTitle.has(k)) textageByTitle.set(k, sid);
+      }
+    }
+  } catch (e) {
+    console.warn('[supabaseSync] textage-meta fetch 실패 (textage_song_id null 로 fallback):', (e as Error).message);
+  }
+  return textageByTitle;
+}
+
 // songs 마스터 캐시 (norm(title) → SongEntry[]) — 페이징 fetch + 메모리 보관
 let songsCache: Map<string, SongEntry[]> | null = null;
 async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
@@ -260,14 +289,19 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     if (songId == null) {
       // songs 마스터 미등록 신곡 — ensure_song RPC 로 자동 등록. 실패 시 graceful skip.
       // INFOhSorry 는 항상 INF (PLAYED_VERSION_INF=0) → ac/legen 의 INF 비트(2) set.
+      //
+      // textage-meta lookup 으로 textage_song_id 찾기 — supabase songs cache 가 stale 한 경우에도
+      //   textage-meta 매칭되면 textage_song_id UNIQUE 키로 옛 row 와 자동 통합 (series_no=99 새 row 생성 X).
       const isLeg = c.diff === 'LEGGENDARIA';
+      const txMap = await getTextageByTitle();
+      const txId = txMap.get(norm(c.title)) || null;
       try {
         const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/ensure_song`, {
           method: 'POST',
           headers: HEADERS,
           body: JSON.stringify({
             p_title: c.title,
-            p_textage_song_id: null,
+            p_textage_song_id: txId,
             p_ac:    isLeg ? null : 2,
             p_legen: isLeg ? 2 : null,
           }),

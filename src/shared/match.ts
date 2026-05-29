@@ -20,6 +20,9 @@ const TITLE_ALIASES: Record<string, string> = {
   'VOID': 'VØID',                          // ereter 'VOID' → textage 'VØID'
   // INF 메모리 dump 가 부제목까지 포함하지만 songs.title 은 본곡명만 — 매칭용 alias.
   'CROSSROAD ~Left Story~': 'CROSSROAD',
+  'CROSSROAD ～Left Story～': 'CROSSROAD',  // full-width tilde 변종 (ohSorry normTitle v0.0.6 과 동기화)
+  'Space Battleship S4TO': 'Space Battleship S4TØ',  // INF dump '일반 O' → textage 'Ø' (norm 의 Ø→0 변환 차이)
+  'メテオラ-meteor-': 'メテオラ -meteor-',  // INF dump 공백 없는 표기 → textage 공백 있는 표기
 };
 
 // 동명이곡 (norm 후 같은 키, raw 만 다른) → 강제 norm 키 분리 (신곡 쪽에 '2' suffix)
