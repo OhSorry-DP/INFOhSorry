@@ -35,9 +35,9 @@ const LAMP_TO_NUM: Record<string, number> = {
   NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7,
 };
 
-async function loadGistModule(url: string, globalKey: string): Promise<unknown> {
+async function loadGistModule(url: string, globalKey: string, force = false): Promise<unknown> {
   const w = window as unknown as Record<string, unknown>;
-  if (w[globalKey]) return w[globalKey];
+  if (!force && w[globalKey]) return w[globalKey];
   const res = await fetch(`${url}?t=${Date.now()}`);
   if (!res.ok) throw new Error(`${globalKey} fetch HTTP ${res.status}`);
   const text = await res.text();
@@ -179,7 +179,8 @@ function computeOsPercentilesFromList(
 //   backfill-pattern-score.js (ohSorryRating) 및 ohSorry dbConn 과 동일 알고리즘을 calcWeakness 가 통합 제공.
 //   diff 매핑 (NORMAL/HYPER/ANOTHER/LEGGENDARIA) 필요 — songChartsToWeaknessCharts 의 SLOT_TO_DIFF 그대로 활용.
 
-// RPC 인자명 (p_os_*) 은 옛 시그니처 유지 — DB RPC 내부에서 컬럼 매핑.
+// RPC 시그니처: migration_mirror_features.sql 의 29 인자 (text + 28 numeric).
+//   기존 10 dim (mirror-invariant) + 신규 18 dim (mirror 9 × L/R) — 모두 보내야 PostgREST 가 매칭.
 async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): Promise<boolean> {
   const numOrNull = (v: number | undefined): number | null =>
     typeof v === 'number' && isFinite(v) ? v : null;
@@ -199,6 +200,17 @@ async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): 
         p_os_jack:    numOrNull(vec.JACK),
         p_os_trill:   numOrNull(vec.TRILL),
         p_os_rand:    numOrNull(vec.RAND),
+        p_os_stair_up_l: numOrNull(vec.STAIR_UP_L),
+        p_os_stair_up_r: numOrNull(vec.STAIR_UP_R),
+        p_os_stair_dn_l: numOrNull(vec.STAIR_DN_L),
+        p_os_stair_dn_r: numOrNull(vec.STAIR_DN_R),
+        p_os_k1_l: numOrNull(vec.K1_L), p_os_k1_r: numOrNull(vec.K1_R),
+        p_os_k2_l: numOrNull(vec.K2_L), p_os_k2_r: numOrNull(vec.K2_R),
+        p_os_k3_l: numOrNull(vec.K3_L), p_os_k3_r: numOrNull(vec.K3_R),
+        p_os_k4_l: numOrNull(vec.K4_L), p_os_k4_r: numOrNull(vec.K4_R),
+        p_os_k5_l: numOrNull(vec.K5_L), p_os_k5_r: numOrNull(vec.K5_R),
+        p_os_k6_l: numOrNull(vec.K6_L), p_os_k6_r: numOrNull(vec.K6_R),
+        p_os_k7_l: numOrNull(vec.K7_L), p_os_k7_r: numOrNull(vec.K7_R),
       }),
     });
     return res.ok;
@@ -236,14 +248,18 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   // 콜백 ref — attachClickHandlers 가 마운트 1회만 부착되므로, props 변경에도 최신 onPickChart 가 호출되도록 ref 통과.
   const handlerRef = useRef<{ onChartClick: (title: string, diff: string) => void }>({ onChartClick: () => {} });
 
-  // 1. lib + json + render 모듈 fetch
+  // 1. lib + json + render 모듈 fetch — 마운트 시 1회 + 10분마다 자동 갱신 (ohSorryAdmin seed:full 반영).
   useEffect(() => {
     let cancelled = false;
-    (async () => {
+    let isFirst = true;
+    const loadAll = async (): Promise<void> => {
       try {
-        await loadGistModule(NORM_TITLE_URL, 'OhsorryNorm');
-        await loadGistModule(CALC_WEAKNESS_URL, 'OhsorryWeakness');
-        await loadGistModule(ANALYSIS_RENDER_URL, 'OhsorryAnalysisRender');
+        // 10분 polling 호출 (= force=true) 시 모듈 JS 도 다시 fetch + eval — gist 의 normTitle / weakness /
+        //   analysisRender 갱신 반영. 첫 호출은 force=false (cache 활용 — 마운트 시 빠른 진입).
+        const force = !isFirst;
+        await loadGistModule(NORM_TITLE_URL, 'OhsorryNorm', force);
+        await loadGistModule(CALC_WEAKNESS_URL, 'OhsorryWeakness', force);
+        await loadGistModule(ANALYSIS_RENDER_URL, 'OhsorryAnalysisRender', force);
         const w = window as unknown as Record<string, unknown>;
         const [patternsMap, rateRef, featureScores] = await Promise.all([
           loadJson(PATTERNS_URL),
@@ -263,11 +279,15 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
           featureScores,
         };
         setLibsReady(true);
+        isFirst = false;
       } catch (e) {
         if (!cancelled) setError((e as Error).message);
       }
-    })();
-    return () => { cancelled = true; };
+    };
+    void loadAll();
+    // 10분마다 재호출 — gist patterns / rate-ref / feature-scores 신곡 반영. 모듈 JS 도 force=true 로 재 eval.
+    const interval = setInterval(() => void loadAll(), 10 * 60 * 1000);
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   // 2. 본인 user_ohsorry_radars feature score fetch — iidxId 변경 시 + recomputeKey (App timer) 마다

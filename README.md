@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.64.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.64-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.66.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.66-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,11 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.66 — supabase upsert_user_feature_score 28 dim 시그니처 매칭 (silent fail 해소)
+- 배경: 2026-05-27 [migration_mirror_features.sql](../ohSorryAdmin/sql/migration_mirror_features.sql) 로 `user_ohsorry_radars` 에 18 dim (mirror 영향 STAIR_UP/DN_L/R + K1~K7 손별) 추가 + `upsert_user_feature_score` RPC 시그니처 11 → 29 인자 확장. 클라이언트 (INFOhSorry / ohSorry dbConn) 가 옛 11 인자만 보내서 PostgREST 가 함수 매칭 실패 (PGRST202) → silent catch 로 묻혀 user_ohsorry_radars 가 빈 채로 남던 버그.
+- fix [Analysis.tsx](src/renderer/src/Analysis.tsx) `upsertFeatureScore` — 인자 11 → 29 확장. 새 18 dim (`p_os_stair_up_l/r`, `p_os_stair_dn_l/r`, `p_os_k1_l/r ~ p_os_k7_l/r`) 추가. vec 자체는 gist `calcWeakness.js` 의 `computePatternScoreVec` 가 새 `UPSERT_FEATS` (28 dim) 로 반환 — INFOhSorry 는 lib 갱신만으로 vec 28 dim 자동 (별도 변경 X).
+- 짝 변경 (gist): `dbConn.js v0.0.410` (FEATS 28 + 29 인자 + `make_grid_data` 페이지네이션), `calcWeakness.js` (`UPSERT_FEATS` 28 dim).
 
 ### 0.0.65 — supabaseSync 가 ensure_song 호출 시 textage-meta lookup 으로 p_textage_song_id 전달
 - 배경: songs cache stale 또는 norm 미세 차이로 옛 row 매칭 실패 → ensure_song 이 `series_no=99` 새 row 생성. 시간 지나면 누적되어 동명이곡이 series_no=99 로 분산.
