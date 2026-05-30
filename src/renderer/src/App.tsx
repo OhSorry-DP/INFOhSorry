@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
@@ -17,10 +17,16 @@ import {
   type RecLevelMode,
   type RecStage,
 } from '../../shared/recommend';
+
+// RecCard 의 stage union — shared 의 RecStage (ec/hc/exh, buildRecs 인자) + 연습곡 'weakness'.
+type CardStage = RecStage | 'weakness';
 import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
 import DpTable from './DpTable';
 import Analysis from './Analysis';
+import Recent from './Recent';
+import PlayData from './PlayData';
+import { loadRecLibs, createRecCtx, type RecCoreLibs } from './recommendCore';
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
@@ -39,7 +45,7 @@ const APP_VERSION = __APP_VERSION__;
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
 const STAR_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
 
-type Tab = 'sp' | 'dp' | 'dp12' | 'analysis';
+type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
 
 // "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
 function formatRelativeTime(epochMs: number): string {
@@ -65,9 +71,24 @@ export default function App() {
     spawned: false,
   });
   const [rows, setRows] = useState<SongRow[]>([]);
-  const [tab, setTab] = useState<Tab>('dp');
+  const [tab, setTab] = useState<Tab>('playdata');
   // 추천곡 클릭 → DP 탭 + 해당 row 로 스크롤 타깃
   const [scrollTarget, setScrollTarget] = useState<{ title: string; slot: string; gameLevel?: number | null } | null>(null);
+  // 옛 ID 의 tsv 가 메모리에 남아 새 ID 로 잘못 업로드되는 사고 방지용 — 옛 IIDX ID 추적.
+  // truthy → null transition (= 게임 종료 / 다른 ID 로 로그인 전 단계) 감지 시 tsv 비우기 + 로딩 데이터 reset.
+  const prevIidxIdRef = useRef<string | null>(null);
+  // "세션 중 한 번이라도 유효한 IIDX ID 가 잡힌 적 있는지" 추적 — false-positive 방어.
+  //   INFINITAS 미실행 / 메모리 잡음으로 잠깐 truthy 가 잡혔다 사라지는 케이스에선 transit 인식 X.
+  //   유효 조건: Reflux 가 hooked/ready 상태 + iidx_id 형식 매칭 (^[A-Z]\d{12}$).
+  const everHadValidIidxIdRef = useRef(false);
+  // null 상태 debounce timer — null 이 5초 이상 *지속* 되어야 진짜 transit 으로 판정.
+  //   "데이터 불러오기" 클릭 / health-check 자동 재시작 시 stage='starting' / 'hooking' 거치는 동안
+  //   useProfile 이 iidxId 를 null 로 잠깐 reset 함 → 5초 안에 ready 가 되어 다시 잡히면 cancel.
+  //   INFINITAS 진짜 종료 시는 null 이 계속 유지되어 5초 후 cleanup 발동.
+  const stuckNullTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
+  // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
+  const initialUploadDoneRef = useRef(false);
   const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
   // 개발 모드 — 호스트 (Electron) 에서만 콘솔에 startdev() 노출. PC2 (브라우저 원격) 에선 비활성.
   // 활성 시 Reflux 토글 / 프로필 스캐너 / StarPanel 등 디버그 요소 표시.
@@ -306,7 +327,7 @@ export default function App() {
 
   // SP/DP 탭의 통계
   const stats = useMemo(() => {
-    if (tab === 'dp12') return { total: 0, unlocked: 0, played: 0 };
+    if (tab === 'dp12' || tab === 'recent' || tab === 'analysis' || tab === 'playdata' || tab === 'grid') return { total: 0, unlocked: 0, played: 0 };
     const slots = tab === 'sp' ? ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'] : ['DPN', 'DPH', 'DPA', 'DPL'];
     let unlocked = 0;
     let played = 0;
@@ -932,6 +953,63 @@ export default function App() {
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
 
+  // IIDX ID 가 truthy → null 로 바뀌는 transition 감지 (= 게임 종료 / 다른 ID 로 로그인 직전).
+  // 옛 ID 의 tsv 가 메모리에 남으면 다음 1분 interval upload 가 옛 데이터 + 새 IIDX ID 조합으로
+  // 잘못 업로드 가능 → transit 즉시:
+  //   1) tracker.tsv 내용 비우기 (truncate 0 bytes — 파일은 유지, Reflux watch 끊김 없음)
+  //   2) rows / tsvMtime / lastLoadedMtime / initialUploadDoneRef 모두 reset (메모리 stale 제거)
+  //
+  // 가드 조건 (false-positive 방어):
+  //   - 세션 중 한 번이라도 Reflux 후킹 + 유효 ID 형식 잡힌 적 있어야 함 (everHadValidIidxIdRef)
+  //   - null 상태가 5초 *지속* 되어야 transit 으로 판정 (debounce) — "데이터 불러오기" 재시작 중
+  //     stage='starting' / 'hooking' 거치는 동안 잠깐 null 이 되는 false-positive 회피
+  // PC2 (브라우저 원격) 에선 main 측 clearTsv IPC 가 없을 수 있어 skip.
+  useEffect(() => {
+    const prev = prevIidxIdRef.current;
+    const now = profile.iidxId;
+    prevIidxIdRef.current = now;
+    // 유효 마킹 — Reflux 가 INFINITAS 에 후킹된 상태 + iidx_id 형식 정확히 통과한 경우만.
+    const refluxHooked = refluxState.stage === 'hooked' || refluxState.stage === 'ready';
+    if (refluxHooked && now && /^[A-Z]\d{12}$/.test(now)) {
+      everHadValidIidxIdRef.current = true;
+    }
+    // ID 가 다시 잡힘 → pending debounce 취소
+    if (now) {
+      if (stuckNullTimerRef.current) {
+        clearTimeout(stuckNullTimerRef.current);
+        stuckNullTimerRef.current = null;
+      }
+      return;
+    }
+    if (!prev) return;                          // 직전 tick 도 null — 그냥 idle
+    if (!everHadValidIidxIdRef.current) return; // 한 번도 유효 ID 잡힌 적 없음 — false-positive
+    // 5초 동안 null 지속되면 진짜 transit 으로 판정 (게임 종료 / INFINITAS 죽음).
+    // 이미 timer 가 돌고 있으면 그대로 둠 (cleanup 함수가 다음 useEffect 호출 시 해제).
+    if (stuckNullTimerRef.current) return;
+    stuckNullTimerRef.current = setTimeout(() => {
+      stuckNullTimerRef.current = null;
+      console.warn(`[guard] IIDX ID 5초 이상 끊김 (이전: ${prev}) — tsv 내용 비우기 + 로딩 데이터 reset`);
+      setRows([]);
+      setTsvMtime(0);
+      lastLoadedMtime.current = 0;
+      initialUploadDoneRef.current = false;
+      if (!IS_BROWSER_REMOTE && tsvPath) {
+        void (async () => {
+          try {
+            const r = await window.infohsorry.clearTsv(tsvPath);
+            if (r.ok) {
+              console.log(`[guard] tsv clear ${r.cleared ? '완료' : '(파일 없음)'}: ${tsvPath}`);
+            } else {
+              console.warn(`[guard] tsv clear 실패: ${r.error}`);
+            }
+          } catch (e) {
+            console.warn(`[guard] tsv clear 예외:`, (e as Error).message);
+          }
+        })();
+      }
+    }, 5000);
+  }, [profile.iidxId, refluxState.stage, tsvPath]);
+
   // 유저 공개 정보 (DP 노트레이더 + SP/DP 단위) — supabase 에서 iidxId 감지 시 1회 fetch.
   // 메모리 리딩이 단위를 못 가져오는 케이스가 있어 supabase 저장값 (getInfRadar.js 가 eagate djdata 에서 채움) 으로 보강.
   // 데이터 없는 필드는 ProfileCard 가 영역 자체 숨김.
@@ -1022,7 +1100,7 @@ export default function App() {
 
   // 초기 한 번만 — profile / star / match 모두 준비됨 감지하면 즉시 supabase 업로드
   // (auto 3분 interval 첫 트리거를 기다리지 않고 데이터 로딩 끝나는 즉시 한 번)
-  const initialUploadDoneRef = useRef(false);
+  // (initialUploadDoneRef 선언은 위쪽 — 옛 ID transition cleanup useEffect 가 먼저 참조.)
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
     if (initialUploadDoneRef.current) return;
@@ -1047,6 +1125,35 @@ export default function App() {
   const [recsEC, setRecsEC] = useState<RecState>({ picked: [], pool: [] });
   const [recsHC, setRecsHC] = useState<RecState>({ picked: [], pool: [] });
   const [recsEXH, setRecsEXH] = useState<RecState>({ picked: [], pool: [] });
+  // recommend.js (gist) lib 로드 — RecCard 의 row 클릭 시 해시태그 / 배치 라벨 표시용.
+  //   마운트 1회만 fetch. ctx 는 rows / rating / zasa / ereter 변경 시 재생성.
+  //   ctx 활용해서 추천곡 별 chartStrengthMatchByHand + computeRecHashtags 결과를 Map 으로.
+  const [recLibs, setRecLibs] = useState<RecCoreLibs | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const libs = await loadRecLibs();
+        if (!cancelled) setRecLibs(libs);
+      } catch (e) {
+        console.warn('[App] recommend lib 로드 실패 (해시태그 비활성):', (e as Error).message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  // ctx — 데이터 변경 시 재생성 (lib 가 ready 일 때만).
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const recCtx = useMemo<any>(() => {
+    if (!recLibs) return null;
+    if (rows.length === 0) return null;
+    try {
+      return createRecCtx({ libs: recLibs, rows, ratingData, zasaData, ereterData });
+    } catch (e) {
+      console.warn('[App] recCtx 생성 실패:', (e as Error).message);
+      return null;
+    }
+  }, [recLibs, rows, ratingData, zasaData, ereterData]);
+
   const lastRerollEC = useRef(-1);
   const lastRerollHC = useRef(-1);
   const lastRerollEXH = useRef(-1);
@@ -1170,6 +1277,108 @@ export default function App() {
     setRerollHC((k) => k + 1);
     setRerollEXH((k) => k + 1);
   };
+
+  // 연습곡 (weakness) 추천 토글 state — recommend.js buildWeaknessRecs opts 와 매칭.
+  const [weakMode, setWeakMode] = useState<'all' | 'CHARGE' | 'SCRATCH' | 'SOF-LAN'>('all');
+  const [weakTopN, setWeakTopN] = useState<number>(10);
+  const [weakHandMode, setWeakHandMode] = useState<'both' | 'left' | 'right'>('both');
+  const [weakStrength, setWeakStrength] = useState<1 | 2 | 3>(1);
+  // zasa ★ 범위 — null 이면 recommend.js 의 default (practiceZasaDefault: {min:11.6, max:12.7}) 사용.
+  const [weakZasaMin, setWeakZasaMin] = useState<number | null>(null);
+  const [weakZasaMax, setWeakZasaMax] = useState<number | null>(null);
+  // recCtx 의 practiceZasaDefault 를 표시용 fallback 으로 노출. ctx 없으면 안전 default.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const weakZasaDefault: { min: number; max: number } = useMemo(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const d = (recCtx as any)?.practiceZasaDefault;
+    if (d && typeof d.min === 'number' && typeof d.max === 'number') return d;
+    return { min: 11.6, max: 12.7 };
+  }, [recCtx]);
+
+  // recommend.js (gist) 의 buildRecs + buildWeaknessRecs 결과 — 본체와 100% 동일 알고리즘.
+  //   RecRow → RecCandidate 매핑해서 기존 Recommendations / RecCard 디자인 그대로 활용.
+  //   weakness 도 같은 RecCandidate 형식 — RecCard stage='weakness' 가 ★ 대신 목표% 표시.
+  const recsFromCore = useMemo<{ ec: RecCandidate[]; hc: RecCandidate[]; exh: RecCandidate[]; weak: RecCandidate[] }>(() => {
+    if (!recCtx || ohsorryRecBase == null) return { ec: [], hc: [], exh: [], weak: [] };
+    const recommendLevelMode = recLevelMode === 'lv12' ? 'lv12' : 'lv11+12';
+    const djModeStr = recDjMode === 'on' ? 'on' : 'off';
+    const DIFF_TO_SLOT: Record<string, ChartSlot> = {
+      NORMAL: 'DPN', HYPER: 'DPH', ANOTHER: 'DPA', LEGGENDARIA: 'DPL',
+    };
+    const LAMP_FULL_TO_ABBR_LOCAL: Record<string, string> = {
+      'NO PLAY': 'NP', 'FAILED': 'F', 'ASSIST': 'AC', 'EASY': 'EC',
+      'CLEAR': 'NC', 'HARD': 'HC', 'EX HARD': 'EX', 'FULL COMBO': 'FC',
+    };
+    const CAT_FROM_CORE: Record<string, RecCandidate['category']> = {
+      cleanup: 'cleanup', easy: 'challenge-easy', hard: 'challenge-hard',
+    };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const recRowToCandidate = (r: any, stage: CardStage): RecCandidate => {
+      const slot = DIFF_TO_SLOT[r.chart] || 'DPA';
+      const lampFull = r.currentLamp || 'NO PLAY';
+      const lampAbbr = LAMP_FULL_TO_ABBR_LOCAL[lampFull] || lampFull;
+      const isWeak = stage === 'weakness';
+      const cat: RecCandidate['category'] = isWeak ? 'cleanup' : (CAT_FROM_CORE[r._category as string] || 'cleanup');
+      const countField = stage === 'weakness' ? 'ec_n' : stage + '_n';
+      return {
+        title: r.title, slot, diff: r.chart, level: r.level,
+        currentLamp: lampAbbr,
+        missCount: typeof r.missCount === 'number' ? r.missCount : null,
+        ec: r.ec ?? null, hc: r.hc ?? null, exh: r.exh ?? null,
+        ec_n: r.ec_n ?? null, hc_n: r.hc_n ?? null, exh_n: r.exh_n ?? null,
+        diffValue: r.diffValue,
+        diffCount: r[countField] ?? 0,
+        margin: r.margin ?? 0,
+        category: cat,
+        ereterLevel: null, ereterEc: null, ereterHc: null, ereterExh: null,
+        ereterEcN: null, ereterHcN: null, ereterExhN: null,
+        gameLevel: r.gameLevel ?? null,
+        isRatingFallback: !!r.ratingOnly,
+        rate: r.scoreRate ?? null,
+        exScore: r.exScore ?? null,
+        noteCount: r.noteCount ?? null,
+        djLevel: r.djLevel ?? null,
+        lampNum: r.lampNum,
+        unlocked: true,
+        // weakness 전용 필드 — buildWeaknessRecs 결과의 _* 필드.
+        practiceType: isWeak ? r._practiceType : undefined,
+        targetRate: isWeak ? r._targetRate : undefined,
+        targetExScore: isWeak ? r._targetExScore : undefined,
+        currentExScore: isWeak ? r._currentExScore : undefined,
+        targetDjLevel: isWeak ? r._targetDjLevel : undefined,
+        // 본체 hashtag / 배치 라벨 (모든 stage 공통).
+        hashtags: Array.isArray(r._hashtags) ? r._hashtags : undefined,
+        bestLabel: r._matchByHand?.bestLabel || undefined,
+      };
+    };
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const ec: any[] = recCtx.buildRecs(3, 'ec', ohsorryRecBase, recommendLevelMode, djModeStr);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const hc: any[] = ohsorryRecBase >= 0.5 ? recCtx.buildRecs(5, 'hc', ohsorryRecBase, recommendLevelMode, djModeStr) : [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const exh: any[] = ohsorryRecBase >= 0.5 ? recCtx.buildRecs(6, 'exh', ohsorryRecBase, recommendLevelMode, djModeStr) : [];
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const weakOptsCall: any = {
+        mode: weakMode, topN: weakTopN, handMode: weakHandMode, strength: weakStrength, flipOn: true,
+      };
+      // recommend.js 의 buildWeaknessRecs 는 zasaMin / zasaMax (또는 minZasa / maxZasa) 를 받을 수 있음 — null 이면 default 사용.
+      if (weakZasaMin != null) { weakOptsCall.zasaMin = weakZasaMin; weakOptsCall.minZasa = weakZasaMin; }
+      if (weakZasaMax != null) { weakOptsCall.zasaMax = weakZasaMax; weakOptsCall.maxZasa = weakZasaMax; }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const weak: any[] = recCtx.buildWeaknessRecs(ohsorryRecBase, weakOptsCall);
+      return {
+        ec: ec.map((r) => recRowToCandidate(r, 'ec')),
+        hc: hc.map((r) => recRowToCandidate(r, 'hc')),
+        exh: exh.map((r) => recRowToCandidate(r, 'exh')),
+        weak: weak.map((r) => recRowToCandidate(r, 'weakness')),
+      };
+    } catch (e) {
+      console.warn('[App] recCtx.buildRecs / buildWeaknessRecs 실패:', (e as Error).message);
+      return { ec: [], hc: [], exh: [], weak: [] };
+    }
+  }, [recCtx, ohsorryRecBase, recLevelMode, recDjMode, weakMode, weakTopN, weakHandMode, weakStrength, weakZasaMin, weakZasaMax]);
+
   useEffect(() => {
     if (!dp12Match || ohsorryRecBase == null) return;
     if (lastRerollEC.current !== rerollEC) {
@@ -1433,17 +1642,30 @@ export default function App() {
             }}
           />
           <nav className="tabs">
-            <button className={tab === 'dp' ? 'tab active' : 'tab'} onClick={() => setTab('dp')}>
-              DP
+            {/* 표시 순서: RECENT → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
+            <button
+              className={tab === 'recent' ? 'tab active' : 'tab'}
+              onClick={() => setTab('recent')}
+            >
+              RECENT
             </button>
-            <button className={tab === 'sp' ? 'tab active' : 'tab'} onClick={() => setTab('sp')}>
-              SP
+            <button
+              className={tab === 'playdata' ? 'tab active' : 'tab'}
+              onClick={() => setTab('playdata')}
+            >
+              PLAYDATA
             </button>
             <button
               className={tab === 'dp12' ? 'tab active' : 'tab'}
               onClick={() => setTab('dp12')}
             >
-              DP RECOMMEND
+              RECOMMEND
+            </button>
+            <button
+              className={tab === 'grid' ? 'tab active' : 'tab'}
+              onClick={() => setTab('grid')}
+            >
+              GRID
             </button>
             <button
               className={tab === 'analysis' ? 'tab active' : 'tab'}
@@ -1451,9 +1673,26 @@ export default function App() {
             >
               ANALYSIS
             </button>
+            {/* DP / SP 탭 버튼 숨김 처리 — 로직/dispatch 분기는 유지 (다른 컴포넌트에서 setTab('dp') 호출 가능). */}
+            <button
+              className={tab === 'dp' ? 'tab active' : 'tab'}
+              onClick={() => setTab('dp')}
+              style={{ display: 'none' }}
+            >
+              DP
+            </button>
+            <button
+              className={tab === 'sp' ? 'tab active' : 'tab'}
+              onClick={() => setTab('sp')}
+              style={{ display: 'none' }}
+            >
+              SP
+            </button>
             <span className="tab-stats">
-              {tab === 'dp12'
+              {tab === 'dp12' || tab === 'grid'
                 ? `${dp12Stats.total}곡 · 시도 ${dp12Stats.attempted} · 클리어 ${dp12Stats.cleared} · HC ${dp12Stats.hard} · EXH ${dp12Stats.exhard} · FC ${dp12Stats.fc}`
+                : tab === 'recent' || tab === 'analysis' || tab === 'playdata'
+                ? ''
                 : `${rows.length}곡 · ${stats.unlocked}/${stats.total} unlock · ${stats.played} played`}
               {tsvMtime > 0 && (
                 <span className="updated-at" title={new Date(tsvMtime).toLocaleString()}>
@@ -1466,7 +1705,18 @@ export default function App() {
           </nav>
 
           <main className="content">
-            {tab === 'analysis' ? (
+            {tab === 'recent' ? (
+              <Recent
+                rows={rows}
+                iidxId={profile.iidxId}
+                onPickChart={(target) => {
+                  setTab('dp');
+                  setScrollTarget(target);
+                }}
+              />
+            ) : tab === 'playdata' ? (
+              <PlayData rows={rows} zasaData={zasaData} ratingData={ratingData} />
+            ) : tab === 'analysis' ? (
               <Analysis
                 charts={[...dp12Charts, ...dp11Charts]}
                 ratingData={ratingData}
@@ -1498,11 +1748,15 @@ export default function App() {
                     onRefreshEreter={() => refreshEreter(true)}
                   />
                 )}
-                {dp12StarResult && ohsorryRecBase != null && (recsEC.picked.length > 0 || recsHC.picked.length > 0 || recsEXH.picked.length > 0) && (
+                {/* 클리어 추천 — recommend.js (gist) buildRecs 호출 결과 (본체와 100% 동일 알고리즘).
+                    RecRow → RecCandidate 매핑해서 기존 Recommendations / RecCard 디자인 그대로.
+                    reroll 버튼은 그대로 두지만 recommend.js 는 deterministic 이라 클릭해도 결과 안 바뀜. */}
+                {ohsorryRecBase != null && (recsFromCore.ec.length > 0 || recsFromCore.hc.length > 0 || recsFromCore.exh.length > 0 || recsFromCore.weak.length > 0) && (
                   <Recommendations
-                    recsEC={recsEC.picked}
-                    recsHC={recsHC.picked}
-                    recsEXH={recsEXH.picked}
+                    recsEC={recsFromCore.ec}
+                    recsHC={recsFromCore.hc}
+                    recsEXH={recsFromCore.exh}
+                    recsWeak={recsFromCore.weak}
                     baseStar={ohsorryRecBase}
                     levelMode={recLevelMode}
                     onLevelModeChange={handleRecLevelModeChange}
@@ -1511,12 +1765,34 @@ export default function App() {
                     onRerollEC={() => setRerollEC((k) => k + 1)}
                     onRerollHC={() => setRerollHC((k) => k + 1)}
                     onRerollEXH={() => setRerollEXH((k) => k + 1)}
-                    onPickChart={(r) => {
-                      setTab('dp');
-                      setScrollTarget({ title: r.title, slot: r.slot, gameLevel: r.gameLevel ?? null });
+                    recCtx={recCtx}
+                    weakOpts={{
+                      mode: weakMode,
+                      topN: weakTopN,
+                      handMode: weakHandMode,
+                      strength: weakStrength,
+                      zasaMin: weakZasaMin,
+                      zasaMax: weakZasaMax,
+                      zasaDefault: weakZasaDefault,
+                    }}
+                    onWeakOptsChange={(next) => {
+                      setWeakMode(next.mode);
+                      setWeakTopN(next.topN);
+                      setWeakHandMode(next.handMode);
+                      setWeakStrength(next.strength);
+                      setWeakZasaMin(next.zasaMin);
+                      setWeakZasaMax(next.zasaMax);
                     }}
                   />
                 )}
+              </>
+            ) : tab === 'grid' ? (
+              <>
+                <h2 className="grid-title">서열표</h2>
+                <p className="grid-hint">
+                  zasa, ereter의 정보를 참고해서 만들었습니다.<br />
+                  ★1~3 (9단), ★3~6 (10단), ★6~10 (중전)
+                </p>
                 <DpTable
                   lv12Charts={dp12Charts}
                   lv11Charts={dp11Charts}
@@ -1546,10 +1822,11 @@ export default function App() {
 // ============================================================
 // 추천곡 영역 (EC / HC / EXH 3 카드, 다시 뽑기)
 // ============================================================
-const STAGE_INFO: Record<RecStage, { prefix: string; label: string; color: string }> = {
+const STAGE_INFO: Record<CardStage, { prefix: string; label: string; color: string }> = {
   ec: { prefix: 'EASY', label: '클리어 추천', color: '#52a447' },
   hc: { prefix: 'HARD', label: '클리어 추천', color: '#dc3545' },
   exh: { prefix: 'EX-HARD', label: '클리어 추천', color: '#dcaf45' },
+  weakness: { prefix: '', label: '연습곡 추천', color: '#ff6b9d' },
 };
 
 const DIFF_COLOR: Record<string, string> = {
@@ -1559,10 +1836,25 @@ const DIFF_COLOR: Record<string, string> = {
   LEGGENDARIA: '#d678c8',
 };
 
+// 연습곡 (weakness) 카드 토글 state.
+export type WeakMode = 'all' | 'CHARGE' | 'SCRATCH' | 'SOF-LAN';
+export type WeakHandMode = 'both' | 'left' | 'right';
+export type WeakStrength = 1 | 2 | 3;
+export interface WeakOpts {
+  mode: WeakMode;
+  topN: number;
+  handMode: WeakHandMode;
+  strength: WeakStrength;
+  zasaMin: number | null;       // null = 기본값 (recommend.js practiceZasaDefault.min) 사용
+  zasaMax: number | null;       // null = 기본값 (recommend.js practiceZasaDefault.max) 사용
+  zasaDefault: { min: number; max: number };  // 표시용 fallback
+}
+
 function Recommendations({
   recsEC,
   recsHC,
   recsEXH,
+  recsWeak,
   baseStar,
   levelMode,
   onLevelModeChange,
@@ -1572,10 +1864,14 @@ function Recommendations({
   onRerollHC,
   onRerollEXH,
   onPickChart,
+  recCtx,
+  weakOpts,
+  onWeakOptsChange,
 }: {
   recsEC: RecCandidate[];
   recsHC: RecCandidate[];
   recsEXH: RecCandidate[];
+  recsWeak: RecCandidate[];
   baseStar: number;
   levelMode: RecLevelMode;
   onLevelModeChange: (mode: RecLevelMode) => void;
@@ -1585,6 +1881,10 @@ function Recommendations({
   onRerollHC: () => void;
   onRerollEXH: () => void;
   onPickChart?: (r: RecCandidate) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  recCtx?: any;
+  weakOpts: WeakOpts;
+  onWeakOptsChange: (next: WeakOpts) => void;
 }): JSX.Element {
   return (
     <div className="rec-area">
@@ -1625,9 +1925,19 @@ function Recommendations({
         </div>
       </div>
       <div className="rec-cards">
-        <RecCard stage="ec" recs={recsEC} onReroll={onRerollEC} onPickChart={onPickChart} />
-        <RecCard stage="hc" recs={recsHC} onReroll={onRerollHC} onPickChart={onPickChart} />
-        <RecCard stage="exh" recs={recsEXH} onReroll={onRerollEXH} onPickChart={onPickChart} />
+        <RecCard stage="ec" recs={recsEC} onReroll={onRerollEC} onPickChart={onPickChart} recCtx={recCtx} />
+        <RecCard stage="hc" recs={recsHC} onReroll={onRerollHC} onPickChart={onPickChart} recCtx={recCtx} />
+        <RecCard stage="exh" recs={recsEXH} onReroll={onRerollEXH} onPickChart={onPickChart} recCtx={recCtx} />
+        <RecCard
+          stage="weakness"
+          recs={recsWeak}
+          onReroll={() => { /* weakness 는 deterministic — reroll 비활성 */ }}
+          onPickChart={onPickChart}
+          recCtx={recCtx}
+          weakOpts={weakOpts}
+          onWeakOptsChange={onWeakOptsChange}
+          baseStar={baseStar}
+        />
       </div>
     </div>
   );
@@ -1638,12 +1948,45 @@ function RecCard({
   recs,
   onReroll,
   onPickChart,
+  recCtx,
+  weakOpts,
+  onWeakOptsChange,
+  baseStar,
 }: {
-  stage: RecStage;
+  stage: CardStage;
   recs: RecCandidate[];
   onReroll: () => void;
   onPickChart?: (r: RecCandidate) => void;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  recCtx?: any;
+  weakOpts?: WeakOpts;
+  onWeakOptsChange?: (next: WeakOpts) => void;
+  baseStar?: number;
 }): JSX.Element {
+  const isWeakness = stage === 'weakness';
+  // 클릭한 row 의 키 (title|slot) — 그 row 다음에 해시태그 줄 표시. 같은 row 재클릭 시 닫힘.
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  // recommend.js 의 chartStrengthMatchByHand + computeRecHashtags 호출 — recCtx 가 있고 openKey 있을 때만.
+  //   본체 패턴 (ohsorryRender.js 의 __dp_rec_tags_row) 과 동일 결과.
+  const CAT_MAP: Record<string, string> = {
+    'challenge-hard': 'hard', 'challenge-easy': 'easy', 'cleanup': 'cleanup', 'exh-near': 'cleanup',
+  };
+  const computeHashtagsFor = (r: RecCandidate): { hashtags: string; bestLabel: string } => {
+    if (!recCtx) return { hashtags: '', bestLabel: '' };
+    try {
+      const rRow = { title: r.title, chart: r.diff, _category: CAT_MAP[r.category] || 'cleanup' };
+      const matchByHand = recCtx.chartStrengthMatchByHand(rRow);
+      const tags = recCtx.computeChartTags(rRow);
+      const fullR = { ...rRow, _matchByHand: matchByHand, _tags: tags };
+      const hashtags = recCtx.computeRecHashtags(fullR);
+      return {
+        hashtags: Array.isArray(hashtags) ? hashtags.join(' ') : '',
+        bestLabel: (matchByHand?.bestLabel as string) || '',
+      };
+    } catch {
+      return { hashtags: '', bestLabel: '' };
+    }
+  };
   const info = STAGE_INFO[stage];
   // 모바일에서만 collapsible. uncontrolled — 초기 open 만 ref 로 설정, 이후 React 가 안 건드림.
   // (controlled 로 하면 polling re-render 가 사용자 토글을 덮어쓰는 race condition 발생)
@@ -1667,21 +2010,111 @@ function RecCard({
         onClick={isMobile ? undefined : (e) => e.preventDefault()}
       >
         <span className="rec-card-title">
-          <span style={{ color: info.color }}>{info.prefix}</span> {info.label}
+          {info.prefix && <span style={{ color: info.color }}>{info.prefix}</span>}
+          {info.prefix ? ' ' : ''}
+          <span style={isWeakness ? { color: info.color } : undefined}>{info.label}</span>
         </span>
         <span className="rec-card-count">({recs.length}곡)</span>
-        <button
-          className="rec-reroll"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            onReroll();
-          }}
-          title="랜덤 추첨 다시"
-        >
-          ↻
-        </button>
+        {isWeakness && weakOpts && onWeakOptsChange && (() => {
+          // zasa★ 입력 범위 — 무조건 5.9 ~ 12.7. 그 밖은 onChange 에서 clamp.
+          const CLAMP_MIN = 5.9;
+          const CLAMP_MAX = 12.7;
+          const clamp = (v: number): number => Math.max(CLAMP_MIN, Math.min(CLAMP_MAX, v));
+          const onZasaInput = (key: 'zasaMin' | 'zasaMax', raw: string): void => {
+            if (raw === '') { onWeakOptsChange({ ...weakOpts, [key]: null }); return; }
+            const n = Number(raw);
+            if (!Number.isFinite(n)) return;
+            onWeakOptsChange({ ...weakOpts, [key]: clamp(n) });
+          };
+          return (
+            <span className="rec-weak-zasa-inline" onClick={(e) => e.stopPropagation()}>
+              <span className="rwt-label">☆</span>
+              <input
+                type="number"
+                className="rwt-input rwt-zasa-num"
+                step={0.1}
+                min={CLAMP_MIN}
+                max={CLAMP_MAX}
+                placeholder={weakOpts.zasaDefault.min.toFixed(1)}
+                value={weakOpts.zasaMin != null ? weakOpts.zasaMin.toFixed(1) : ''}
+                onChange={(e) => onZasaInput('zasaMin', e.target.value)}
+                title={`연습 풀 zasa★ 최저값 (${CLAMP_MIN}~${CLAMP_MAX}, 비우면 기본 ${weakOpts.zasaDefault.min.toFixed(1)})`}
+              />
+              <span className="rwt-tilde">~</span>
+              <input
+                type="number"
+                className="rwt-input rwt-zasa-num"
+                step={0.1}
+                min={CLAMP_MIN}
+                max={CLAMP_MAX}
+                placeholder={weakOpts.zasaDefault.max.toFixed(1)}
+                value={weakOpts.zasaMax != null ? weakOpts.zasaMax.toFixed(1) : ''}
+                onChange={(e) => onZasaInput('zasaMax', e.target.value)}
+                title={`연습 풀 zasa★ 최대값 (${CLAMP_MIN}~${CLAMP_MAX}, 비우면 기본 ${weakOpts.zasaDefault.max.toFixed(1)})`}
+              />
+            </span>
+          );
+        })()}
+        {!isWeakness && (
+          <button
+            className="rec-reroll"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              onReroll();
+            }}
+            title="랜덤 추첨 다시"
+          >
+            ↻
+          </button>
+        )}
       </summary>
+      {isWeakness && weakOpts && onWeakOptsChange && (
+        <div className="rec-weak-toggles" onClick={(e) => e.stopPropagation()}>
+          <select
+            className="rwt-pill"
+            value={weakOpts.mode}
+            onChange={(e) => onWeakOptsChange({ ...weakOpts, mode: e.target.value as WeakMode })}
+            title="패턴 종류 — 전체 / CHARGE / SCRATCH / SOF-LAN"
+          >
+            <option value="all">건반</option>
+            <option value="CHARGE">CHARGE</option>
+            <option value="SCRATCH">SCRATCH</option>
+            <option value="SOF-LAN">SOF-LAN</option>
+          </select>
+          <select
+            className="rwt-pill"
+            value={weakOpts.topN}
+            onChange={(e) => onWeakOptsChange({ ...weakOpts, topN: Number(e.target.value) })}
+            title="추천 곡 수"
+          >
+            <option value={5}>5곡</option>
+            <option value={10}>10곡</option>
+            <option value={15}>15곡</option>
+            <option value={20}>20곡</option>
+          </select>
+          <select
+            className="rwt-pill"
+            value={weakOpts.handMode}
+            onChange={(e) => onWeakOptsChange({ ...weakOpts, handMode: e.target.value as WeakHandMode })}
+            title="평가할 손 — 양손 / 왼손 / 오른손"
+          >
+            <option value="both">양손</option>
+            <option value="left">왼손</option>
+            <option value="right">오른손</option>
+          </select>
+          <select
+            className="rwt-pill"
+            value={weakOpts.strength}
+            onChange={(e) => onWeakOptsChange({ ...weakOpts, strength: Number(e.target.value) as WeakStrength })}
+            title="강도 — 1=가볍게 / 2=중간 / 3=강하게"
+          >
+            <option value={1}>가볍게</option>
+            <option value={2}>중간</option>
+            <option value={3}>강하게</option>
+          </select>
+        </div>
+      )}
       {recs.length === 0 ? (
         <div className="rec-empty">현재 ★값 근처의 추천곡이 없습니다.</div>
       ) : (
@@ -1703,15 +2136,28 @@ function RecCard({
             const stageEreter = stage === 'ec' ? r.ereterEc : stage === 'hc' ? r.ereterHc : r.ereterExh;
             const displayDiff = typeof stageEreter === 'number' ? stageEreter : r.diffValue;
             const displayLevel = typeof r.ereterLevel === 'number' ? r.ereterLevel : r.level;
+            const rowKey = `${r.title}|${r.slot}`;
+            const isOpen = openKey === rowKey;
+            // onPickChart 있으면 DP 탭 점프, 없으면 해시태그 toggle (recCtx 있을 때만).
+            const clickable = !!onPickChart || !!recCtx;
+            const onRowClick = (): void => {
+              if (onPickChart) onPickChart(r);
+              else if (recCtx) setOpenKey(isOpen ? null : rowKey);
+            };
+            // 배치 뱃지 — recCtx 가 있으면 항상 계산해서 ★ 왼쪽에 표시 (정규 배치면 빈 문자열).
+            const rowHashInfo = recCtx ? computeHashtagsFor(r) : { hashtags: '', bestLabel: '' };
+            const rowBestLabel = rowHashInfo.bestLabel;
+            // 해시태그 줄 (클릭 시만) — 같은 결과 재사용.
+            const tagsInfo = isOpen ? rowHashInfo : null;
             return (
+              <Fragment key={rowKey}>
               <li
-                key={`${r.title}|${r.slot}`}
-                className={`rec-row rec-${r.category}${onPickChart ? ' rec-row-clickable' : ''}`}
-                onClick={onPickChart ? () => onPickChart(r) : undefined}
-                role={onPickChart ? 'button' : undefined}
-                tabIndex={onPickChart ? 0 : undefined}
-                onKeyDown={onPickChart ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onPickChart(r); } } : undefined}
-                title={onPickChart ? '클릭 시 DP 탭에서 곡명 검색' : undefined}
+                className={`rec-row rec-${r.category}${clickable ? ' rec-row-clickable' : ''}`}
+                onClick={clickable ? onRowClick : undefined}
+                role={clickable ? 'button' : undefined}
+                tabIndex={clickable ? 0 : undefined}
+                onKeyDown={clickable ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onRowClick(); } } : undefined}
+                title={onPickChart ? '클릭 시 DP 탭에서 곡명 검색' : (recCtx ? '클릭 시 해시태그 표시' : undefined)}
               >
                 <span
                   className="rec-cat"
@@ -1742,7 +2188,19 @@ function RecCard({
                 <span className="rec-diff" style={{ color: DIFF_COLOR[r.diff] || '#888' }}>
                   {r.diff[0]}
                 </span>
-                <span className="rec-stagestar">★{displayDiff.toFixed(2)}</span>
+                {rowBestLabel && (
+                  <span className="rec-layout-badge" title="추천 배치">{rowBestLabel}</span>
+                )}
+                {isWeakness ? (
+                  <span
+                    className="rec-stagestar rec-stagegoal"
+                    title={r.targetDjLevel ? `목표 DJ Level: ${r.targetDjLevel}` : '목표 rate'}
+                  >
+                    {typeof r.targetRate === 'number' ? `${r.targetRate.toFixed(1)}%` : '—'}
+                  </span>
+                ) : (
+                  <span className="rec-stagestar">★{displayDiff.toFixed(2)}</span>
+                )}
                 {r.category === 'exh-near' && (
                   <span className="rec-misscount" title="미스 카운트 (BP)">
                     BP{r.missCount ?? '?'}
@@ -1753,6 +2211,18 @@ function RecCard({
                 </span>
                 <span className="rec-level">☆{displayLevel.toFixed(1)}</span>
               </li>
+              {tagsInfo && (tagsInfo.hashtags || (isWeakness && r.currentExScore != null && r.targetExScore != null)) && (
+                <li className="rec-tags-row">
+                  {isWeakness && r.currentExScore != null && r.targetExScore != null && (
+                    <span className="rec-goal-text">
+                      {r.currentExScore} → <b>{r.targetExScore}</b>
+                      {r.targetDjLevel ? ` (${r.targetDjLevel})` : ''}
+                    </span>
+                  )}
+                  {tagsInfo.hashtags && <span className="rec-tags-text">{tagsInfo.hashtags}</span>}
+                </li>
+              )}
+              </Fragment>
             );
           })}
         </ul>

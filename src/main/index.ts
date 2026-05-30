@@ -143,6 +143,31 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
       return { ok: false, error: (e as Error).message };
     }
   },
+  // tsv 파일 내용 비우기 (truncate 0 bytes) — IIDXID 가 있었다가 사라지는 transition (= 게임 종료 후
+  // 다른 ID 로 로그인) 시 옛 ID 의 데이터가 새 ID 로 잘못 올라가지 않도록 즉시 비움. 파일 없으면 graceful.
+  //   - 파일 자체는 유지 → Reflux 의 watch handle 끊김 / 새 파일 생성 race 회피
+  //   - readTsv 가 빈 rows 반환 → setRows([]) → upload skip
+  //   - Reflux 가 다음 dump 시 정상 write
+  // 옛 이름 'tsv:delete' 에서 의미상 정확한 'tsv:clear' 로 rename.
+  'tsv:clear': async (...args: never[]) => {
+    const path = args[0] as string;
+    if (!path) return { ok: false, error: 'path 누락' };
+    try {
+      const fs = await import('fs');
+      try {
+        await fs.promises.truncate(path, 0);
+        console.log(`[tsv:clear] 비우기 완료 → ${path}`);
+        return { ok: true, cleared: true };
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') {
+          return { ok: true, cleared: false };  // 이미 없음 — 정상 케이스로 취급
+        }
+        throw e;
+      }
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  },
 
   // 창 컨트롤 (frameless 모드 — 커스텀 헤더 버튼에서 호출)
   'window:minimize': async () => {

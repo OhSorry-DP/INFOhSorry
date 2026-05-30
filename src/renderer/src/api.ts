@@ -133,6 +133,8 @@ if (!IS_HOST) {
   const onState = makeRefluxStatePoller();
   const bridge: Window['infohsorry'] = {
     readTsv: (path: string) => callIpc('tsv:read', path) as Promise<TsvReadResult>,
+    clearTsv: (path: string) =>
+      callIpc('tsv:clear', path) as ReturnType<Window['infohsorry']['clearTsv']>,
     reflux: {
       start: () => callIpc('reflux:start') as ReturnType<Window['infohsorry']['reflux']['start']>,
       stop: () => callIpc('reflux:stop') as ReturnType<Window['infohsorry']['reflux']['stop']>,

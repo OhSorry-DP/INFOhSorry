@@ -13,7 +13,7 @@
 //   - INFINITAS 종료되면 다시 hook 대기
 import { app } from 'electron';
 import { ChildProcess, spawn, exec } from 'child_process';
-import { promises as fsp, createWriteStream, existsSync, rmSync, watch as fsWatch, FSWatcher } from 'fs';
+import { promises as fsp, createWriteStream, existsSync, rmSync, truncateSync, watch as fsWatch, FSWatcher } from 'fs';
 import { join } from 'path';
 import { request as httpsRequest } from 'https';
 import { EventEmitter } from 'events';
@@ -403,11 +403,23 @@ export class RefluxManager extends EventEmitter {
   //     안 돌리는 가정).
   //   - stdout 도 캡처 안 됨. UI 의 recentLines / hooking stage 매칭 비활성.
   //   - 그래도 tracker.tsv watch 만으로 'ready' 신호 감지 가능 — 핵심 흐름은 동작.
-  // Reflux 시작 전 이전 세션 잔여물 정리 — tracker.tsv / tracker.db / sessions/ 삭제.
+  // Reflux 시작 전 이전 세션 잔여물 정리.
+  //   - tracker.tsv: 파일 자체는 유지하고 내용만 비움 (truncate 0 bytes). Reflux watcher 의 handle /
+  //     새 파일 생성 race 회피. 옛 데이터는 reflux 가 다음 dump 시 어차피 덮어씀.
+  //   - tracker.db / sessions: 디렉터리라 truncate 불가 + 옛 세션 garbage 완전 제거 의도 → rmSync 유지.
   private cleanupPreviousSession(): void {
     const dir = workDir();
-    const targets = [join(dir, 'tracker.tsv'), join(dir, 'tracker.db'), join(dir, 'sessions')];
-    for (const p of targets) {
+    const tsvPath = join(dir, 'tracker.tsv');
+    try {
+      if (existsSync(tsvPath)) {
+        truncateSync(tsvPath, 0);
+        this.addLine(`(이전 tsv 비우기: ${tsvPath})`);
+      }
+    } catch (e) {
+      this.addLine(`(tsv 비우기 실패 ${tsvPath}: ${(e as Error).message})`);
+    }
+    const rmTargets = [join(dir, 'tracker.db'), join(dir, 'sessions')];
+    for (const p of rmTargets) {
       try {
         rmSync(p, { recursive: true, force: true });
         this.addLine(`(이전 세션 정리: ${p})`);

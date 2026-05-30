@@ -18,6 +18,7 @@ declare global {
   interface Window {
     infohsorry: {
       readTsv: (path: string) => Promise<TsvReadResult>;
+      clearTsv: (path: string) => Promise<{ ok: boolean; cleared?: boolean; error?: string }>;
       reflux: {
         start: () => Promise<RefluxStartResult>;
         stop: () => Promise<{ ok: boolean }>;

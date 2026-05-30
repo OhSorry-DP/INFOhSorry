@@ -108,6 +108,13 @@ const OS_FEATS = ['NOTES', 'CHORD', 'PEAK', 'CHARGE', 'SCRATCH', 'SOF-LAN', 'PHR
 interface AllUserScoreRow {
   iidx_id: string;
   dj_name: string | null;
+  // 오소리웹 fetchAllUsersUncached 와 동일 필드 — analysisRender 의 랭킹보기에서 ★ / 단위 / 갱신일 표시 + 정렬에 사용.
+  //   이 필드들 없으면 랭킹표에 ? 로 표시됨.
+  star: number | null;
+  ereter_star: number | null;
+  sp_rank: number | null;
+  dp_rank: number | null;
+  date: string | null;
   os_pattern_score: Record<string, number | null>;
 }
 let _allUsersFsCache: { data: AllUserScoreRow[]; ts: number } | null = null;
@@ -120,9 +127,11 @@ async function fetchAllUsersFeatureScores(): Promise<AllUserScoreRow[]> {
   const out: AllUserScoreRow[] = [];
   let offset = 0;
   for (;;) {
+    // 오소리웹 fetchAllUsersUncached 와 동일 SELECT — analysisRender 랭킹보기에서 ★ / 단위 / 갱신일 표시에 사용.
     const url = `${SUPABASE_URL}/rest/v1/users`
-      + `?select=iidx_id,dj_name,user_ohsorry_radars(play_style,notes,chord,peak,charge,scratch,soflan,phrase,jack,trill,rand)`
-      + `&limit=${PAGE}&offset=${offset}`;
+      + `?select=iidx_id,dj_name,star,ereter_star,sp_rank,dp_rank,date,`
+      + `user_ohsorry_radars(play_style,notes,chord,peak,charge,scratch,soflan,phrase,jack,trill,rand)`
+      + `&order=star.desc.nullslast&limit=${PAGE}&offset=${offset}`;
     const res = await fetch(url, { headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}` } });
     if (!res.ok) break;
     const rows = await res.json();
@@ -135,6 +144,11 @@ async function fetchAllUsersFeatureScores(): Promise<AllUserScoreRow[]> {
       out.push({
         iidx_id: r.iidx_id,
         dj_name: r.dj_name ?? null,
+        star: typeof r.star === 'number' ? r.star : null,
+        ereter_star: typeof r.ereter_star === 'number' ? r.ereter_star : null,
+        sp_rank: typeof r.sp_rank === 'number' ? r.sp_rank : null,
+        dp_rank: typeof r.dp_rank === 'number' ? r.dp_rank : null,
+        date: r.date ?? null,
         os_pattern_score: dpRow ? {
           NOTES: dpRow.notes, CHORD: dpRow.chord, PEAK: dpRow.peak,
           CHARGE: dpRow.charge, SCRATCH: dpRow.scratch, 'SOF-LAN': dpRow.soflan,

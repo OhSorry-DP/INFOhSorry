@@ -17,6 +17,10 @@ import type {
 const api = {
   // TSV 직접 읽기
   readTsv: (path: string): Promise<TsvReadResult> => ipcRenderer.invoke('tsv:read', path),
+  // tsv 파일 내용 비우기 (truncate) — IIDXID 가 사라지는 transition 시 stale 데이터 자동 제거.
+  //   파일은 유지 (Reflux watch handle 보존) + 내용만 0 bytes.
+  clearTsv: (path: string): Promise<{ ok: boolean; cleared?: boolean; error?: string }> =>
+    ipcRenderer.invoke('tsv:clear', path),
 
   // Reflux 관리
   reflux: {

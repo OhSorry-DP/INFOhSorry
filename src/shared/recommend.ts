@@ -101,6 +101,15 @@ export interface RecCandidate {
   lampNum?: number;
   // 미해금 채보 여부 — false 면 UI 에 자물쇠 표기 (추천에서 제외하진 않음).
   unlocked?: boolean;
+  // 연습곡 (stage='weakness') 전용 — recommend.js buildWeaknessRecs 결과의 _* 필드.
+  practiceType?: 'review' | 'pattern' | 'score' | 'practical';
+  targetRate?: number | null;       // 목표 rate (% 100기준)
+  targetExScore?: number | null;
+  currentExScore?: number | null;
+  targetDjLevel?: string | null;
+  // 본체 hashtag / 배치 뱃지 (recommend.js 결과 그대로).
+  hashtags?: string[];
+  bestLabel?: string;
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';

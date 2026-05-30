@@ -34,7 +34,16 @@ const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANO
 const LAMP_MAP: Record<string, number> = { NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7 };
 const PLAYED_VERSION_INF = 0;
 
-interface SongEntry { song_id: number; title: string; ac: number; legen: number }
+// supabase songs 마스터 1개 row — PlayData / Recent 의 곡 메타 lookup 에 사용.
+// series_no / textage_song_id 는 PlayData 의 시리즈 폴더 그룹화 + textage-meta lookup 용.
+export interface SongEntry {
+  song_id: number;
+  title: string;
+  ac: number;                       // bit0=AC, bit1=INF (수록 시리즈 mask)
+  legen: number;                    // 같은 mask 인데 LEG 채보 한정
+  series_no?: number | null;        // 시리즈 번호 (99=NEW, 98=INFINITAS, ...)
+  textage_song_id?: string | null;  // textage-meta lookup key
+}
 
 // textage-meta gist — title (raw) → textage_song_id 매핑 빌드. ensure_song 호출 시
 //   p_textage_song_id 전달 → ON CONFLICT (textage_song_id) 분기로 옛 row 와 자동 통합.
@@ -65,24 +74,32 @@ async function getTextageByTitle(): Promise<Map<string, string>> {
   return textageByTitle;
 }
 
-// songs 마스터 캐시 (norm(title) → SongEntry[]) — 페이징 fetch + 메모리 보관
-let songsCache: Map<string, SongEntry[]> | null = null;
-async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
+// songs 마스터 캐시 (norm(title) → SongEntry[] + song_id → SongEntry) — 페이징 fetch + 메모리 보관.
+//   byNorm: 곡명 매칭용 (Ø alias 포함). PlayData 의 TSV row 매칭에 사용.
+//   byId:   song_id 기준 단일 entry. PlayData 의 곡 마스터 iteration (모든 곡 표시) 에 사용.
+let songsCache: { byNorm: Map<string, SongEntry[]>; byId: Map<number, SongEntry> } | null = null;
+async function getSongsCacheBundle(): Promise<{ byNorm: Map<string, SongEntry[]>; byId: Map<number, SongEntry> }> {
   if (songsCache) return songsCache;
   const byNorm = new Map<string, SongEntry[]>();
+  const byId = new Map<number, SongEntry>();
   const pageSize = 1000;
   let offset = 0;
   let totalFetched = 0;
   while (true) {
-    const url = `${SUPABASE_URL}/rest/v1/songs?select=song_id,title,ac,legen&order=song_id.asc&limit=${pageSize}&offset=${offset}`;
+    const url = `${SUPABASE_URL}/rest/v1/songs?select=song_id,title,ac,legen,series_no,textage_song_id&order=song_id.asc&limit=${pageSize}&offset=${offset}`;
     const res = await fetch(url, { headers: HEADERS });
     if (!res.ok) throw new Error(`songs fetch HTTP ${res.status}`);
     const rows = (await res.json()) as SongEntry[];
     for (const r of rows) {
       if (!r.title) continue;
+      const entry: SongEntry = {
+        song_id: r.song_id, title: r.title, ac: r.ac, legen: r.legen,
+        series_no: r.series_no ?? null,
+        textage_song_id: r.textage_song_id ?? null,
+      };
+      byId.set(r.song_id, entry);
       const k = norm(r.title);
       if (!k) continue;
-      const entry: SongEntry = { song_id: r.song_id, title: r.title, ac: r.ac, legen: r.legen };
       if (!byNorm.has(k)) byNorm.set(k, []);
       byNorm.get(k)!.push(entry);
       // Ø/ø 곡은 eagate 표기가 일관되지 않음 — 'O' 알파벳 alias 도 등록
@@ -99,9 +116,16 @@ async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
     if (rows.length < pageSize) break;
     offset += pageSize;
   }
-  songsCache = byNorm;
-  console.log(`[supabaseSync] songs 매핑 캐시: ${byNorm.size} unique norm / ${totalFetched} 곡 fetch`);
-  return byNorm;
+  songsCache = { byNorm, byId };
+  console.log(`[supabaseSync] songs 매핑 캐시: ${byNorm.size} unique norm / ${byId.size} 곡 fetch (${totalFetched} rows)`);
+  return songsCache;
+}
+async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
+  return (await getSongsCacheBundle()).byNorm;
+}
+// PlayData 가 곡 마스터 전체를 시리즈별로 그룹화할 때 사용. song_id 기준 dedup.
+export async function getSongsById(): Promise<Map<number, SongEntry>> {
+  return (await getSongsCacheBundle()).byId;
 }
 
 // songs cache 의 ac / legen flag (bit1 = INF) 기반 — (title, chartName) → INF 수록 여부 sync checker.
@@ -373,4 +397,248 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   } catch (e) {
     return { ok: false, error: `scores error: ${(e as Error).message}` };
   }
+}
+
+// ─── Recent 탭 RPC (ohSorryWeb modules/api.js 의 호출 형식 그대로 옮김) ─────────────
+//
+// 두 RPC + 한 가지 dedup-latest helper:
+//   1) fetchRecentDates(id)            → [{ date_kst, row_count }, ...] desc
+//   2) fetchRecentCharts(id, dateKst)  → 그날의 raw chart entry 들 (prev/now 포함)
+//   3) fetchUserLatestCharts(id)       → make_grid_data 의 dedup row → (norm(title)+'|'+diffStr) 인덱스
+//      "당일" 박스에서 TSV row 와 비교할 supabase 마지막 row 들.
+//
+// make_recent_data 가 LATERAL prev row 까지 같이 반환 — UI 가 prev → now diff 표기에 그대로 사용.
+
+const DIFF_INT_TO_STR: Record<number, string> = {
+  0: 'BEGINNER', 1: 'NORMAL', 2: 'HYPER', 3: 'ANOTHER', 4: 'LEGGENDARIA',
+};
+const LAMP_INT_TO_STR: Record<number, string> = {
+  0: 'NO PLAY', 1: 'FAILED', 2: 'ASSIST', 3: 'EASY', 4: 'CLEAR',
+  5: 'HARD', 6: 'EX HARD', 7: 'FULL COMBO',
+};
+// LAMP 풀네임 → INFOhSorry Lamp enum 약어 (lampStyle 호환).
+const LAMP_FULL_TO_ABBR: Record<string, string> = {
+  'NO PLAY': 'NP', 'FAILED': 'F', 'ASSIST': 'AC', 'EASY': 'EC',
+  'CLEAR': 'NC', 'HARD': 'HC', 'EX HARD': 'EX', 'FULL COMBO': 'FC',
+};
+
+// 곡명 정규화 — match.ts 의 norm 과 일관.
+//   (norm 은 match.ts 에서 import — 위에서 이미 사용 중.)
+
+// DJ Level 계산 — ex_score / (noteCount * 2) → AAA/AA/A/B/C/D/E/F.
+//   noteCount 없거나 ex_score <= 0 면 null.
+function djLevelFromScore(exScore: number | null | undefined, noteCount: number | null | undefined): string | null {
+  if (typeof exScore !== 'number' || exScore <= 0) return null;
+  if (typeof noteCount !== 'number' || noteCount <= 0) return null;
+  const ratio = exScore / (noteCount * 2);
+  if (ratio >= 8 / 9) return 'AAA';
+  if (ratio >= 7 / 9) return 'AA';
+  if (ratio >= 6 / 9) return 'A';
+  if (ratio >= 5 / 9) return 'B';
+  if (ratio >= 4 / 9) return 'C';
+  if (ratio >= 3 / 9) return 'D';
+  if (ratio >= 2 / 9) return 'E';
+  return 'F';
+}
+
+// textage-meta gist — title (raw) → { textageSongId, levels: {DN,DH,DA,DX}, notes: {...} }.
+//   ohSorryWeb fetchTextageMeta 와 같은 url. INFOhSorry 는 메모리 캐시.
+const TEXTAGE_DIFF_KEY: Record<string, string> = {
+  BEGINNER: 'DB', NORMAL: 'DN', HYPER: 'DH', ANOTHER: 'DA', LEGGENDARIA: 'DX',
+};
+export interface TextageMeta {
+  songs: Record<string, { title?: string; levels?: Record<string, number>; notes?: Record<string, number> }>;
+}
+let textageMetaCache: TextageMeta | null = null;
+async function getTextageMeta(): Promise<TextageMeta | null> {
+  if (textageMetaCache) return textageMetaCache;
+  try {
+    const r = await fetch(TEXTAGE_META_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) return null;
+    const meta = (await r.json()) as TextageMeta;
+    if (meta && meta.songs) textageMetaCache = meta;
+    return textageMetaCache;
+  } catch {
+    return null;
+  }
+}
+// PlayData 의 미플레이 곡 gameLevel / noteCount lookup 에 사용. fetch 실패 시 graceful null.
+export async function ensureTextageMeta(): Promise<TextageMeta | null> {
+  return getTextageMeta();
+}
+
+// series-name.json gist — { "99":"NEW", "98":"INFINITAS", "33":"Sparkle Shower", ..., "1":"1st&substream" }.
+//   PlayData 의 시리즈 폴더 라벨용. fetch 실패 → 빈 객체 (라벨은 숫자만 표시 fallback).
+const SERIES_NAME_URL = 'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw/series-name.json';
+let seriesNamesCache: Record<string, string> | null = null;
+export async function fetchSeriesNames(): Promise<Record<string, string>> {
+  if (seriesNamesCache) return seriesNamesCache;
+  try {
+    const r = await fetch(SERIES_NAME_URL + '?t=' + Date.now(), { cache: 'no-store' });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const j = (await r.json()) as Record<string, string>;
+    seriesNamesCache = j && typeof j === 'object' ? j : {};
+    return seriesNamesCache;
+  } catch (e) {
+    console.warn('[supabaseSync] series-name fetch 실패:', (e as Error).message);
+    return {};
+  }
+}
+
+// recent row 한 줄 → RecentChartRow (UI 가 직접 쓰는 형태).
+//   make_recent_data row: { title, diff(int), lamp(int), ex_score, prev_lamp, prev_ex_score,
+//                           prev_played_version, played_version, textage_song_id, date }
+// noteCount / gameLevel 은 textage-meta lookup. djLevel / prevDjLevel 은 클라이언트 계산.
+export interface RecentChartRow {
+  title: string;
+  diff: string;                     // 'NORMAL' / 'HYPER' / 'ANOTHER' / 'LEGGENDARIA' / 'BEGINNER'
+  lamp: string;                     // 풀네임 ('HARD' 등)
+  lampAbbr: string;                 // 약어 ('HC' 등) — lampStyle 호환
+  exScore: number;
+  prevLamp: string | null;
+  prevLampAbbr: string | null;
+  prevExScore: number | null;
+  prevPlayedVersion: number | null;
+  playedVersion: number;
+  djLevel: string | null;
+  prevDjLevel: string | null;
+  gameLevel: number | null;
+  noteCount: number | null;
+}
+
+function viewRowToRecent(r: {
+  title: string; diff: number; lamp: number; ex_score: number;
+  prev_lamp?: number | null; prev_ex_score?: number | null; prev_played_version?: number | null;
+  played_version?: number; textage_song_id?: string | null;
+}, textageMeta: TextageMeta | null): RecentChartRow {
+  const diffStr = DIFF_INT_TO_STR[r.diff] || 'ANOTHER';
+  const lampStr = LAMP_INT_TO_STR[typeof r.lamp === 'number' ? r.lamp : 0] || 'NO PLAY';
+  const prevLampStr = typeof r.prev_lamp === 'number' ? (LAMP_INT_TO_STR[r.prev_lamp] || null) : null;
+  let gameLevel: number | null = null;
+  let noteCount: number | null = null;
+  if (textageMeta && textageMeta.songs && r.textage_song_id) {
+    const meta = textageMeta.songs[r.textage_song_id];
+    const tKey = TEXTAGE_DIFF_KEY[diffStr];
+    if (meta && tKey) {
+      if (meta.levels && typeof meta.levels[tKey] === 'number') gameLevel = meta.levels[tKey];
+      if (meta.notes && typeof meta.notes[tKey] === 'number' && meta.notes[tKey] > 0) noteCount = meta.notes[tKey];
+    }
+  }
+  const exScore = typeof r.ex_score === 'number' ? r.ex_score : 0;
+  const prevExScore = typeof r.prev_ex_score === 'number' ? r.prev_ex_score : null;
+  return {
+    title: r.title,
+    diff: diffStr,
+    lamp: lampStr,
+    lampAbbr: LAMP_FULL_TO_ABBR[lampStr] || 'NP',
+    exScore,
+    prevLamp: prevLampStr,
+    prevLampAbbr: prevLampStr ? (LAMP_FULL_TO_ABBR[prevLampStr] || null) : null,
+    prevExScore,
+    prevPlayedVersion: typeof r.prev_played_version === 'number' ? r.prev_played_version : null,
+    playedVersion: typeof r.played_version === 'number' ? r.played_version : 0,
+    djLevel: djLevelFromScore(exScore, noteCount),
+    prevDjLevel: djLevelFromScore(prevExScore, noteCount),
+    gameLevel,
+    noteCount,
+  };
+}
+
+export async function fetchRecentDates(iidxId: string): Promise<{ date_kst: string; row_count: number }[]> {
+  const id = String(iidxId || '').trim().replace(/-/g, '');
+  if (!id) return [];
+  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_dates`, {
+    method: 'POST',
+    headers: HEADERS,
+    body: JSON.stringify({ p_iidx_id: id }),
+  });
+  if (!res.ok) throw new Error(`Recent 날짜 조회 실패 (HTTP ${res.status})`);
+  const rows = await res.json();
+  return Array.isArray(rows) ? rows : [];
+}
+
+export async function fetchRecentCharts(iidxId: string, dateKst: string): Promise<RecentChartRow[]> {
+  const id = String(iidxId || '').trim().replace(/-/g, '');
+  if (!id || !dateKst) return [];
+  const [rowsRes, textageMeta] = await Promise.all([
+    fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_data`, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify({ p_iidx_id: id, p_date_kst: dateKst }),
+    }),
+    getTextageMeta().catch(() => null),
+  ]);
+  if (!rowsRes.ok) throw new Error(`Recent 데이터 조회 실패 (HTTP ${rowsRes.status})`);
+  const rows = await rowsRes.json();
+  if (!Array.isArray(rows)) return [];
+  return rows.map((r) => viewRowToRecent(r, textageMeta));
+}
+
+// make_grid_data — 차트별 dedup latest row. "당일" 박스의 PREV (마지막 supabase upload 시점 값) source.
+// 반환: norm(title)+'|'+diffStr → { lamp, lampAbbr, exScore, playedVersion, djLevel, noteCount, gameLevel }.
+export interface LatestChartEntry {
+  lamp: string;
+  lampAbbr: string;
+  exScore: number;
+  playedVersion: number;
+  djLevel: string | null;
+  noteCount: number | null;
+  gameLevel: number | null;
+}
+async function fetchGridDataRows(id: string): Promise<Array<{
+  title: string; diff: number; lamp: number; ex_score: number; played_version?: number; textage_song_id?: string | null;
+}>> {
+  const out: Array<{ title: string; diff: number; lamp: number; ex_score: number; played_version?: number; textage_song_id?: string | null }> = [];
+  const pageSize = 1000;
+  let offset = 0;
+  while (true) {
+    const url = `${SUPABASE_URL}/rest/v1/rpc/make_grid_data?limit=${pageSize}&offset=${offset}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify({ p_iidx_id: id }),
+    });
+    if (!res.ok) throw new Error(`grid data 조회 실패 (HTTP ${res.status})`);
+    const rows = await res.json();
+    if (!Array.isArray(rows)) break;
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+    offset += pageSize;
+  }
+  return out;
+}
+export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string, LatestChartEntry>> {
+  const id = String(iidxId || '').trim().replace(/-/g, '');
+  if (!id) return new Map();
+  const [scoreRows, textageMeta] = await Promise.all([
+    fetchGridDataRows(id),
+    getTextageMeta().catch(() => null),
+  ]);
+  const idx = new Map<string, LatestChartEntry>();
+  for (const r of scoreRows) {
+    if (!r.title || r.diff == null) continue;
+    const diffStr = DIFF_INT_TO_STR[r.diff] || 'ANOTHER';
+    const lampStr = LAMP_INT_TO_STR[typeof r.lamp === 'number' ? r.lamp : 0] || 'NO PLAY';
+    let gameLevel: number | null = null;
+    let noteCount: number | null = null;
+    if (textageMeta && textageMeta.songs && r.textage_song_id) {
+      const meta = textageMeta.songs[r.textage_song_id];
+      const tKey = TEXTAGE_DIFF_KEY[diffStr];
+      if (meta && tKey) {
+        if (meta.levels && typeof meta.levels[tKey] === 'number') gameLevel = meta.levels[tKey];
+        if (meta.notes && typeof meta.notes[tKey] === 'number' && meta.notes[tKey] > 0) noteCount = meta.notes[tKey];
+      }
+    }
+    const exScore = typeof r.ex_score === 'number' ? r.ex_score : 0;
+    idx.set(norm(r.title) + '|' + diffStr, {
+      lamp: lampStr,
+      lampAbbr: LAMP_FULL_TO_ABBR[lampStr] || 'NP',
+      exScore,
+      playedVersion: typeof r.played_version === 'number' ? r.played_version : 0,
+      djLevel: djLevelFromScore(exScore, noteCount),
+      noteCount,
+      gameLevel,
+    });
+  }
+  return idx;
 }

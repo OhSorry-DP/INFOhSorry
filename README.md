@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.66.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.66-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.67.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.67-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,26 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.67 — 탭 재편 (RECENT / PLAYDATA / RECOMMEND / GRID / ANALYSIS) + 연습곡 추천 카드 + 본체 추천 알고리즘 100% 통합
+- **탭 재편** — 기존 단일 DP 탭 + dp12 → 5개 탭으로 분리:
+  - `RECENT` ([Recent.tsx](src/renderer/src/Recent.tsx)) — 신규. 세션별 최근 플레이 기록 + 램프/DJ 레벨 변동 시각화. ohSorry 본체 게스트 페이지와 동일 표 형식.
+  - `PLAYDATA` ([PlayData.tsx](src/renderer/src/PlayData.tsx)) — 신규. 시리즈 폴더 아코디언 (HTML exclusive accordion) + 검색 네비게이터 + 곡 단위 표 + SP/DP 토글 (지금은 hidden, 로직만 보존) + 배치 추천 토글 (gist `calcWeakness` 의 `chartStrengthMatch8Way`).
+  - `RECOMMEND` — 기존 DP 탭의 추천곡 영역만 분리. 4번째 카드 추가 (아래).
+  - `GRID` — 기존 dp12 서열표를 별도 탭으로. 제목 + zasa / ereter 출처 안내.
+  - `ANALYSIS` — 기존과 동일.
+  - default tab = `playdata`.
+- **연습곡 추천 카드 (RecCard 4번째)** ([App.tsx](src/renderer/src/App.tsx)) — gist `recommend.js` 의 `buildWeaknessRecs` 결과를 기존 RecCard 디자인 그대로 표시:
+  - 헤더 우측 인라인: `☆ [min] ~ [max]` zasa★ 범위 number input (5.9~12.7 clamp, placeholder 가 본체 `practiceZasaDefault` = 최대 클리어 zasa-1 ~ 최대 클리어 zasa).
+  - 토글 줄: 패턴 (건반/CHARGE/SCRATCH/SOF-LAN) / N곡 / 손 (양/좌/우) / 강도 (가볍게/중간/강하게) — 너비 통일 + 우측 정렬.
+  - 행: ★ 대신 **목표% (rate)** + 클릭 시 해시태그 줄에 `현재 EX → 목표 EX (목표 DJ Level)` + #해시태그.
+- **본체 추천 알고리즘 100% 통합** ([recommendCore.ts](src/renderer/src/recommendCore.ts)) — 신규 helper. gist 의 `recommend.js` / `calcWeakness.js` / `normTitle.js` / `patterns-all-slim.json` / `rate-reference-slim.json` / `feature-scores-slim.json` / `textage-meta.json` / `series-name.json` 병렬 fetch + `createRecCtx({rows, ratingData, zasaData, ereterData})` → `recommend.js` 의 `createContext(deps)` 호출. EC/HC/EXH/weakness 모두 본체와 동일 결과.
+  - 기존 INFOhSorry 자체 알고리즘 ([shared/recommend.ts](src/shared/recommend.ts)) 의 `buildRecs / buildExhRecs` 는 fallback 으로 유지하지만 1차 결과는 gist `recommend.js` 사용. EXH 추천이 본체와 다르게 안 뜨던 회귀 해소.
+- **TSV safety guard** ([reflux.ts](src/main/reflux.ts) / [api.ts](src/renderer/src/api.ts)) — Reflux 의 tracker.tsv 가 옛 IIDX ID 의 데이터를 남긴 채 새 ID 로 로그인 시 supabase 에 옛 ID 데이터가 잘못 업로드되던 버그. memory scan 이 IIDX ID 변경 감지 → `truncate` (unlink 아닌, Reflux 의 watch handle 보존) 로 tracker 초기화.
+- **로딩 스피너** — gist `calcOhsorryCore` 의 `compute()` 와 ohSorryWeb `renderProfileInto` 에 fixed top-right 회전 spinner 추가 (eagate 호환 — light host 는 transparent 배경).
+- **해시태그 토스트 테마 분기** — gist `ohsorryRender.js` — `eagate.573.jp` 는 transparent 배경, 그 외 dark `#2a2a2a`.
+- **곡명 클릭 DP 점프 비활성화 (RECENT)** ([Recent.tsx](src/renderer/src/Recent.tsx)) — RECENT 행 클릭 시 DP 탭 점프하던 동작 제거. role/tabIndex/onClick 모두 빠짐.
+- **카드 그리드 wrap** — `repeat(3, minmax(0, 1fr))` → `repeat(auto-fit, minmax(360px, 1fr))`. 너비 < 360px 면 다음 줄로.
 
 ### 0.0.66 — supabase upsert_user_feature_score 28 dim 시그니처 매칭 (silent fail 해소)
 - 배경: 2026-05-27 [migration_mirror_features.sql](../ohSorryAdmin/sql/migration_mirror_features.sql) 로 `user_ohsorry_radars` 에 18 dim (mirror 영향 STAIR_UP/DN_L/R + K1~K7 손별) 추가 + `upsert_user_feature_score` RPC 시그니처 11 → 29 인자 확장. 클라이언트 (INFOhSorry / ohSorry dbConn) 가 옛 11 인자만 보내서 PostgREST 가 함수 매칭 실패 (PGRST202) → silent catch 로 묻혀 user_ohsorry_radars 가 빈 채로 남던 버그.

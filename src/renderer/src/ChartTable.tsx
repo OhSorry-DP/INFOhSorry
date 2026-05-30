@@ -10,7 +10,8 @@ import { lampStyle } from './lampStyle';
 
 // 클립보드 복사 헬퍼 — navigator.clipboard 우선, 실패 시 execCommand fallback.
 // PC2 (LAN IP / http://) 등 non-secure context 에서도 동작.
-async function copyToClipboard(text: string): Promise<boolean> {
+// PlayData 의 곡명 클릭에서도 재사용 (export).
+export async function copyToClipboard(text: string): Promise<boolean> {
   if (navigator.clipboard && window.isSecureContext) {
     try {
       await navigator.clipboard.writeText(text);
