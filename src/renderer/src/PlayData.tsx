@@ -552,14 +552,23 @@ function rowsToWeaknessCharts(rows: SongRow[]): {
   return out;
 }
 
+// slot (SPN/DPN 등) → diff filter key. 외부(서열표)에서 곡 클릭 시 diff 토글 맞추는 용도.
+const SLOT_TO_DIFF_FILTER: Record<string, string> = {
+  SPN: 'NORMAL', SPH: 'HYPER', SPA: 'ANOTHER', SPL: 'LEGGENDARIA',
+  DPN: 'NORMAL', DPH: 'HYPER', DPA: 'ANOTHER', DPL: 'LEGGENDARIA',
+};
+
 // ─── 컴포넌트 본체 ──────────────────────────────────────────────────────
 interface Props {
   rows: SongRow[];
   zasaData: ZasaData | null;
   ratingData: RatingData | null;
+  // 외부(SP 서열표 등)에서 곡 클릭 시 — 토글/diff 맞추고 검색창에 곡명 입력.
+  pickTarget?: { title: string; slot: string } | null;
+  onPickConsumed?: () => void;
 }
 
-export default function PlayData({ rows, zasaData, ratingData }: Props): JSX.Element {
+export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPickConsumed }: Props): JSX.Element {
   const [songsById, setSongsById] = useState<Map<number, SongEntry> | null>(null);
   const [textageSongs, setTextageSongs] = useState<TextageMeta['songs'] | null>(null);
   const [seriesNames, setSeriesNames] = useState<Record<string, string>>({});
@@ -792,12 +801,16 @@ export default function PlayData({ rows, zasaData, ratingData }: Props): JSX.Ele
   }, [groups]);
 
   // 검색 매칭 결과 — 최대 50개 표시 (오소리웹은 무제한이지만 너무 길면 dropdown 이 폭발).
+  //   norm() 정규화 후 includes — 공백/특수문자/전각 차이 무시 (서열표 등 외부 곡명도 매칭).
+  //   raw lowercase 부분일치도 fallback 으로 허용 (사용자가 일부 기호 그대로 입력하는 경우).
   const matchedSongs = useMemo(() => {
-    const q = searchQ.trim().toLowerCase();
-    if (!q) return [];
+    const raw = searchQ.trim().toLowerCase();
+    if (!raw) return [];
+    const nq = norm(searchQ);
     const out: { title: string; no: number | null }[] = [];
     for (const s of searchIndex) {
-      if (s.title.toLowerCase().includes(q)) {
+      const matched = (nq && norm(s.title).includes(nq)) || s.title.toLowerCase().includes(raw);
+      if (matched) {
         out.push(s);
         if (out.length >= 50) break;
       }
@@ -815,6 +828,25 @@ export default function PlayData({ rows, zasaData, ratingData }: Props): JSX.Ele
     document.addEventListener('click', onClick);
     return () => document.removeEventListener('click', onClick);
   }, []);
+
+  // 외부(SP 서열표 등)에서 곡 클릭 — 토글(SP/DP) + diff 를 해당 곡에 맞추고 검색창에 곡명 입력.
+  //   검색창 입력 → 드롭다운 표시 → 사용자가 항목 클릭 시 onPickSearch 로 점프 (기존 검색 UX).
+  useEffect(() => {
+    if (!pickTarget) return;
+    const slot = pickTarget.slot || '';
+    if (slot.startsWith('SP')) setStyle('sp');
+    else if (slot.startsWith('DP')) setStyle('dp');
+    const diffKey = SLOT_TO_DIFF_FILTER[slot];
+    if (diffKey) {
+      const idx = DIFF_CYCLE.findIndex((d) => d.key === diffKey);
+      if (idx >= 0) setDiffIdx(idx);
+    }
+    setSearchQ(pickTarget.title);
+    setShowDrop(true);
+    onPickConsumed?.();
+    // onPickConsumed 는 매 렌더 새 함수일 수 있어 deps 제외 — pickTarget 변동 시에만 적용.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickTarget]);
 
   // 드롭다운 아이템 클릭 — 폴더 open + 200ms 후 해당 row 로 scroll + highlight.
   //   폴더 open=true 가 다른 폴더 자동 close (exclusive accordion), SeriesFolder 의 onToggle 이

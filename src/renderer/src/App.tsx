@@ -125,6 +125,8 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('playdata');
   // 추천곡 클릭 → DP 탭 + 해당 row 로 스크롤 타깃
   const [scrollTarget, setScrollTarget] = useState<{ title: string; slot: string; gameLevel?: number | null } | null>(null);
+  // SP 서열표 곡 클릭 → PLAYDATA 탭 + 토글/diff 맞추고 검색창에 곡명 입력
+  const [playDataTarget, setPlayDataTarget] = useState<{ title: string; slot: string } | null>(null);
   // 옛 ID 의 tsv 가 메모리에 남아 새 ID 로 잘못 업로드되는 사고 방지용 — 옛 IIDX ID 추적.
   // truthy → null transition (= 게임 종료 / 다른 ID 로 로그인 전 단계) 감지 시 tsv 비우기 + 로딩 데이터 reset.
   const prevIidxIdRef = useRef<string | null>(null);
@@ -1829,7 +1831,13 @@ export default function App() {
                 }}
               />
             ) : tab === 'playdata' ? (
-              <PlayData rows={rows} zasaData={zasaData} ratingData={ratingData} />
+              <PlayData
+                rows={rows}
+                zasaData={zasaData}
+                ratingData={ratingData}
+                pickTarget={playDataTarget}
+                onPickConsumed={() => setPlayDataTarget(null)}
+              />
             ) : tab === 'analysis' ? (
               <Analysis
                 charts={[...dp12Charts, ...dp11Charts]}
@@ -1917,8 +1925,9 @@ export default function App() {
                   spTierData={spTierData}
                   ratingData={ratingData}
                   onPickChart={(target) => {
-                    setTab('dp');
-                    setScrollTarget(target);
+                    // DP/SP 서열표 곡 클릭 → PLAYDATA 탭 (slot 접두사로 토글/diff 자동 맞춤 + 검색창 입력)
+                    setPlayDataTarget({ title: target.title, slot: target.slot });
+                    setTab('playdata');
                   }}
                 />
               </>

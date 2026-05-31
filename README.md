@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.71.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.71-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.72.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.72-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,10 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.72 — 서열표 곡 클릭 → 플레이데이터 점프 + 검색 정규화
+- **GRID 서열표(DP/SP 전부) 곡명 클릭 → PLAYDATA 탭으로 이동** — 기존 DP 차트뷰어 점프 대신 플레이데이터로 통일. 클릭한 곡의 slot 접두사(DP/SP)로 **플레이데이터 토글(SP/DP) 자동 전환 + diff 필터 자동 맞춤 + 검색창에 곡명 입력**(드롭다운 표시 → 항목 클릭 시 해당 곡으로 점프).
+- **플레이데이터 검색 `norm()` 정규화 매칭** — 공백/특수문자/전각 차이를 무시해, 서열표에서 넘어온 곡명도 마스터 곡명과 정확히 매칭. raw 부분일치도 fallback 으로 유지.
 
 ### 0.0.71 — 계정 전환 시 옛 점수 잘못 업로드 버그 수정
 - **A→B 계정 전환 감지 추가** — INF오소리를 켜둔 채 게임만 다른 IIDX 계정으로 다시 켰을 때, 기존엔 `iidxId` 가 5초 이상 null 로 지속될 때만 정리해서 A→B 직접 전환은 누락 → 옛 ID 의 TSV 점수가 새 ID 로 잘못 업로드되던 문제. 이제 prev/now 가 둘 다 유효 13자 ID 인데 서로 다르면 **즉시** rows/tsv 비우기 + 재업로드 활성화.
