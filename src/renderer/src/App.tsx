@@ -1381,6 +1381,16 @@ export default function App() {
     setRerollEXH((k) => k + 1);
   };
 
+  // 배치 추천 모드 — 'on' 이면 8 배치(미러/플립) 중 최적 배치 기준으로 난이도 평가, 'off' 면 정규 배치 강제.
+  //   recCtx.setLayoutMode 로 코어에 전달. 변경 시 EC/HC/EXH 새로 뽑고, weak useEffect 는 deps 로 재계산.
+  const [recLayoutMode, setRecLayoutMode] = useState<'on' | 'off'>('on');
+  const handleRecLayoutModeChange = (mode: 'on' | 'off'): void => {
+    setRecLayoutMode(mode);
+    setRerollEC((k) => k + 1);
+    setRerollHC((k) => k + 1);
+    setRerollEXH((k) => k + 1);
+  };
+
   // 연습곡 (weakness) 추천 토글 state — recommend.js buildWeaknessRecs opts 와 매칭.
   const [weakMode, setWeakMode] = useState<'all' | 'CHARGE' | 'SCRATCH' | 'SOF-LAN'>('all');
   const [weakTopN, setWeakTopN] = useState<number>(10);
@@ -1407,6 +1417,7 @@ export default function App() {
       const lvMode = recLevelMode === 'lv12' ? 'lv12' : 'lv11+12';
       const djModeStr = recDjMode === 'on' ? 'on' : 'off';
       try {
+        if (typeof recCtx.setLayoutMode === 'function') recCtx.setLayoutMode(recLayoutMode);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const res: any = recCtx.buildRecsWithPool(threshold, stage, ohsorryRecBase, lvMode, djModeStr, { randomize: true });
         return {
@@ -1420,7 +1431,7 @@ export default function App() {
         return { picked: [], pool: [] };
       }
     },
-    [recCtx, ohsorryRecBase, recLevelMode, recDjMode],
+    [recCtx, ohsorryRecBase, recLevelMode, recDjMode, recLayoutMode],
   );
 
   // 연습곡 (weakness) — buildWeaknessRecs(randomize) 결과를 state 로. 리롤(rerollWeak)/옵션 변경 시 60풀에서 재추출.
@@ -1429,6 +1440,7 @@ export default function App() {
   useEffect(() => {
     if (!recCtx || ohsorryRecBase == null) { setRecsWeak([]); return; }
     try {
+      if (typeof recCtx.setLayoutMode === 'function') recCtx.setLayoutMode(recLayoutMode);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const opts: any = { mode: weakMode, topN: weakTopN, handMode: weakHandMode, strength: weakStrength, flipOn: true, randomize: true };
       if (weakZasaMin != null) { opts.zasaMin = weakZasaMin; opts.minZasa = weakZasaMin; }
@@ -1441,7 +1453,7 @@ export default function App() {
       setRecsWeak([]);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [recCtxReady, ohsorryRecBase, weakMode, weakTopN, weakHandMode, weakStrength, weakZasaMin, weakZasaMax, rerollWeak]);
+  }, [recCtxReady, ohsorryRecBase, weakMode, weakTopN, weakHandMode, weakStrength, weakZasaMin, weakZasaMax, recLayoutMode, rerollWeak]);
 
   // 클리어 추천 (EC/HC/EXH) — reroll 클릭 시 코어 풀에서 새로 추출, 그 외(데이터 갱신) 는 refreshRecs 로 drop+refill.
   useEffect(() => {
@@ -1826,6 +1838,8 @@ export default function App() {
                     onLevelModeChange={handleRecLevelModeChange}
                     djMode={recDjMode}
                     onDjModeChange={handleRecDjModeChange}
+                    layoutMode={recLayoutMode}
+                    onLayoutModeChange={handleRecLayoutModeChange}
                     onRerollEC={() => setRerollEC((k) => k + 1)}
                     onRerollHC={() => setRerollHC((k) => k + 1)}
                     onRerollEXH={() => setRerollEXH((k) => k + 1)}
@@ -1927,6 +1941,8 @@ function Recommendations({
   onLevelModeChange,
   djMode,
   onDjModeChange,
+  layoutMode,
+  onLayoutModeChange,
   onRerollEC,
   onRerollHC,
   onRerollEXH,
@@ -1945,6 +1961,8 @@ function Recommendations({
   onLevelModeChange: (mode: RecLevelMode) => void;
   djMode: RecDjMode;
   onDjModeChange: (mode: RecDjMode) => void;
+  layoutMode: 'on' | 'off';
+  onLayoutModeChange: (mode: 'on' | 'off') => void;
   onRerollEC: () => void;
   onRerollHC: () => void;
   onRerollEXH: () => void;
@@ -1962,6 +1980,15 @@ function Recommendations({
           추천곡 <span style={{ fontWeight: 400, color: 'var(--text-muted)', fontSize: 12 }}>★ {baseStar.toFixed(2)} 기준</span>
         </h3>
         <div className="rec-head-controls">
+          <button
+            type="button"
+            className={`rec-review-toggle${layoutMode === 'on' ? ' active' : ''}`}
+            onClick={() => onLayoutModeChange(layoutMode === 'on' ? 'off' : 'on')}
+            title="배치 추천 — ON 이면 8 배치(미러/플립) 중 가장 쉬운 배치 기준으로 난이도 평가, OFF 면 정규 배치 강제"
+          >
+            <span className="rrt-check">{layoutMode === 'on' ? '✔︎' : '✓︎'}</span>
+            <span className="rrt-label">배치 {layoutMode === 'on' ? 'ON' : 'OFF'}</span>
+          </button>
           <button
             type="button"
             className={`rec-review-toggle${djMode === 'on' ? ' active' : ''}`}
@@ -2071,7 +2098,7 @@ function RecCard({
   return (
     <details
       ref={detailsRef}
-      className="rec-card"
+      className={`rec-card${isWeakness ? ' rec-card-weak' : ''}`}
       style={{ borderTop: `3px solid ${info.color}` }}
     >
       <summary
@@ -2084,6 +2111,17 @@ function RecCard({
           <span style={isWeakness ? { color: info.color } : undefined}>{info.label}</span>
         </span>
         <span className="rec-card-count">({recs.length}곡)</span>
+        <button
+          className="rec-reroll"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onReroll();
+          }}
+          title="랜덤 추첨 다시"
+        >
+          ↻
+        </button>
         {isWeakness && weakOpts && onWeakOptsChange && (() => {
           // zasa★ 입력 범위 — 무조건 5.9 ~ 12.7. 그 밖은 onChange 에서 clamp.
           const CLAMP_MIN = 5.9;
@@ -2124,17 +2162,6 @@ function RecCard({
             </span>
           );
         })()}
-        <button
-          className="rec-reroll"
-          onClick={(e) => {
-            e.stopPropagation();
-            e.preventDefault();
-            onReroll();
-          }}
-          title="랜덤 추첨 다시"
-        >
-          ↻
-        </button>
       </summary>
       {isWeakness && weakOpts && onWeakOptsChange && (
         <div className="rec-weak-toggles" onClick={(e) => e.stopPropagation()}>
@@ -2263,7 +2290,7 @@ function RecCard({
                     className="rec-stagestar rec-stagegoal"
                     title={r.targetDjLevel ? `목표 DJ Level: ${r.targetDjLevel}` : '목표 rate'}
                   >
-                    {typeof r.targetRate === 'number' ? `${r.targetRate.toFixed(1)}%` : '—'}
+                    {typeof r.targetRate === 'number' ? `목표 ${r.targetRate.toFixed(1)}%` : '—'}
                   </span>
                 ) : (
                   <span className="rec-stagestar">★{displayDiff.toFixed(2)}</span>
@@ -2280,13 +2307,13 @@ function RecCard({
               </li>
               {tagsInfo && (tagsInfo.hashtags || (isWeakness && r.currentExScore != null && r.targetExScore != null)) && (
                 <li className="rec-tags-row">
+                  {tagsInfo.hashtags && <span className="rec-tags-text">{tagsInfo.hashtags}</span>}
                   {isWeakness && r.currentExScore != null && r.targetExScore != null && (
                     <span className="rec-goal-text">
                       {r.currentExScore} → <b>{r.targetExScore}</b>
                       {r.targetDjLevel ? ` (${r.targetDjLevel})` : ''}
                     </span>
                   )}
-                  {tagsInfo.hashtags && <span className="rec-tags-text">{tagsInfo.hashtags}</span>}
                 </li>
               )}
               </Fragment>

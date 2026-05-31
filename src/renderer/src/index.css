@@ -1229,6 +1229,10 @@ body {
 .rec-card-head .rec-reroll {
   margin-left: auto;
 }
+/* 연습곡 카드: 리롤은 곡수 카운트 바로 뒤에 두고, ☆범위(rec-weak-zasa-inline)가 margin-left:auto 로 오른쪽 끝 차지 */
+.rec-card-weak .rec-card-head .rec-reroll {
+  margin-left: 0;
+}
 /* picked 가 9개 미만일 때 카드 하단에 표시되는 "다시 받기" 버튼 */
 .rec-refill {
   display: block;
@@ -3436,7 +3440,7 @@ body {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
-  margin-right: 4px;
+  margin-left: auto;          /* 해시태그(왼쪽) 뒤로 밀어 오른쪽 끝에 정렬 */
 }
 .rec-tags-row .rec-goal-text b { color: #ff6b9d; }
 

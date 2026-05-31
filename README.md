@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.69.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.69-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.70.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.70-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,15 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.70 — RECENT 탭 렉 개선 + 추천 탭 UI 정리
+- **RECENT "오늘(라이브)" 박스 렉 해소** — 기존엔 supabase latest(DB) 도착 전에 플레이한 모든 차트를 먼저 렌더했다가, DB 도착 후 변동 곡만 필터링해 재렌더 → 큰 목록을 그렸다 지우며 렉.
+  - `latestLoaded` 플래그 추가 → **DB 로드 완료 후에만** 변동 곡을 계산해 단일 렌더. 로드 전엔 "불러오는 중..." 표시.
+  - `latestIdx === null` 의 "로딩 중" vs "오프라인 실패" 를 구분 — fetch 실패 시엔 기존처럼 TSV-only 전체 목록 fallback 유지.
+- **연습곡 카드 헤더 정렬 수정** — 리롤(↻) 버튼을 `(N곡)` 카운트 바로 뒤로 옮기고, ☆ 별값 범위 입력을 헤더 오른쪽 끝으로 정렬(`margin-left:auto`).
+- **연습곡 해시태그 줄 좌우 배치** — 곡 클릭 시 펼쳐지는 줄에서 해시태그는 왼쪽, 목표 EX스코어는 오른쪽 끝에 정렬.
+- **연습곡 목표 rate 라벨** — 목록의 목표값을 `66.7%` → `목표 66.7%` 로 표기.
+- **배치 추천 ON/OFF 토글 추가** — 추천곡 영역 헤더의 `복습곡 포함/제외` 토글 왼쪽에 동일 스타일로 `배치 ON / 배치 OFF` 토글 신설. 코어 `setLayoutMode` 연동(ON=8 배치 중 최적 배치 기준, OFF=정규 배치). 기본 ON.
 
 ### 0.0.69 — GRID 탭에 SP ☆12 서열표 추가 (외부 ☆12参考表 하드/노마게 tier)
 - **GRID 탭에 `SP12` 탭 신설** — 외부 구글 시트 "☆12参考表" 의 간이표(簡易) 를 런타임에 published HTML 로 fetch → 파싱 → `userData/sp-tier-12.json` 캐시(TTL 24h, fetch 실패 시 stale 캐시 fallback).

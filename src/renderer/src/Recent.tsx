@@ -212,6 +212,9 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
   // dateIdx === 0 → TSV vs latest, > 0 → fetchRecentCharts(pastDates[dateIdx-1].date_kst).
   const [supabaseDates, setSupabaseDates] = useState<{ date_kst: string; row_count: number }[]>([]);
   const [latestIdx, setLatestIdx] = useState<Map<string, LatestChartEntry> | null>(null);
+  // latest(DB) fetch 완료 여부 — null 인 latestIdx 의 "로딩 중" vs "오프라인 실패" 구분용.
+  // 로딩 중엔 전체 곡을 렌더하지 않고(렉 방지) 완료 후 필터링된 결과만 표시.
+  const [latestLoaded, setLatestLoaded] = useState(false);
   const [dateIdx, setDateIdx] = useState(0);
   const [pastRows, setPastRows] = useState<RecentChartRow[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -242,9 +245,11 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
     if (!normalizedId || !/^[A-Z0-9]+$/.test(normalizedId)) {
       setSupabaseDates([]);
       setLatestIdx(null);
+      setLatestLoaded(false);
       return;
     }
     let cancelled = false;
+    setLatestLoaded(false);  // 새 fetch 시작 — 완료까지 전체 목록 렌더 보류 (로딩 표시)
     void (async () => {
       const [datesRes, latestRes] = await Promise.allSettled([
         fetchRecentDates(normalizedId),
@@ -255,6 +260,8 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
       else console.warn('[Recent] dates fetch 실패:', datesRes.reason);
       if (latestRes.status === 'fulfilled') setLatestIdx(latestRes.value);
       else console.warn('[Recent] latest fetch 실패:', latestRes.reason);
+      // 성공/실패 무관하게 완료 표시 — 실패 시 latestIdx=null 로 TSV-only fallback.
+      setLatestLoaded(true);
     })();
     return () => { cancelled = true; };
   }, [normalizedId]);
@@ -282,14 +289,22 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
   }, [dateIdx, pastDates, normalizedId]);
 
   // 현재 표시할 행들 — 오늘 모드면 TSV diff, 그 외엔 supabase 응답.
+  //   오늘 모드: latest(DB) 로드 완료 전엔 [] 반환 — 전체 곡을 먼저 렌더했다가 필터하는 렉 방지.
+  //   로드 완료 후 latestIdx 로 변동 곡만 계산 (실패 시 latestIdx=null → TSV-only fallback).
   const displayRows = useMemo(() => {
-    if (dateIdx === 0) return sortRows(computeTodayCharts(rows, latestIdx));
+    if (dateIdx === 0) {
+      if (!latestLoaded) return [];
+      return sortRows(computeTodayCharts(rows, latestIdx));
+    }
     return pastRows ? sortRows(pastRows) : [];
-  }, [dateIdx, rows, latestIdx, pastRows]);
+  }, [dateIdx, rows, latestIdx, latestLoaded, pastRows]);
 
   // 헤더 라벨 / nav 버튼 표시 — 오늘 모드는 "YYYY-MM-DD (오늘, 라이브)" + 이전 버튼만, 그 외는 < 날짜 >.
   // pastDates 가 없으면 nav 자체 비활성 (오프라인 / 신규 계정 / 오늘만 데이터 있음).
   const isToday = dateIdx === 0;
+  // 오늘 모드에서 DB(latest) 로드 대기 중 — 로딩 표시 + 전체 목록 렌더 보류.
+  const todayLoading = isToday && !latestLoaded;
+  const busy = loading || todayLoading;
   const hasPrev = isToday
     ? pastDates.length > 0
     : dateIdx < pastDates.length;  // dateIdx 는 1 부터 시작 (오늘 = 0)
@@ -333,7 +348,7 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
           ) : <span style={{ width: 18 }} />}
         </div>
         <span className="__uprofile_rcheader_count">
-          {loading ? '불러오는 중...' : `${displayRows.length}곡`}
+          {busy ? '불러오는 중...' : `${displayRows.length}곡`}
         </span>
       </div>
 
@@ -341,7 +356,7 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
         <p className="__uprofile_tabempty">데이터 조회 실패: {error}</p>
       )}
 
-      {!error && displayRows.length === 0 && !loading && (
+      {!error && displayRows.length === 0 && !busy && (
         <p className="__uprofile_tabempty">
           {isToday
             ? (latestIdx ? '마지막 업로드 이후 변동된 곡 없음' : '플레이 데이터 없음')
