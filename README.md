@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.72.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.72-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.73.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.73-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,10 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.73 — 서열표 곡 클릭 시 플레이데이터에서 자동 검색·선택(점프)
+- 0.0.72 에서 서열표 곡 클릭 시 검색창에 곡명 **입력**까지만 됐는데, 이제 **드롭다운 결과를 자동 선택해 해당 곡으로 점프**(폴더 열림 + 스크롤 + 하이라이트)까지 수행.
+- 곡 마스터 / 검색 인덱스 로딩 전 클릭이면 대기했다가 준비되는 즉시 실행. `norm()` 매칭으로 곡을 찾고 기존 검색 선택 동작(`onPickSearch`)을 그대로 재사용.
 
 ### 0.0.72 — 서열표 곡 클릭 → 플레이데이터 점프 + 검색 정규화
 - **GRID 서열표(DP/SP 전부) 곡명 클릭 → PLAYDATA 탭으로 이동** — 기존 DP 차트뷰어 점프 대신 플레이데이터로 통일. 클릭한 곡의 slot 접두사(DP/SP)로 **플레이데이터 토글(SP/DP) 자동 전환 + diff 필터 자동 맞춤 + 검색창에 곡명 입력**(드롭다운 표시 → 항목 클릭 시 해당 곡으로 점프).

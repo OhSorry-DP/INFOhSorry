@@ -589,6 +589,8 @@ export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPic
   const [searchQ, setSearchQ] = useState('');
   // 검색 드롭다운 표시 여부. focus / input 시 true, 외부 클릭 / Esc / 아이템 선택 시 false.
   const [showDrop, setShowDrop] = useState(false);
+  // 외부(서열표) 곡 클릭 → 데이터 준비되면 자동으로 해당 곡 검색 결과 선택(점프)할 대기 타깃.
+  const [pendingPick, setPendingPick] = useState<{ title: string; slot: string } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchWrapRef = useRef<HTMLDivElement>(null);
@@ -829,8 +831,8 @@ export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPic
     return () => document.removeEventListener('click', onClick);
   }, []);
 
-  // 외부(SP 서열표 등)에서 곡 클릭 — 토글(SP/DP) + diff 를 해당 곡에 맞추고 검색창에 곡명 입력.
-  //   검색창 입력 → 드롭다운 표시 → 사용자가 항목 클릭 시 onPickSearch 로 점프 (기존 검색 UX).
+  // 외부(SP/DP 서열표)에서 곡 클릭 — 토글(SP/DP) + diff 를 해당 곡에 맞추고 자동 점프 대기 등록.
+  //   실제 점프(검색 결과 선택)는 곡 마스터/searchIndex 준비 후 아래 effect 에서 수행.
   useEffect(() => {
     if (!pickTarget) return;
     const slot = pickTarget.slot || '';
@@ -841,8 +843,7 @@ export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPic
       const idx = DIFF_CYCLE.findIndex((d) => d.key === diffKey);
       if (idx >= 0) setDiffIdx(idx);
     }
-    setSearchQ(pickTarget.title);
-    setShowDrop(true);
+    setPendingPick({ title: pickTarget.title, slot });
     onPickConsumed?.();
     // onPickConsumed 는 매 렌더 새 함수일 수 있어 deps 제외 — pickTarget 변동 시에만 적용.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -892,6 +893,25 @@ export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPic
       container.scrollTo({ top: Math.max(0, y), behavior: 'smooth' });
     }, 200);
   };
+
+  // pendingPick(외부 곡 클릭) + 데이터 준비 → 해당 곡 검색 결과를 자동 선택(점프).
+  //   searchIndex 에서 norm 매칭으로 곡을 찾아 onPickSearch 호출 (드롭다운 항목 클릭과 동일 동작).
+  //   곡 마스터 / searchIndex 준비 전이면 대기 (pendingPick 유지), 준비되면 재실행.
+  useEffect(() => {
+    if (!pendingPick) return;
+    if (!songsById || searchIndex.length === 0) return;  // 데이터 준비 대기
+    const nq = norm(pendingPick.title);
+    const entry =
+      searchIndex.find((s) => norm(s.title) === nq) ??
+      searchIndex.find((s) => norm(s.title).includes(nq));
+    setPendingPick(null);
+    if (!entry) return;  // 매칭 곡 없음 (미수록 등) — 조용히 종료
+    // style/diff 상태가 DOM 에 반영된 뒤 점프 (다음 tick).
+    const id = setTimeout(() => onPickSearch(entry.title, entry.no), 0);
+    return () => clearTimeout(id);
+    // onPickSearch 는 매 렌더 재생성 — deps 제외 (pendingPick/데이터 변동 시에만 실행).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingPick, songsById, searchIndex]);
 
   if (loadError) {
     return <p className="__uprofile_tabempty">곡 마스터 fetch 실패: {loadError}</p>;
