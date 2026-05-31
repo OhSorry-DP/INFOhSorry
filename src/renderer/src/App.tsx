@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, extractCharts } from '../../shared/types';
@@ -7,8 +7,6 @@ import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-e
 import { inferUserTiered as osrInferUserTieredBundle, version as osrBundleVersion } from '../../shared/calc-osrating';
 import { adoptStar as adoptStarBundle, version as adoptBundleVersion, type AdoptInput, type AdoptOutput } from '../../shared/adopt';
 import {
-  buildExhRecs,
-  buildRecsWithPool,
   compareRateDesc,
   shouldDropFromRecs,
   type RecCandidate,
@@ -31,8 +29,61 @@ import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
 import { useProfile } from './useProfile';
-import { uploadProfile, fetchUserPublic, type UserPublicInfo } from './supabaseSync';
+import { uploadProfile, fetchUserPublic, getInfChartChecker, type UserPublicInfo } from './supabaseSync';
 import { IS_BROWSER_REMOTE } from './api';
+
+// ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
+//   buildRecsWithPool / buildWeaknessRecs 의 raw row 를 기존 Recommendations / RecCard 가 쓰는 RecCandidate 로 변환.
+//   clear 추천(ec/hc/exh) + 연습곡(weakness) 공용. 모듈 레벨 — 여러 effect 에서 재사용.
+const CORE_DIFF_TO_SLOT: Record<string, ChartSlot> = {
+  NORMAL: 'DPN', HYPER: 'DPH', ANOTHER: 'DPA', LEGGENDARIA: 'DPL',
+};
+const CORE_LAMP_FULL_TO_ABBR: Record<string, string> = {
+  'NO PLAY': 'NP', 'FAILED': 'F', 'ASSIST': 'AC', 'EASY': 'EC',
+  'CLEAR': 'NC', 'HARD': 'HC', 'EX HARD': 'EX', 'FULL COMBO': 'FC',
+};
+const CORE_CAT_MAP: Record<string, RecCandidate['category']> = {
+  cleanup: 'cleanup', easy: 'challenge-easy', hard: 'challenge-hard',
+};
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function recRowToCandidate(r: any, stage: CardStage): RecCandidate {
+  const slot = CORE_DIFF_TO_SLOT[r.chart] || 'DPA';
+  const lampFull = r.currentLamp || 'NO PLAY';
+  const lampAbbr = CORE_LAMP_FULL_TO_ABBR[lampFull] || lampFull;
+  const isWeak = stage === 'weakness';
+  const cat: RecCandidate['category'] = isWeak ? 'cleanup' : (CORE_CAT_MAP[r._category as string] || 'cleanup');
+  const countField = stage === 'weakness' ? 'ec_n' : stage + '_n';
+  return {
+    title: r.title, slot, diff: r.chart, level: r.level,
+    currentLamp: lampAbbr,
+    missCount: typeof r.missCount === 'number' ? r.missCount : null,
+    ec: r.ec ?? null, hc: r.hc ?? null, exh: r.exh ?? null,
+    ec_n: r.ec_n ?? null, hc_n: r.hc_n ?? null, exh_n: r.exh_n ?? null,
+    diffValue: r.diffValue,
+    diffCount: r[countField] ?? 0,
+    margin: r.margin ?? 0,
+    category: cat,
+    ereterLevel: null, ereterEc: null, ereterHc: null, ereterExh: null,
+    ereterEcN: null, ereterHcN: null, ereterExhN: null,
+    gameLevel: r.gameLevel ?? null,
+    isRatingFallback: !!r.ratingOnly,
+    rate: r.scoreRate ?? null,
+    exScore: r.exScore ?? null,
+    noteCount: r.noteCount ?? null,
+    djLevel: r.djLevel ?? null,
+    lampNum: r.lampNum,
+    unlocked: true,
+    // weakness 전용 필드 — buildWeaknessRecs 결과의 _* 필드.
+    practiceType: isWeak ? r._practiceType : undefined,
+    targetRate: isWeak ? r._targetRate : undefined,
+    targetExScore: isWeak ? r._targetExScore : undefined,
+    currentExScore: isWeak ? r._currentExScore : undefined,
+    targetDjLevel: isWeak ? r._targetDjLevel : undefined,
+    // 본체 hashtag / 배치 라벨 (모든 stage 공통).
+    hashtags: Array.isArray(r._hashtags) ? r._hashtags : undefined,
+    bestLabel: r._matchByHand?.bestLabel || undefined,
+  };
+}
 
 // 빌드 시 electron-vite 의 define 으로 package.json 의 version 자동 주입.
 // 이전엔 하드코드 (0.0.12) 라 v0.0.13~v0.0.15 풀 때 supabase 업로드 버전이 옛 값으로 남음.
@@ -1125,6 +1176,8 @@ export default function App() {
   const [recsEC, setRecsEC] = useState<RecState>({ picked: [], pool: [] });
   const [recsHC, setRecsHC] = useState<RecState>({ picked: [], pool: [] });
   const [recsEXH, setRecsEXH] = useState<RecState>({ picked: [], pool: [] });
+  const [recsWeak, setRecsWeak] = useState<RecCandidate[]>([]);
+  const [rerollWeak, setRerollWeak] = useState(0);
   // recommend.js (gist) lib 로드 — RecCard 의 row 클릭 시 해시태그 / 배치 라벨 표시용.
   //   마운트 1회만 fetch. ctx 는 rows / rating / zasa / ereter 변경 시 재생성.
   //   ctx 활용해서 추천곡 별 chartStrengthMatchByHand + computeRecHashtags 결과를 Map 으로.
@@ -1141,18 +1194,43 @@ export default function App() {
     })();
     return () => { cancelled = true; };
   }, []);
+  // INF 수록 차트 판정기 (supabase songs.ac/legen 기반) — 연습곡 풀이 AC 전용 차트를 거르는 데 사용.
+  //   마운트 1회 로드 (songs 캐시 fetch). 실패 시 null → notInINF 만으로 필터.
+  const [infChecker, setInfChecker] = useState<((title: string, chartName?: string) => boolean) | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const checker = await getInfChartChecker();
+        if (!cancelled) setInfChecker(() => checker);
+      } catch (e) {
+        console.warn('[App] INF 차트 판정기 로드 실패 (notInINF 만 적용):', (e as Error).message);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  // 코어 buildWeaknessRecs 에 넘길 INF 필터 — notInINF(수동 제외) 우선 + songs 기반 INF 수록 판정.
+  //   chartName(DP_NOR/HYP/ANO/LEG) → slot(DPN/DPH/DPA/DPL) 매핑해 notInInfSet 매칭.
+  const isInfChart = useMemo(() => {
+    const CN_TO_SLOT: Record<string, string> = { DP_NOR: 'DPN', DP_HYP: 'DPH', DP_ANO: 'DPA', DP_LEG: 'DPL' };
+    return (title: string, chartName?: string): boolean => {
+      const slot = chartName ? CN_TO_SLOT[chartName] : undefined;
+      if (slot && notInInfSet.has(norm(title) + '|' + slot)) return false;  // 수동 제외 우선
+      return infChecker ? infChecker(title, chartName) : true;             // songs 기반 (로딩 전엔 통과)
+    };
+  }, [infChecker, notInInfSet]);
   // ctx — 데이터 변경 시 재생성 (lib 가 ready 일 때만).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const recCtx = useMemo<any>(() => {
     if (!recLibs) return null;
     if (rows.length === 0) return null;
     try {
-      return createRecCtx({ libs: recLibs, rows, ratingData, zasaData, ereterData });
+      return createRecCtx({ libs: recLibs, rows, ratingData, zasaData, ereterData, isInfChart });
     } catch (e) {
       console.warn('[App] recCtx 생성 실패:', (e as Error).message);
       return null;
     }
-  }, [recLibs, rows, ratingData, zasaData, ereterData]);
+  }, [recLibs, rows, ratingData, zasaData, ereterData, isInfChart]);
 
   const lastRerollEC = useRef(-1);
   const lastRerollHC = useRef(-1);
@@ -1295,118 +1373,79 @@ export default function App() {
     return { min: 11.6, max: 12.7 };
   }, [recCtx]);
 
-  // recommend.js (gist) 의 buildRecs + buildWeaknessRecs 결과 — 본체와 100% 동일 알고리즘.
-  //   RecRow → RecCandidate 매핑해서 기존 Recommendations / RecCard 디자인 그대로 활용.
-  //   weakness 도 같은 RecCandidate 형식 — RecCard stage='weakness' 가 ★ 대신 목표% 표시.
-  const recsFromCore = useMemo<{ ec: RecCandidate[]; hc: RecCandidate[]; exh: RecCandidate[]; weak: RecCandidate[] }>(() => {
-    if (!recCtx || ohsorryRecBase == null) return { ec: [], hc: [], exh: [], weak: [] };
-    const recommendLevelMode = recLevelMode === 'lv12' ? 'lv12' : 'lv11+12';
-    const djModeStr = recDjMode === 'on' ? 'on' : 'off';
-    const DIFF_TO_SLOT: Record<string, ChartSlot> = {
-      NORMAL: 'DPN', HYPER: 'DPH', ANOTHER: 'DPA', LEGGENDARIA: 'DPL',
-    };
-    const LAMP_FULL_TO_ABBR_LOCAL: Record<string, string> = {
-      'NO PLAY': 'NP', 'FAILED': 'F', 'ASSIST': 'AC', 'EASY': 'EC',
-      'CLEAR': 'NC', 'HARD': 'HC', 'EX HARD': 'EX', 'FULL COMBO': 'FC',
-    };
-    const CAT_FROM_CORE: Record<string, RecCandidate['category']> = {
-      cleanup: 'cleanup', easy: 'challenge-easy', hard: 'challenge-hard',
-    };
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const recRowToCandidate = (r: any, stage: CardStage): RecCandidate => {
-      const slot = DIFF_TO_SLOT[r.chart] || 'DPA';
-      const lampFull = r.currentLamp || 'NO PLAY';
-      const lampAbbr = LAMP_FULL_TO_ABBR_LOCAL[lampFull] || lampFull;
-      const isWeak = stage === 'weakness';
-      const cat: RecCandidate['category'] = isWeak ? 'cleanup' : (CAT_FROM_CORE[r._category as string] || 'cleanup');
-      const countField = stage === 'weakness' ? 'ec_n' : stage + '_n';
-      return {
-        title: r.title, slot, diff: r.chart, level: r.level,
-        currentLamp: lampAbbr,
-        missCount: typeof r.missCount === 'number' ? r.missCount : null,
-        ec: r.ec ?? null, hc: r.hc ?? null, exh: r.exh ?? null,
-        ec_n: r.ec_n ?? null, hc_n: r.hc_n ?? null, exh_n: r.exh_n ?? null,
-        diffValue: r.diffValue,
-        diffCount: r[countField] ?? 0,
-        margin: r.margin ?? 0,
-        category: cat,
-        ereterLevel: null, ereterEc: null, ereterHc: null, ereterExh: null,
-        ereterEcN: null, ereterHcN: null, ereterExhN: null,
-        gameLevel: r.gameLevel ?? null,
-        isRatingFallback: !!r.ratingOnly,
-        rate: r.scoreRate ?? null,
-        exScore: r.exScore ?? null,
-        noteCount: r.noteCount ?? null,
-        djLevel: r.djLevel ?? null,
-        lampNum: r.lampNum,
-        unlocked: true,
-        // weakness 전용 필드 — buildWeaknessRecs 결과의 _* 필드.
-        practiceType: isWeak ? r._practiceType : undefined,
-        targetRate: isWeak ? r._targetRate : undefined,
-        targetExScore: isWeak ? r._targetExScore : undefined,
-        currentExScore: isWeak ? r._currentExScore : undefined,
-        targetDjLevel: isWeak ? r._targetDjLevel : undefined,
-        // 본체 hashtag / 배치 라벨 (모든 stage 공통).
-        hashtags: Array.isArray(r._hashtags) ? r._hashtags : undefined,
-        bestLabel: r._matchByHand?.bestLabel || undefined,
-      };
-    };
+  // 코어 recommend.js 의 buildRecsWithPool 호출 → { picked, pool } (RecCandidate 매핑).
+  //   randomize:true — 후보 30풀에서 계층 랜덤 추출 (리롤마다 변동). pool 은 클리어 시 refreshRecs refill 용.
+  const coreRecsWithPool = useCallback(
+    (stage: RecStage, threshold: number): RecState => {
+      if (!recCtx || ohsorryRecBase == null) return { picked: [], pool: [] };
+      if ((stage === 'hc' || stage === 'exh') && ohsorryRecBase < 0.5) return { picked: [], pool: [] };
+      const lvMode = recLevelMode === 'lv12' ? 'lv12' : 'lv11+12';
+      const djModeStr = recDjMode === 'on' ? 'on' : 'off';
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const res: any = recCtx.buildRecsWithPool(threshold, stage, ohsorryRecBase, lvMode, djModeStr, { randomize: true });
+        return {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          picked: (res?.picked || []).map((r: any) => recRowToCandidate(r, stage)),
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          pool: (res?.pool || []).map((r: any) => recRowToCandidate(r, stage)),
+        };
+      } catch (e) {
+        console.warn('[App] buildRecsWithPool 실패:', (e as Error).message);
+        return { picked: [], pool: [] };
+      }
+    },
+    [recCtx, ohsorryRecBase, recLevelMode, recDjMode],
+  );
+
+  // 연습곡 (weakness) — buildWeaknessRecs(randomize) 결과를 state 로. 리롤(rerollWeak)/옵션 변경 시 60풀에서 재추출.
+  //   recCtx 식별자 대신 recCtxReady(boolean) 의존 → 데이터 polling re-render 마다 reshuffle 되는 것 방지.
+  const recCtxReady = recCtx != null;
+  useEffect(() => {
+    if (!recCtx || ohsorryRecBase == null) { setRecsWeak([]); return; }
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const ec: any[] = recCtx.buildRecs(3, 'ec', ohsorryRecBase, recommendLevelMode, djModeStr);
+      const opts: any = { mode: weakMode, topN: weakTopN, handMode: weakHandMode, strength: weakStrength, flipOn: true, randomize: true };
+      if (weakZasaMin != null) { opts.zasaMin = weakZasaMin; opts.minZasa = weakZasaMin; }
+      if (weakZasaMax != null) { opts.zasaMax = weakZasaMax; opts.maxZasa = weakZasaMax; }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const hc: any[] = ohsorryRecBase >= 0.5 ? recCtx.buildRecs(5, 'hc', ohsorryRecBase, recommendLevelMode, djModeStr) : [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const exh: any[] = ohsorryRecBase >= 0.5 ? recCtx.buildRecs(6, 'exh', ohsorryRecBase, recommendLevelMode, djModeStr) : [];
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const weakOptsCall: any = {
-        mode: weakMode, topN: weakTopN, handMode: weakHandMode, strength: weakStrength, flipOn: true,
-      };
-      // recommend.js 의 buildWeaknessRecs 는 zasaMin / zasaMax (또는 minZasa / maxZasa) 를 받을 수 있음 — null 이면 default 사용.
-      if (weakZasaMin != null) { weakOptsCall.zasaMin = weakZasaMin; weakOptsCall.minZasa = weakZasaMin; }
-      if (weakZasaMax != null) { weakOptsCall.zasaMax = weakZasaMax; weakOptsCall.maxZasa = weakZasaMax; }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const weak: any[] = recCtx.buildWeaknessRecs(ohsorryRecBase, weakOptsCall);
-      return {
-        ec: ec.map((r) => recRowToCandidate(r, 'ec')),
-        hc: hc.map((r) => recRowToCandidate(r, 'hc')),
-        exh: exh.map((r) => recRowToCandidate(r, 'exh')),
-        weak: weak.map((r) => recRowToCandidate(r, 'weakness')),
-      };
+      const weak: any[] = recCtx.buildWeaknessRecs(ohsorryRecBase, opts);
+      setRecsWeak(weak.map((r) => recRowToCandidate(r, 'weakness')));
     } catch (e) {
-      console.warn('[App] recCtx.buildRecs / buildWeaknessRecs 실패:', (e as Error).message);
-      return { ec: [], hc: [], exh: [], weak: [] };
+      console.warn('[App] buildWeaknessRecs 실패:', (e as Error).message);
+      setRecsWeak([]);
     }
-  }, [recCtx, ohsorryRecBase, recLevelMode, recDjMode, weakMode, weakTopN, weakHandMode, weakStrength, weakZasaMin, weakZasaMax]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recCtxReady, ohsorryRecBase, weakMode, weakTopN, weakHandMode, weakStrength, weakZasaMin, weakZasaMax, rerollWeak]);
 
+  // 클리어 추천 (EC/HC/EXH) — reroll 클릭 시 코어 풀에서 새로 추출, 그 외(데이터 갱신) 는 refreshRecs 로 drop+refill.
   useEffect(() => {
-    if (!dp12Match || ohsorryRecBase == null) return;
+    if (!recCtx || ohsorryRecBase == null) return;
     if (lastRerollEC.current !== rerollEC) {
       lastRerollEC.current = rerollEC;
-      setRecsEC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'ec', recLevelMode, recDjMode));
-    } else {
+      setRecsEC(coreRecsWithPool('ec', 3));
+    } else if (dp12Match) {
       setRecsEC((prev) => refreshRecs(prev, 'ec', dp12Match.charts, recDjMode));
     }
-  }, [rerollEC, dp12Match, ohsorryRecBase, recLevelMode, recDjMode]);
+  }, [rerollEC, recCtx, ohsorryRecBase, recLevelMode, recDjMode, dp12Match, coreRecsWithPool]);
   useEffect(() => {
-    if (!dp12Match || ohsorryRecBase == null) return;
+    if (!recCtx || ohsorryRecBase == null) return;
     if (lastRerollHC.current !== rerollHC) {
       lastRerollHC.current = rerollHC;
-      setRecsHC(buildRecsWithPool(dp12Match.charts, ohsorryRecBase, 'hc', recLevelMode, recDjMode));
-    } else {
+      setRecsHC(coreRecsWithPool('hc', 5));
+    } else if (dp12Match) {
       setRecsHC((prev) => refreshRecs(prev, 'hc', dp12Match.charts, recDjMode));
     }
-  }, [rerollHC, dp12Match, ohsorryRecBase, recLevelMode, recDjMode]);
+  }, [rerollHC, recCtx, ohsorryRecBase, recLevelMode, recDjMode, dp12Match, coreRecsWithPool]);
   useEffect(() => {
-    if (!dp12Match || ohsorryRecBase == null) return;
+    if (!recCtx || ohsorryRecBase == null) return;
     if (lastRerollEXH.current !== rerollEXH) {
       lastRerollEXH.current = rerollEXH;
-      // EXH 는 ohSorry 스타일 별도 로직 — ★ 낮은 30곡 → rate(=exScore/(noteCount*2)) desc 10곡
-      setRecsEXH(buildExhRecs(dp12Match.charts, ohsorryRecBase, recLevelMode, recDjMode));
-    } else {
+      setRecsEXH(coreRecsWithPool('exh', 6));
+    } else if (dp12Match) {
       setRecsEXH((prev) => refreshRecs(prev, 'exh', dp12Match.charts, recDjMode));
     }
-  }, [rerollEXH, dp12Match, ohsorryRecBase, recLevelMode, recDjMode]);
+  }, [rerollEXH, recCtx, ohsorryRecBase, recLevelMode, recDjMode, dp12Match, coreRecsWithPool]);
 
   // DP12 탭 통계 — 시도 / 클리어 / HC / EXH / FC 곡 수
   const dp12Stats = useMemo(() => {
@@ -1750,13 +1789,13 @@ export default function App() {
                 )}
                 {/* 클리어 추천 — recommend.js (gist) buildRecs 호출 결과 (본체와 100% 동일 알고리즘).
                     RecRow → RecCandidate 매핑해서 기존 Recommendations / RecCard 디자인 그대로.
-                    reroll 버튼은 그대로 두지만 recommend.js 는 deterministic 이라 클릭해도 결과 안 바뀜. */}
-                {ohsorryRecBase != null && (recsFromCore.ec.length > 0 || recsFromCore.hc.length > 0 || recsFromCore.exh.length > 0 || recsFromCore.weak.length > 0) && (
+                    picked = 표시 10곡, pool = 클리어 시 refill 용. reroll 클릭 / 클리어 시 갱신. */}
+                {ohsorryRecBase != null && (recsEC.picked.length > 0 || recsHC.picked.length > 0 || recsEXH.picked.length > 0 || recsWeak.length > 0) && (
                   <Recommendations
-                    recsEC={recsFromCore.ec}
-                    recsHC={recsFromCore.hc}
-                    recsEXH={recsFromCore.exh}
-                    recsWeak={recsFromCore.weak}
+                    recsEC={recsEC.picked}
+                    recsHC={recsHC.picked}
+                    recsEXH={recsEXH.picked}
+                    recsWeak={recsWeak}
                     baseStar={ohsorryRecBase}
                     levelMode={recLevelMode}
                     onLevelModeChange={handleRecLevelModeChange}
@@ -1765,6 +1804,7 @@ export default function App() {
                     onRerollEC={() => setRerollEC((k) => k + 1)}
                     onRerollHC={() => setRerollHC((k) => k + 1)}
                     onRerollEXH={() => setRerollEXH((k) => k + 1)}
+                    onRerollWeak={() => setRerollWeak((k) => k + 1)}
                     recCtx={recCtx}
                     weakOpts={{
                       mode: weakMode,
@@ -1863,6 +1903,7 @@ function Recommendations({
   onRerollEC,
   onRerollHC,
   onRerollEXH,
+  onRerollWeak,
   onPickChart,
   recCtx,
   weakOpts,
@@ -1880,6 +1921,7 @@ function Recommendations({
   onRerollEC: () => void;
   onRerollHC: () => void;
   onRerollEXH: () => void;
+  onRerollWeak: () => void;
   onPickChart?: (r: RecCandidate) => void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   recCtx?: any;
@@ -1931,7 +1973,7 @@ function Recommendations({
         <RecCard
           stage="weakness"
           recs={recsWeak}
-          onReroll={() => { /* weakness 는 deterministic — reroll 비활성 */ }}
+          onReroll={onRerollWeak}
           onPickChart={onPickChart}
           recCtx={recCtx}
           weakOpts={weakOpts}
@@ -2055,19 +2097,17 @@ function RecCard({
             </span>
           );
         })()}
-        {!isWeakness && (
-          <button
-            className="rec-reroll"
-            onClick={(e) => {
-              e.stopPropagation();
-              e.preventDefault();
-              onReroll();
-            }}
-            title="랜덤 추첨 다시"
-          >
-            ↻
-          </button>
-        )}
+        <button
+          className="rec-reroll"
+          onClick={(e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            onReroll();
+          }}
+          title="랜덤 추첨 다시"
+        >
+          ↻
+        </button>
       </summary>
       {isWeakness && weakOpts && onWeakOptsChange && (
         <div className="rec-weak-toggles" onClick={(e) => e.stopPropagation()}>

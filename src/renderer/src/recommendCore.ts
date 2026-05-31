@@ -248,6 +248,10 @@ export interface RecContextInput {
   ratingData: RatingData | null;
   zasaData: ZasaData | null;
   ereterData: EreterData | null;
+  // INF 수록 여부 필터 (title, chartName) → boolean. supabaseSync.getInfChartChecker() 결과.
+  //   buildWeaknessRecs 가 patternsMap 전체(AC+INF)를 순회하므로 INF 수록 차트만 남기는 데 필수.
+  //   없으면 모든 차트 통과 (필터 비활성 — 로딩 전 fallback).
+  isInfChart?: (title: string, chartName?: string) => boolean;
 }
 
 // recommend.js 의 createContext 호출 + ctx 반환. ctx 안에 buildRecs / buildWeaknessRecs / setLayoutMode 등.
@@ -256,8 +260,15 @@ export function createRecCtx(input: RecContextInput): any {
   const { libs, rows, ratingData, zasaData, ereterData } = input;
   const normFn = (libs.normLib?.norm) as (s: string) => string;
   if (!normFn) throw new Error('normLib.norm 없음');
-  // 1. allCharts (TSV 변환)
-  const allCharts = rowsToAllCharts(rows);
+  // 1. allCharts (TSV 변환) — INF 미수록 차트 제외.
+  //   Reflux TSV 에는 데이터가 있어도 실제 INFINITAS 에 노출 안 되는 차트가 섞여 있음 (notInINF / songs.legen 미수록).
+  //   clear 추천 풀(buildPools)·userVec 모두 이 비수록 차트를 빼야 함.
+  const SLOT_TO_CN: Record<string, string> = { DPN: 'DP_NOR', DPH: 'DP_HYP', DPA: 'DP_ANO', DPL: 'DP_LEG' };
+  const allChartsRaw = rowsToAllCharts(rows);
+  const isInf = input.isInfChart;
+  const allCharts = isInf
+    ? allChartsRaw.filter((c) => isInf(String(c.title || ''), SLOT_TO_CN[c.slot as string]))
+    : allChartsRaw;
   // 2. userVec — calcWeakness.calcUserWeakness 호출
   const userVec = libs.weakness.calcUserWeakness({
     allCharts,
@@ -274,8 +285,9 @@ export function createRecCtx(input: RecContextInput): any {
   const zasaMap = buildZasaMap(zasaData);
   const zasaAvgByGameLv = buildZasaAvgByGameLv(zasaData);
   const textageSeriesByNorm = buildTextageSeriesByNorm(libs.textageMeta, normFn);
-  // INFOhSorry 는 항상 INF — 모든 차트 통과 (filter 안 함). recommend.js default 와 동일.
-  const isInfChartInSeries = (): boolean => true;
+  // INF 수록 차트만 통과 — buildWeaknessRecs 가 patternsMap 전체(AC+INF)를 순회하므로 필수.
+  //   input.isInfChart (songs.ac/legen + service-status notInINF 기반) 사용. 미전달 시 모든 차트 통과(로딩 전 fallback).
+  const isInfChartInSeries = input.isInfChart || ((): boolean => true);
   // pdLayoutMap — buildWeaknessRecs 가 layoutLabel 기록할 외부 객체 (PlayData 의 배치 토글과 같은 패턴).
   const pdLayoutMap: Record<string, string> = {};
   const ctx = libs.recommend.createContext({

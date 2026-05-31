@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.67.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.67-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.68.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.68-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,13 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.68 — 추천곡 리롤 변동성(코어 풀+계층 랜덤) + 클리어 시 자동 채움 복구 + 클리어/연습곡 INF 미수록 필터
+- **추천 산출을 코어 recommend.js(v0.0.9) 로 완전 일원화** — `recsFromCore`(결정적) 를 `buildRecsWithPool` 기반 picked/pool state 로 재배선.
+  - **리롤** = 코어 풀(클리어 30곡 / 연습곡 60곡)에서 계층 랜덤(상위 4 / 중간 3 / 하위 3) 재추출 → 누를 때마다 곡 변동. 연습곡 카드에도 리롤 버튼 추가.
+  - **클리어 시 자동 채움 복구** — picked 에서 클리어된 곡 제거 + pool 에서 refill (`refreshRecs`). 그동안 코어 결정적 결과라 안 되던 동작 복구.
+- **INF 미수록 차트 필터** — 연습곡(`isInfChartInSeries`) + 클리어 추천(`allCharts` 선필터) 모두 `service-status.json` 의 `notInINF` + supabase `songs.ac/legen` 기준으로 제외. Reflux 에 데이터만 있고 실제 INFINITAS 미노출인 차트 / INF 미수록 LEGGENDARIA 제거.
+- `shared/recommend.ts` 의 옛 로컬 추천 알고리즘 제거 (타입 + refresh 보조 함수만 유지) — 추천 알고리즘은 코어 recommend.js 한 곳에서만 관리.
 
 ### 0.0.67 — 탭 재편 (RECENT / PLAYDATA / RECOMMEND / GRID / ANALYSIS) + 연습곡 추천 카드 + 본체 추천 알고리즘 100% 통합
 - **탭 재편** — 기존 단일 DP 탭 + dp12 → 5개 탭으로 분리:
