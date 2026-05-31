@@ -1453,6 +1453,45 @@ body {
   }
 }
 
+/* ----- SP ☆12 서열표 — 게이지 토글 + 안내 ----- */
+.dp-sp-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin: -2px 0 12px 70px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.dp-sp-note strong {
+  color: var(--text-primary);
+}
+/* HARD ↔ GROOVE 단일 토글 버튼 (정렬 버튼 앞) — 클릭 시 글씨/색 전환 */
+.dp-gauge-btn {
+  border: 1px solid currentColor;
+  border-radius: 5px;
+  padding: 2px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  cursor: pointer;
+  background: transparent;
+}
+.dp-gauge-btn-hard {
+  color: #e0352b; /* HARD — 빨강 */
+}
+.dp-gauge-btn-normal {
+  color: #2f8fd6; /* GROOVE — 하늘색 */
+}
+.dp-gauge-btn:hover {
+  filter: brightness(1.15);
+}
+@media (max-width: 768px) {
+  .dp-sp-note {
+    margin-left: 0;
+  }
+}
+
 /* ----- DP ☆12 격자 정렬 토글 — 우측 정렬, 박스 X, 텍스트 only ----- */
 /* 스택드 바 + 색박스 범례 + 정렬 / 캡처 버튼을 한 줄에 (PC 기준).
    PC: [legend(위) + stackbar(아래)] left | [sort + capture] right
@@ -1619,8 +1658,14 @@ body {
 }
 .dp-group {
   display: grid;
-  /* 컬럼: [lamp 분포 스택드바 | 난이도 라벨 | 곡 목록] — 스택바를 제일 왼쪽으로 */
-  grid-template-columns: 6px 70px 1fr;
+  /* 컬럼: [lamp 분포 스택드바 | 본문] — 스택바가 본문(난이도+개인차 전체) 높이를 세로 관통 */
+  grid-template-columns: 6px 1fr;
+}
+/* 본문 — [난이도 라벨 | 곡 목록] 다중 행. 메인/개인차 행이 한 그룹 안에서 연속 */
+.dp-group-body {
+  display: grid;
+  grid-template-columns: 70px 1fr;
+  min-width: 0;
 }
 /* 난이도 셀 왼쪽 — 그룹별 lamp 분포 세로 스택드 바.
    너비 6px = 곡 옆 .lamp-box 와 동일. 높이는 grid row 에 맞춰 자동 stretch.
@@ -1640,6 +1685,8 @@ body {
   align-self: auto;
   flex-grow: 0;
   flex-shrink: 0;
+  /* sub-pixel 높이 방지 — FC/PFC gradient 캡처 시 createPattern 0-size 크래시 회피 (안전장치) */
+  min-height: 1px;
 }
 /* lamp 색상 박스 범례 — 작은 swatch + 라벨, 한 줄 가로 배치 */
 .dp-lamp-legend {
@@ -1686,7 +1733,9 @@ body {
   text-align: center;
   color: #fff;
   text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
-  min-width: 0;
+  /* min-width:1px — sub-pixel(0~1px) 세그먼트 방지. FC/PFC gradient 세그먼트가 sub-pixel 이면
+     html2canvas 가 0-size 캔버스로 createPattern 을 호출해 캡처가 크래시한다 (canvas.width 가 0 으로 잘림). */
+  min-width: 1px;
   overflow: hidden;
   white-space: nowrap;
   width: auto;
@@ -1843,6 +1892,21 @@ body {
 .dp-song.slot-DPH { color: #c89318; }              /* HYPER — 금색 */
 .dp-song.slot-DPA { color: var(--text-primary); }              /* ANOTHER — 검정 */
 .dp-song.slot-DPL { color: #d678c8; font-weight: 600; }  /* LEGGENDARIA — 마젠타 */
+/* SP 슬롯 — DP 와 동일 색 체계 */
+.dp-song.slot-SPN { color: var(--action-primary); }             /* NORMAL — 하늘 */
+.dp-song.slot-SPH { color: #c89318; }                            /* HYPER — 금색 */
+.dp-song.slot-SPA { color: var(--text-primary); }               /* ANOTHER — 검정 */
+.dp-song.slot-SPL { color: #d678c8; font-weight: 600; }          /* LEGGENDARIA — 마젠타 */
+/* 개인차/주의곡 — 별도 행의 왼쪽 라벨 ('개인차'). rank 라벨보다 작게/옅게 */
+.dp-level-caution {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+/* 개인차 곡목록 — 메인 곡목록 하단선과 겹쳐 두 줄 되는 것 방지 (border-top 제거) */
+.dp-songs-caution {
+  border-top: none;
+}
 /* 잠김 / NP 는 옅게 */
 .dp-song.lamp-NP { opacity: 0.45; }
 
@@ -2328,7 +2392,11 @@ body {
   /* ----- DP12 격자 — 모바일은 레벨이 위에 row, 곡 목록 3열 ----- */
   .dp-group {
     grid-template-columns: 1fr;
-    grid-template-rows: auto auto;
+    grid-template-rows: auto;
+  }
+  /* 모바일 — 본문 단일 컬럼 (난이도/곡목록 세로 쌓기) */
+  .dp-group-body {
+    grid-template-columns: 1fr;
   }
   /* 모바일에선 그룹별 lamp 분포 stackbar 숨김 — 6px 짜리 단독 row 어색 */
   .dp-level-stackbar {

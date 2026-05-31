@@ -22,6 +22,7 @@ import {
   getDataPath as getEreterDataPath,
 } from './ereter';
 import { getZasaData, getCacheStatus as getZasaCacheStatus } from './zasa';
+import { getSpTierData, getCacheStatus as getSpTierCacheStatus } from './spTier';
 import { getRatingData, getRatingCacheStatus } from './rating';
 import { fetchServiceStatus } from './serviceStatus';
 import { checkAndUpdateOsrLib, getOsrLibCode, checkAndUpdateOsr135Lib, getOsr135LibCode, checkAndUpdateOldOSRLib, getOldOSRLibCode, checkAndUpdateAdoptLib, getAdoptLibCode } from './osrLib';
@@ -128,6 +129,18 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
   'zasa:status': async () => getZasaCacheStatus(),
+
+  // SP ☆12 서열표 (외부 구글 시트 ☆12参考表 하드/노마게 간이표) — published HTML fetch + 캐시
+  'sptier:get': async (...args: never[]) => {
+    const force = (args[0] as boolean | undefined) ?? false;
+    try {
+      const data = await getSpTierData(force);
+      return { ok: true, data };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    }
+  },
+  'sptier:status': async () => getSpTierCacheStatus(),
 
   // 원격 service status (gist 의 service-status.json — uploadEnabled / shelfEnabled toggle).
   // main 에서 fetch (Node) — renderer 의 Chromium CORS 정책 우회. 매 호출 fresh fetch, fail-closed.

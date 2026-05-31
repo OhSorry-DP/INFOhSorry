@@ -8,6 +8,8 @@ import type {
   EreterCacheStatus,
   ZasaGetResult,
   ZasaCacheStatus,
+  SpTierGetResult,
+  SpTierCacheStatus,
   ServiceStatus,
   RatingGetResult,
   RatingCacheStatus,
@@ -57,6 +59,12 @@ const api = {
   zasa: {
     get: (force = false): Promise<ZasaGetResult> => ipcRenderer.invoke('zasa:get', force),
     status: (): Promise<ZasaCacheStatus> => ipcRenderer.invoke('zasa:status'),
+  },
+
+  // SP ☆12 서열표 (외부 구글 시트 ☆12参考表 하드/노마게 간이표)
+  spTier: {
+    get: (force = false): Promise<SpTierGetResult> => ipcRenderer.invoke('sptier:get', force),
+    status: (): Promise<SpTierCacheStatus> => ipcRenderer.invoke('sptier:status'),
   },
 
   // 원격 service status (gist 의 service-status.json — uploadEnabled / shelfEnabled toggle).

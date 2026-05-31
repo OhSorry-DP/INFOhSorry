@@ -13,7 +13,7 @@
 //             hover title 에 lamp / EX / rate / miss / notes 표시
 import { useMemo, useRef, useState } from 'react';
 import html2canvas from 'html2canvas';
-import type { ChartSlot, Lamp, RatingData, SongChart } from '../../shared/types';
+import type { ChartSlot, Lamp, RatingData, SongChart, SpTierData, SpTierGauge, SpTierRank } from '../../shared/types';
 import { lampNum, norm, slotToDiff } from '../../shared/match';
 import { lampStyle, letterColor } from './lampStyle';
 
@@ -24,6 +24,10 @@ const LAMP_BAR_ORDER: Lamp[] = ['FC', 'EX', 'HC', 'NC', 'EC', 'AC', 'F', 'NP'];
 interface Props {
   lv12Charts: SongChart[];
   lv11Charts: SongChart[];
+  // SP ☆12 차트 풀 (INFINITAS 수록곡) — SP 서열표 매칭 input
+  sp12Charts?: SongChart[];
+  // SP ☆12 서열표 (외부 시트 하드/노마게 tier) — 없으면 SP12 탭 빈 표시
+  spTierData?: SpTierData | null;
   ratingData?: RatingData | null;
   // 곡명 클릭 시 호출 — DP 탭 이동 + 검색 자동 입력용
   onPickChart?: (target: { title: string; slot: string; gameLevel?: number | null }) => void;
@@ -34,7 +38,21 @@ const SLOT_LABEL: Record<string, string> = {
   DPH: 'HYPER',
   DPA: 'ANOTHER',
   DPL: 'LEGGENDARIA',
+  SPB: 'BEGINNER',
+  SPN: 'NORMAL',
+  SPH: 'HYPER',
+  SPA: 'ANOTHER',
+  SPL: 'LEGGENDARIA',
 };
+
+// SP tier rank ↔ 정렬용 숫자 (S＋=10 ... F=1). 그룹 정렬은 DP 의 ereterLevel 숫자 키 재사용.
+const SP_RANK_DISPLAY: SpTierRank[] = ['S＋', 'S', 'A＋', 'A', 'B＋', 'B', 'C', 'D', 'E', 'F'];
+const SP_RANK_NUM: Record<string, number> = Object.fromEntries(
+  SP_RANK_DISPLAY.map((r, i) => [r, SP_RANK_DISPLAY.length - i]),
+);
+const SP_NUM_RANK: Record<number, string> = Object.fromEntries(
+  SP_RANK_DISPLAY.map((r, i) => [SP_RANK_DISPLAY.length - i, r]),
+);
 
 const LAMP_LABEL: Record<string, string> = {
   NP: 'NO PLAY',
@@ -50,12 +68,14 @@ const LAMP_LABEL: Record<string, string> = {
 
 type SortBy = 'title' | 'lamp-desc' | 'lamp-asc' | 'djlv-desc' | 'djlv-asc';
 type StarMode = 'star-0-3' | 'star-3-6' | 'star-6-10' | 'star-10-13' | 'star-14+';
-type ViewMode = 12 | 11 | StarMode;
+type ViewMode = 12 | 11 | StarMode | 'sp12';
 type StarVType = 'ec' | 'hc' | 'exh';
 
 type DisplayChart = SongChart & {
   __vType?: StarVType;
   __origSlot?: ChartSlot;
+  // SP 서열표 — 곡 제목 빨강(개인차/주의곡)
+  __caution?: boolean;
 };
 
 const STAR_RANGES: Record<StarMode, { min: number; max: number; label: string }> = {
@@ -115,9 +135,13 @@ function downgradeLampForStarMode(lamp: Lamp, vType: StarVType): { lamp: Lamp; l
   return { lamp: map[n], lampNum: n };
 }
 
-export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChart }: Props) {
+export default function DpTable({ lv12Charts, lv11Charts, sp12Charts, spTierData, ratingData, onPickChart }: Props) {
   const [activeMode, setActiveMode] = useState<ViewMode>(12);
-  const isStarMode = typeof activeMode === 'string';
+  const isSpMode = activeMode === 'sp12';
+  // ★ 모드 — sp12 는 별도 처리이므로 제외
+  const isStarMode = typeof activeMode === 'string' && !isSpMode;
+  // SP 서열표 게이지 토글 (하드 기본 → 노마게)
+  const [spGauge, setSpGauge] = useState<SpTierGauge>('hard');
   const [sortBy, setSortBy] = useState<SortBy>('title');
   const [capturing, setCapturing] = useState(false);
   // 캡처 결과 토스트 — 저장 path / 에러 / null (미표시)
@@ -130,6 +154,23 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
   const allLevelCharts = useMemo(() => [...lv12Charts, ...lv11Charts], [lv12Charts, lv11Charts]);
 
   const charts = useMemo<DisplayChart[]>(() => {
+    // SP ☆12 서열표 — sp12Charts 를 spTierData(선택 게이지) tier 에 매칭
+    if (isSpMode) {
+      if (!spTierData || !sp12Charts) return [];
+      const table = spGauge === 'hard' ? spTierData.hard : spTierData.normal;
+      const idx = new Map<string, { rank: SpTierRank; caution: boolean }>();
+      for (const e of table.entries) {
+        idx.set(norm(e.title) + '|' + e.diff, { rank: e.rank, caution: e.caution });
+      }
+      return sp12Charts.map((c) => {
+        const hit = idx.get(norm(c.title) + '|' + slotToDiff(c.slot));
+        return {
+          ...c,
+          ereterLevel: hit ? SP_RANK_NUM[hit.rank] : undefined,
+          __caution: hit?.caution ?? false,
+        };
+      });
+    }
     if (!isStarMode) return activeMode === 12 ? lv12Charts : lv11Charts;
     if (!ratingData) return [];
 
@@ -138,7 +179,7 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
       chartIdx.set(norm(c.title) + '|' + slotToDiff(c.slot), c);
     }
 
-    const range = STAR_RANGES[activeMode];
+    const range = STAR_RANGES[activeMode as StarMode];
     const variants: Array<{ vType: StarVType; key: 'estEc' | 'estHc' | 'estExh' }> = [
       { vType: 'ec', key: 'estEc' },
       { vType: 'hc', key: 'estHc' },
@@ -168,7 +209,7 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
       }
     }
     return out;
-  }, [activeMode, allLevelCharts, isStarMode, lv11Charts, lv12Charts, ratingData]);
+  }, [activeMode, allLevelCharts, isSpMode, isStarMode, lv11Charts, lv12Charts, ratingData, sp12Charts, spGauge, spTierData]);
 
   const lampBarOrder = useMemo<Lamp[]>(
     () => (isStarMode ? ['FC', 'EX', 'HC', 'EC', 'F', 'NP'] : LAMP_BAR_ORDER),
@@ -230,19 +271,26 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
         windowWidth: 1200,
       });
       const blob: Blob | null = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
-      if (!blob) return;
+      if (!blob) {
+        // 캔버스가 너무 크면 toBlob 이 null — 조용히 죽지 않도록 노출
+        setCaptureToast({ kind: 'error', error: `이미지 변환 실패 (캔버스 ${canvas.width}×${canvas.height} 과대)` });
+        return;
+      }
       const buf = await blob.arrayBuffer();
       const ts = new Date()
         .toISOString()
         .replace(/[:T.]/g, '-')
         .replace('Z', '');
-      const tag = isStarMode ? activeMode : `dp${activeMode}`;
+      const tag = isSpMode ? `sp12-${spGauge}` : isStarMode ? activeMode : `dp${activeMode}`;
       const r = await window.infohsorry.saveImage(buf, `${tag}-${ts}.png`);
       if (r.ok && r.path) {
         setCaptureToast({ kind: 'success', path: r.path });
       } else {
         setCaptureToast({ kind: 'error', error: r.error || '알 수 없음' });
       }
+    } catch (e) {
+      // html2canvas 등 캡처 도중 예외 — 조용히 죽지 않도록 토스트로 노출
+      setCaptureToast({ kind: 'error', error: (e as Error).message || '캡처 예외' });
     } finally {
       document.body.removeChild(wrapper);
       setCapturing(false);
@@ -254,7 +302,7 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
   // 그룹 내 정렬: 곡명 순 또는 램프 강한 순
   const groups = useMemo(() => {
     const UNCLASSIFIED = -1;
-    const m = new Map<number, SongChart[]>();
+    const m = new Map<number, DisplayChart[]>();
     for (const c of charts) {
       const lv = c.ereterLevel ?? UNCLASSIFIED;
       if (!m.has(lv)) m.set(lv, []);
@@ -323,6 +371,7 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
   const tabs: Array<{ mode: ViewMode; label: string }> = [
     { mode: 12, label: 'DP12' },
     { mode: 11, label: 'DP11' },
+    { mode: 'sp12', label: 'SP12' },
     { mode: 'star-0-3', label: '★0~3' },
     { mode: 'star-3-6', label: '★3~6' },
     { mode: 'star-6-10', label: '★6~10' },
@@ -348,11 +397,20 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
       </div>
       {isStarMode && (
         <div className="dp-star-note">
-          <strong>{STAR_RANGES[activeMode].label}</strong> 구간 · ohSorryRating 기준 EC/HC/EXH 별점과 현재 플레이 데이터를 매칭합니다.
+          <strong>{STAR_RANGES[activeMode as StarMode].label}</strong> 구간 · ohSorryRating 기준 EC/HC/EXH 별점과 현재 플레이 데이터를 매칭합니다.
+        </div>
+      )}
+      {isSpMode && (
+        <div className="dp-sp-note">
+          <span>
+            외부 ☆12参考表 (SP) <strong>{spGauge === 'hard' ? 'HARD' : 'GROOVE'}</strong> 게이지 클리어 난이도 tier · 개인차/주의곡은 각 tier 하단에 별도 표기
+          </span>
         </div>
       )}
       {groups.length === 0 ? (
-        <div className="dp-empty">서열표 {isStarMode ? STAR_RANGES[activeMode].label : activeMode} — 매칭된 곡이 없습니다.</div>
+        <div className="dp-empty">
+          서열표 {isStarMode ? STAR_RANGES[activeMode as StarMode].label : isSpMode ? 'SP12' : activeMode} — {isSpMode && !spTierData ? 'SP 서열표 데이터를 불러오는 중이거나 가져오지 못했습니다.' : '매칭된 곡이 없습니다.'}
+        </div>
       ) : (
       <>
       {/* 스택드 바 — 색상 라벨 위 (서열표 최상단) */}
@@ -387,6 +445,19 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
           </div>
         </div>
         <div className="dp-sort">
+          {isSpMode && (
+            <>
+              <button
+                type="button"
+                className={`dp-gauge-btn dp-gauge-btn-${spGauge}`}
+                onClick={() => setSpGauge((g) => (g === 'hard' ? 'normal' : 'hard'))}
+                title="클릭하면 HARD ↔ GROOVE 게이지 전환"
+              >
+                {spGauge === 'hard' ? 'HARD' : 'GROOVE'}
+              </button>
+              <span className="dp-sort-sep">|</span>
+            </>
+          )}
           <button
             className={`dp-sort-btn${sortBy === 'title' ? ' active' : ''}`}
             onClick={() => setSortBy('title')}
@@ -430,6 +501,15 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
       <div className="dp-grid" ref={gridRef}>
           {groups.map(([level, list]) => {
             const stack = groupLampStacks.get(level) ?? [];
+            const levelLabel =
+              level === -1
+                ? '미분류'
+                : isSpMode
+                ? SP_NUM_RANK[level] ?? '?'
+                : `${isStarMode ? '★' : ''}${level.toFixed(1)}`;
+            // SP 모드 — 개인차/주의곡은 별도 행으로 분리 (왼쪽 라벨 '개인차')
+            const cautionList = isSpMode ? list.filter((c) => c.__caution) : [];
+            const mainList = isSpMode ? list.filter((c) => !c.__caution) : list;
             return (
             <div key={level} className="dp-group">
               <div className="dp-level-stackbar" title={`그룹 lamp 분포 (${list.length}곡)`}>
@@ -442,14 +522,30 @@ export default function DpTable({ lv12Charts, lv11Charts, ratingData, onPickChar
                   />
                 ))}
               </div>
-              <div className="dp-level">
-                {level === -1 ? '미분류' : `${isStarMode ? '★' : ''}${level.toFixed(1)}`}
-                <span className="dp-level-count">{list.length}곡</span>
-              </div>
-              <div className="dp-songs">
-                {list.map((c, i) => (
-                  <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} onPickChart={onPickChart} />
-                ))}
+              {/* 본문 — [난이도 라벨 | 곡목록] 다중 행. 스택바가 전체(개인차 포함) 세로 관통 */}
+              <div className="dp-group-body">
+                <div className="dp-level">
+                  {levelLabel}
+                  <span className="dp-level-count">{mainList.length}곡</span>
+                </div>
+                <div className="dp-songs">
+                  {mainList.map((c, i) => (
+                    <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} onPickChart={onPickChart} />
+                  ))}
+                </div>
+                {cautionList.length > 0 && (
+                  <>
+                    <div className="dp-level dp-level-caution">
+                      개인차
+                      <span className="dp-level-count">{cautionList.length}곡</span>
+                    </div>
+                    <div className="dp-songs dp-songs-caution">
+                      {cautionList.map((c, i) => (
+                        <SongCell key={`${c.title}|${c.slot}|${i}`} c={c} onPickChart={onPickChart} />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             </div>
           );
@@ -499,7 +595,8 @@ function SongCell({
   c: DisplayChart;
   onPickChart?: (target: { title: string; slot: string; gameLevel?: number | null }) => void;
 }) {
-  const isLegg = c.slot === 'DPL';
+  // LEGGENDARIA(DP/SP) 앞에 † 표시
+  const isLegg = c.slot === 'DPL' || c.slot === 'SPL';
   const played = c.lamp !== 'NP' && c.unlocked;
   const rate = played && c.noteCount > 0 ? (c.exScore / (c.noteCount * 2)) * 100 : null;
   const lampLabel = LAMP_LABEL[c.lamp] ?? c.lamp;
@@ -524,7 +621,7 @@ function SongCell({
 
   return (
     <div
-      className={`dp-song slot-${c.slot} lamp-${c.lamp}${c.__vType ? ` star-vtype-${c.__vType}` : ''}${handlePick ? ' dp-song-clickable' : ''}`}
+      className={`dp-song slot-${c.slot} lamp-${c.lamp}${c.__vType ? ` star-vtype-${c.__vType}` : ''}${c.__caution ? ' dp-song-caution' : ''}${handlePick ? ' dp-song-clickable' : ''}`}
       title={tooltip}
       onClick={handlePick}
       role={handlePick ? 'button' : undefined}

@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.68.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.68-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.69.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.69-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,14 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.69 — GRID 탭에 SP ☆12 서열표 추가 (외부 ☆12参考表 하드/노마게 tier)
+- **GRID 탭에 `SP12` 탭 신설** — 외부 구글 시트 "☆12参考表" 의 간이표(簡易) 를 런타임에 published HTML 로 fetch → 파싱 → `userData/sp-tier-12.json` 캐시(TTL 24h, fetch 실패 시 stale 캐시 fallback).
+  - 표 안 **하드 / 노마게 토글** — 하드(ハード) 기본, 누르면 노마게(ノマゲ) 클리어 난이도 tier 로 전환.
+  - tier 그룹 = `S＋ ~ F` 문자 등급(어려운 → 쉬운). DP 서열표의 그룹/스택드 바/정렬/캡처 UI 재사용.
+  - 난이도는 슬롯 색으로 구분(NORMAL 하늘 / HYPER 금색 / ANOTHER 기본 / LEGGENDARIA 마젠타), LEGGENDARIA 는 곡명 앞 `†` 표시. 시트에서 곡명이 빨강인 곡은 **개인차/주의곡** 으로 각 tier 그룹 맨 아래에 모아 `개인차` 라벨로 구분 표시.
+  - 매칭 범위: INFINITAS 수록 SP ☆12 차트만 (아케이드 전용곡 제외) — 기존 DP 서열표와 동일하게 플레이 데이터 기반.
+- `main/spTier.ts`(fetch+파싱+캐시) 신규 + `sptier:get/status` IPC + preload `spTier` 노출.
 
 ### 0.0.68 — 추천곡 리롤 변동성(코어 풀+계층 랜덤) + 클리어 시 자동 채움 복구 + 클리어/연습곡 INF 미수록 필터
 - **추천 산출을 코어 recommend.js(v0.0.9) 로 완전 일원화** — `recsFromCore`(결정적) 를 `buildRecsWithPool` 기반 picked/pool state 로 재배선.

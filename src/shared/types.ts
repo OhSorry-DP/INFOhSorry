@@ -177,6 +177,47 @@ export interface ZasaCacheStatus {
   exists: boolean;
 }
 
+// SP ☆12 서열표 (외부 구글 시트 "☆12参考表" 간이표) — 하드/노마게 클리어 난이도 tier.
+//   런타임에 published HTML fetch → 파싱 → userData 캐시 (실패 시 stale fallback).
+//   tier rank: F(쉬움) ~ S＋(어려움). 표시 시엔 S＋→F 내림차순.
+export type SpTierGauge = 'hard' | 'normal';
+export type SpTierRank = 'S＋' | 'S' | 'A＋' | 'A' | 'B＋' | 'B' | 'C' | 'D' | 'E' | 'F';
+
+export interface SpTierEntry {
+  title: string;
+  diff: 'NORMAL' | 'HYPER' | 'ANOTHER' | 'LEGGENDARIA';
+  rank: SpTierRank;
+  // 곡 제목이 빨강(#ff0000) — 개인차 / 주의곡
+  caution: boolean;
+}
+
+export interface SpTierTable {
+  gauge: SpTierGauge;
+  // 표시 순서 (S＋ → F, 어려운 → 쉬운)
+  ranks: SpTierRank[];
+  entries: SpTierEntry[];
+}
+
+export interface SpTierData {
+  extractedAt: string;
+  source: string;
+  level: number; // 현재 12 고정
+  hard: SpTierTable;
+  normal: SpTierTable;
+}
+
+export interface SpTierGetResult {
+  ok: boolean;
+  error?: string;
+  data?: SpTierData;
+}
+
+export interface SpTierCacheStatus {
+  mtime: number | null;
+  isStale: boolean;
+  exists: boolean;
+}
+
 // 추천 / DP 서열표에서 제외할 차트 — INFINITAS 미수록 (아케이드 전용 채보 등).
 // diff 는 slot 표기 — 'DPN' | 'DPH' | 'DPA' | 'DPL' (INFOhSorry 는 DP 전용).
 export interface NotInInfChart {

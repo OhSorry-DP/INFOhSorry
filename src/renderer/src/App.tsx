@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingData, RefluxState, SongRow, UpdateInfo, ZasaData } from '../../shared/types';
+import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingData, RefluxState, SongRow, SpTierData, UpdateInfo, ZasaData } from '../../shared/types';
 import './api';
-import { DP_SLOTS, extractCharts } from '../../shared/types';
+import { DP_SLOTS, SP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
 import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
 import { inferUserTiered as osrInferUserTieredBundle, version as osrBundleVersion } from '../../shared/calc-osrating';
@@ -170,6 +170,9 @@ export default function App() {
   // zasa 보충 데이터 (DP12 격자 미분류 fallback)
   const [zasaData, setZasaData] = useState<ZasaData | null>(null);
 
+  // SP ☆12 서열표 (외부 구글 시트 ☆12参考表 하드/노마게 간이표)
+  const [spTierData, setSpTierData] = useState<SpTierData | null>(null);
+
   // ohSorryRating — ereter 미등록 lv11/lv12 차트 추정값 (추천 풀 fallback)
   // 우선순위: ereter > rating. ereter 매칭 곡은 절대 rating 으로 덮지 않음.
   const [ratingData, setRatingData] = useState<RatingData | null>(null);
@@ -263,6 +266,18 @@ export default function App() {
       try {
         const r = await window.infohsorry.rating.get(false);
         if (r.ok && r.data) setRatingData(r.data);
+      } catch {
+        /* ignore */
+      }
+    })();
+  }, []);
+
+  // 마운트 시 SP ☆12 서열표 자동 fetch (실패해도 무시 — SP12 탭만 영향)
+  useEffect(() => {
+    void (async () => {
+      try {
+        const r = await window.infohsorry.spTier.get(false);
+        if (r.ok && r.data) setSpTierData(r.data);
       } catch {
         /* ignore */
       }
@@ -468,6 +483,16 @@ export default function App() {
       return c;
     });
   }, [rows, ratingData, zasaData, notInInfSet]);
+
+  // SP ☆12 차트 추출 — SP 서열표(spTierData) 매칭 input.
+  //   INFINITAS 미수록 곡은 제외. tier 분류는 DpTable 안에서 spTierData 로 수행.
+  const sp12Charts = useMemo(
+    () =>
+      extractCharts(rows, { slots: SP_SLOTS, level: 12 }).filter(
+        (c) => !notInInfSet.has(norm(c.title) + '|' + c.slot),
+      ),
+    [rows, notInInfSet],
+  );
 
   // 서열표 미분류 곡 JSON payload — ereter / ratingMap / zasaData 셋 다 매칭 안 된 곡 (lv11+lv12).
   const unclassifiedJson = useMemo(() => {
@@ -1836,6 +1861,8 @@ export default function App() {
                 <DpTable
                   lv12Charts={dp12Charts}
                   lv11Charts={dp11Charts}
+                  sp12Charts={sp12Charts}
+                  spTierData={spTierData}
                   ratingData={ratingData}
                   onPickChart={(target) => {
                     setTab('dp');

@@ -154,6 +154,11 @@ if (!IS_HOST) {
         callIpc('zasa:get', force) as ReturnType<Window['infohsorry']['zasa']['get']>,
       status: () => callIpc('zasa:status') as ReturnType<Window['infohsorry']['zasa']['status']>,
     },
+    spTier: {
+      get: (force?: boolean) =>
+        callIpc('sptier:get', force) as ReturnType<Window['infohsorry']['spTier']['get']>,
+      status: () => callIpc('sptier:status') as ReturnType<Window['infohsorry']['spTier']['status']>,
+    },
     serviceStatus: {
       get: () =>
         callIpc('serviceStatus:get') as ReturnType<Window['infohsorry']['serviceStatus']['get']>,
