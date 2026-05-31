@@ -140,6 +140,11 @@ export default function App() {
   // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
   // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
   const initialUploadDoneRef = useRef(false);
+  // 현재 rows(TSV 점수) 가 어느 IIDX ID 의 덤프에서 온 것인지 — TSV read 성공 시 그 시점 live ID 로 태깅.
+  //   업로드 직전 현재 ID 와 비교해, ID 가 바뀐 뒤 옛 rows 가 새 ID 로 잘못 올라가는 것을 차단(이중 안전장치).
+  const rowsSourceIidxIdRef = useRef<string | null>(null);
+  // 매 렌더마다 갱신되는 현재 live IIDX ID — profile 선언(아래쪽) 보다 위에 정의된 loadTsv / 초기 read 에서 참조용.
+  const liveIidxIdRef = useRef<string | null>(null);
   const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
   // 개발 모드 — 호스트 (Electron) 에서만 콘솔에 startdev() 노출. PC2 (브라우저 원격) 에선 비활성.
   // 활성 시 Reflux 토글 / 프로필 스캐너 / StarPanel 등 디버그 요소 표시.
@@ -211,6 +216,7 @@ export default function App() {
           const r = await window.infohsorry.readTsv(path);
           if (r.ok && r.rows && r.rows.length > 0) {
             setRows(r.rows);
+            rowsSourceIidxIdRef.current = liveIidxIdRef.current;   // 이 TSV 덤프의 출처 ID 태깅
             if (r.mtime) {
               lastLoadedMtime.current = r.mtime;
               setTsvMtime(r.mtime);
@@ -357,6 +363,7 @@ export default function App() {
         setError(r.error || '읽기 실패');
       } else {
         setRows(r.rows || []);
+        rowsSourceIidxIdRef.current = liveIidxIdRef.current;   // 이 TSV 덤프의 출처 ID 태깅
         if (r.mtime) setTsvMtime(r.mtime);
       }
     } catch (e) {
@@ -1028,10 +1035,14 @@ export default function App() {
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
+  // 현재 live IIDX ID 를 ref 로 추적 — loadTsv / 초기 read 에서 "이 TSV 가 어느 ID 것인지" 태깅에 사용.
+  liveIidxIdRef.current = profile.iidxId;
 
-  // IIDX ID 가 truthy → null 로 바뀌는 transition 감지 (= 게임 종료 / 다른 ID 로 로그인 직전).
-  // 옛 ID 의 tsv 가 메모리에 남으면 다음 1분 interval upload 가 옛 데이터 + 새 IIDX ID 조합으로
-  // 잘못 업로드 가능 → transit 즉시:
+  // IIDX ID transition 감지 — 옛 ID 의 tsv 가 메모리에 남아 새 ID 로 잘못 업로드되는 사고 방지.
+  //   (1) A → B 직접 전환: INF오소리 켜둔 채 게임만 다른 계정으로 다시 켠 경우 → 즉시 정리.
+  //   (2) truthy → null: 게임 종료 / INFINITAS 죽음 → null 5초 지속 시 정리.
+  // 옛 ID 의 tsv 가 메모리에 남으면 다음 interval upload 가 옛 데이터 + 새 IIDX ID 조합으로
+  // 잘못 업로드 가능 → transit 시:
   //   1) tracker.tsv 내용 비우기 (truncate 0 bytes — 파일은 유지, Reflux watch 끊김 없음)
   //   2) rows / tsvMtime / lastLoadedMtime / initialUploadDoneRef 모두 reset (메모리 stale 제거)
   //
@@ -1041,33 +1052,27 @@ export default function App() {
   //     stage='starting' / 'hooking' 거치는 동안 잠깐 null 이 되는 false-positive 회피
   // PC2 (브라우저 원격) 에선 main 측 clearTsv IPC 가 없을 수 있어 skip.
   useEffect(() => {
+    const VALID = /^[A-Z]\d{12}$/;
     const prev = prevIidxIdRef.current;
     const now = profile.iidxId;
     prevIidxIdRef.current = now;
     // 유효 마킹 — Reflux 가 INFINITAS 에 후킹된 상태 + iidx_id 형식 정확히 통과한 경우만.
     const refluxHooked = refluxState.stage === 'hooked' || refluxState.stage === 'ready';
-    if (refluxHooked && now && /^[A-Z]\d{12}$/.test(now)) {
+    if (refluxHooked && now && VALID.test(now)) {
       everHadValidIidxIdRef.current = true;
     }
-    // ID 가 다시 잡힘 → pending debounce 취소
-    if (now) {
+
+    // 공통 정리 — 옛 ID 의 stale rows/tsv 제거 + 출처 ID 태그 reset + 재업로드 활성화.
+    const doReset = (reasonMsg: string): void => {
       if (stuckNullTimerRef.current) {
         clearTimeout(stuckNullTimerRef.current);
         stuckNullTimerRef.current = null;
       }
-      return;
-    }
-    if (!prev) return;                          // 직전 tick 도 null — 그냥 idle
-    if (!everHadValidIidxIdRef.current) return; // 한 번도 유효 ID 잡힌 적 없음 — false-positive
-    // 5초 동안 null 지속되면 진짜 transit 으로 판정 (게임 종료 / INFINITAS 죽음).
-    // 이미 timer 가 돌고 있으면 그대로 둠 (cleanup 함수가 다음 useEffect 호출 시 해제).
-    if (stuckNullTimerRef.current) return;
-    stuckNullTimerRef.current = setTimeout(() => {
-      stuckNullTimerRef.current = null;
-      console.warn(`[guard] IIDX ID 5초 이상 끊김 (이전: ${prev}) — tsv 내용 비우기 + 로딩 데이터 reset`);
+      console.warn(`[guard] ${reasonMsg} — tsv 내용 비우기 + 로딩 데이터 reset`);
       setRows([]);
       setTsvMtime(0);
       lastLoadedMtime.current = 0;
+      rowsSourceIidxIdRef.current = null;
       initialUploadDoneRef.current = false;
       if (!IS_BROWSER_REMOTE && tsvPath) {
         void (async () => {
@@ -1083,6 +1088,32 @@ export default function App() {
           }
         })();
       }
+    };
+
+    // (1) A → B 직접 전환 — INF오소리는 켜둔 채 게임만 끄고 다른 계정으로 다시 켠 경우.
+    //     prev/now 둘 다 유효 13자 ID 인데 서로 다르면 명백한 전환 → null 5초 debounce 없이 즉시 정리.
+    //     (이게 빠지면 옛 rows + 새 ID 조합으로 잘못 업로드됨)
+    if (refluxHooked && now && prev && VALID.test(now) && VALID.test(prev) && now !== prev) {
+      doReset(`IIDX ID 전환 감지 (${prev} → ${now})`);
+      return;
+    }
+
+    // ID 가 다시 잡힘 → pending null debounce 취소
+    if (now) {
+      if (stuckNullTimerRef.current) {
+        clearTimeout(stuckNullTimerRef.current);
+        stuckNullTimerRef.current = null;
+      }
+      return;
+    }
+    // (2) truthy → null transition — 게임 종료 / INFINITAS 죽음.
+    if (!prev) return;                          // 직전 tick 도 null — 그냥 idle
+    if (!everHadValidIidxIdRef.current) return; // 한 번도 유효 ID 잡힌 적 없음 — false-positive
+    // null 이 5초 *지속* 되어야 진짜 transit 으로 판정 (재시작 중 잠깐 null 되는 false-positive 회피).
+    // 이미 timer 가 돌고 있으면 그대로 둠.
+    if (stuckNullTimerRef.current) return;
+    stuckNullTimerRef.current = setTimeout(() => {
+      doReset(`IIDX ID 5초 이상 끊김 (이전: ${prev})`);
     }, 5000);
   }, [profile.iidxId, refluxState.stage, tsvPath]);
 
@@ -1123,6 +1154,13 @@ export default function App() {
       }
       if (!/^[A-Z]\d{12}$/.test(p.iidxId)) {
         console.log(`${tag} skip: IIDX ID 형식 불일치 —`, p.iidxId);
+        return;
+      }
+      // 이중 안전장치 — 현재 rows 가 다른 ID 의 덤프에서 온 것이면 업로드 건너뜀(새 TSV 덤프 대기).
+      //   ID 전환 직후 가드 cleanup 과 비동기 upload 가 경쟁하는 상황까지 방어.
+      const src = rowsSourceIidxIdRef.current;
+      if (src && src !== p.iidxId) {
+        console.warn(`${tag} skip: rows 출처 ID(${src}) ≠ 현재 ID(${p.iidxId}) — 새 TSV 덤프 대기`);
         return;
       }
       if (!s) {

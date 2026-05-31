@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.70.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.70-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.71.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.71-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,10 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.71 — 계정 전환 시 옛 점수 잘못 업로드 버그 수정
+- **A→B 계정 전환 감지 추가** — INF오소리를 켜둔 채 게임만 다른 IIDX 계정으로 다시 켰을 때, 기존엔 `iidxId` 가 5초 이상 null 로 지속될 때만 정리해서 A→B 직접 전환은 누락 → 옛 ID 의 TSV 점수가 새 ID 로 잘못 업로드되던 문제. 이제 prev/now 가 둘 다 유효 13자 ID 인데 서로 다르면 **즉시** rows/tsv 비우기 + 재업로드 활성화.
+- **rows 출처 ID 태깅 + 업로드 게이트 (이중 안전장치)** — TSV read 시점의 live ID 를 기록(`rowsSourceIidxIdRef`)하고, 업로드 직전 *출처 ID ≠ 현재 ID* 면 업로드를 건너뜀(새 Reflux 덤프 대기). 비동기 업로드 도중 ID 가 바뀌는 경쟁 상황까지 차단.
 
 ### 0.0.70 — RECENT 탭 렉 개선 + 추천 탭 UI 정리
 - **RECENT "오늘(라이브)" 박스 렉 해소** — 기존엔 supabase latest(DB) 도착 전에 플레이한 모든 차트를 먼저 렌더했다가, DB 도착 후 변동 곡만 필터링해 재렌더 → 큰 목록을 그렸다 지우며 렉.
