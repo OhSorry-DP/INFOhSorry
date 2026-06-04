@@ -1,11 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingData, RefluxState, SongRow, SpTierData, UpdateInfo, ZasaData } from '../../shared/types';
+import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingData, RefluxState, SongRow, SpTierData, StarResult, UpdateInfo, ZasaData } from '../../shared/types';
 import './api';
 import { DP_SLOTS, SP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
-import { estimateStar, type FitDatum, type PoolChart } from '../../shared/star-estimator';
-import { inferUserTiered as osrInferUserTieredBundle, version as osrBundleVersion } from '../../shared/calc-osrating';
-import { adoptStar as adoptStarBundle, version as adoptBundleVersion, type AdoptInput, type AdoptOutput } from '../../shared/adopt';
 import {
   compareRateDesc,
   shouldDropFromRecs,
@@ -24,7 +21,7 @@ import DpTable from './DpTable';
 import Analysis from './Analysis';
 import Recent from './Recent';
 import PlayData from './PlayData';
-import { loadRecLibs, createRecCtx, type RecCoreLibs } from './recommendCore';
+import { loadRecLibs, createRecCtx, loadGistModule, GIST_RAW, type RecCoreLibs } from './recommendCore';
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
@@ -696,106 +693,8 @@ export default function App() {
     return { charts, unclassifiedCharts, matched, unmatched, unmatchedSamples, unmatchedAll, ratingUnmatchedJson };
   }, [rows, ereterData, ratingData, zasaData, notInInfSet]);
 
-  // 별값 추정 input — dp12Match 에서 derive
-  // v3.3.3: 4종 fitData scope 동시 수집 (ohSorry 와 동일).
-  // 새 구조 (2026-05-14): chart.level/ec/hc/exh 는 ratingMap estimates,
-  //   ereter 실측은 chart.ereterLevel/Ec/Hc/Exh 별도 필드. fitData 빌더는 ereter 우선 + estimates fallback.
-  //
-  //   - fitDataEreterOnly: ereter 매칭 곡만, ereter 실측 EC/HC/EXH
-  //   - fitDataLv12Only:   ereter (lv12 자동) + ratingMap gameLevel===12, 우선 ereter 실측
-  //   - fitDataAll:        전체, ereter 우선 + estimates fallback
-  const dp12StarInputs = useMemo(() => {
-    if (!dp12Match) return null;
-    const fitDataEreterOnly: FitDatum[] = [];
-    const fitDataLv12Only: FitDatum[] = [];
-    const fitDataAll: FitDatum[] = [];
-    const poolCharts: PoolChart[] = [];
-    for (const c of dp12Match.charts) {
-      // poolCharts (features pool: acfcPool / v32Cleared) 는 ereter-matched 만 (ohSorry 와 동일).
-      const isEreter = !c.isRatingFallback;
-      if (isEreter) {
-        poolCharts.push({
-          lampNum: c.lampNum,
-          level: c.ereterLevel ?? c.level,
-          djLevel: c.djLevel,
-          ec: c.ereterEc,
-          hc: c.ereterHc,
-          exh: c.ereterExh,
-        });
-      }
-      // 별값 추정 input 은 zasa★ 11.6~12.7 만 (chart.level = zasaLevel).
-      if (c.lampNum > 0 && c.level >= 11.6 && c.level <= 12.7) {
-        // 값 선택: ereter 실측 우선, 없으면 ratingMap estimates
-        const ec = isEreter && typeof c.ereterEc === 'number' ? c.ereterEc : c.ec;
-        const hc = isEreter && typeof c.ereterHc === 'number' ? c.ereterHc : c.hc;
-        const exh = isEreter && typeof c.ereterExh === 'number' ? c.ereterExh : c.exh;
-        const items: FitDatum[] = [];
-        if (typeof ec === 'number') items.push({ d: ec, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
-        if (typeof hc === 'number') items.push({ d: hc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
-        if (typeof exh === 'number') items.push({ d: exh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
-        const isLv12 = isEreter || c.gameLevel === 12;
-        fitDataAll.push(...items);
-        if (isLv12) fitDataLv12Only.push(...items);
-        if (isEreter) {
-          // fitDataEreterOnly 는 ereter 실측만 (estimates fallback X)
-          const ereterItems: FitDatum[] = [];
-          if (typeof c.ereterEc === 'number') ereterItems.push({ d: c.ereterEc, p: c.lampNum >= 3 ? 1 : 0, stage: 'ec' });
-          if (typeof c.ereterHc === 'number') ereterItems.push({ d: c.ereterHc, p: c.lampNum >= 5 ? 1 : 0, stage: 'hc' });
-          if (typeof c.ereterExh === 'number') ereterItems.push({ d: c.ereterExh, p: c.lampNum >= 6 ? 1 : 0, stage: 'exh' });
-          fitDataEreterOnly.push(...ereterItems);
-        }
-      }
-    }
-    // useOnlyLv12 분기 — LEVEL 12 (이레터 + lv12 rating) 플레이 ≥ 30
-    const nLv12Played = dp12Match.charts.filter(
-      (c) => (!c.isRatingFallback || c.gameLevel === 12) && c.lampNum > 0,
-    ).length;
-    const useOnlyLv12 = nLv12Played >= 30;
-    return {
-      fitDataEreterOnly,
-      fitDataLv12Only,
-      fitDataAll,
-      poolCharts,
-      useOnlyLv12,
-      nLv12Played,
-    };
-  }, [dp12Match]);
-
-  // v3.3.3: 4번 호출 (primary + 3 secondary) → max 채택, 2nd 도 별도 보관.
-  // primary 는 useOnlyLv12 분기 결과지만 어차피 max 로 다시 정해지므로 사실상 식별용 라벨.
-  const dp12StarAll = useMemo(() => {
-    if (!dp12StarInputs) return null;
-    const primaryFit = dp12StarInputs.useOnlyLv12
-      ? dp12StarInputs.fitDataLv12Only
-      : dp12StarInputs.fitDataAll;
-    return [
-      { name: 'primary' as const, res: estimateStar(primaryFit, dp12StarInputs.poolCharts) },
-      {
-        name: 'ereter-only' as const,
-        res: estimateStar(dp12StarInputs.fitDataEreterOnly, dp12StarInputs.poolCharts),
-      },
-      {
-        name: 'lv12-only' as const,
-        res: estimateStar(dp12StarInputs.fitDataLv12Only, dp12StarInputs.poolCharts),
-      },
-      {
-        name: 'all-11.6+' as const,
-        res: estimateStar(dp12StarInputs.fitDataAll, dp12StarInputs.poolCharts),
-      },
-    ];
-  }, [dp12StarInputs]);
-
-  // max-of-4 채택 — 저렙 fallback (★0.01) 자동 보완. dp12StarOldResult 는 v3.3.3 의 max 결과.
-  const dp12StarOldResult = useMemo(() => {
-    if (!dp12StarAll) return null;
-    const valid = dp12StarAll.filter((x) => x.res != null);
-    if (valid.length === 0) return null;
-    valid.sort((a, b) => (b.res!.star ?? 0) - (a.res!.star ?? 0));
-    return valid[0].res;
-  }, [dp12StarAll]);
-
-  // ohSorry v3.3.4: osr (v0.0.2) inferUserTiered 추가 → ensemble 평균
-  //   charts 변환 — SongRow / DP_SLOTS → { title, diff, lampNum } 단순 형식
+  // 별값 lib 입력 — SongRow / DP_SLOTS → { title, diff, lampNum } 단순 형식.
+  //   onlyOSRtoEreter.inferEreter 의 charts 인자로 그대로 사용 (lampNum 0/2 필터는 lib 내부 처리).
   const osrChartsInput = useMemo(() => {
     if (!rows || rows.length === 0) return [];
     const out: { title: string; diff: string; lampNum: number }[] = [];
@@ -811,229 +710,58 @@ export default function App() {
     return out;
   }, [rows]);
 
-  // gist 자동 갱신된 lib (cache) 가 더 최신이면 그것 우선 사용. 없거나 옛 버전이면 bundle 사용.
-  // startup 시 main 에 IPC 요청 → eval → osrLibOverride 에 저장. 이후 inferUserTiered 호출에 사용.
-  const [osrLibOverride, setOsrLibOverride] = useState<{ inferUserTiered: typeof osrInferUserTieredBundle; version: string } | null>(null);
+  // ── 별값(★) — v3.4.0 onlyOSRtoEreter.inferEreter (본체 calcOhsorryCore 와 동일) ──
+  //   onlyOSRtoEreter 는 window.onlyOSR + window.OSR135 + window.OhsorryNorm 셋을 선행 요구
+  //   (없으면 require('./xxx') 폴백 → electron renderer 에서 "require is not defined" 로 죽음).
+  //   recommendCore 의 검증된 loadGistModule(= new Function eval → window 등록) 로 의존 3개를
+  //   먼저 로드한 뒤 onlyOSRtoEreter 를 로드한다.
+  type InferEreterFn = (
+    charts: { title: string; diff: string; lampNum: number }[],
+    ratingData: RatingData,
+    ereterData: { charts: unknown[]; players?: Record<string, number> },
+  ) => { ereterStar?: number; ohsorryStar?: number; tier?: string; nFit12?: number };
+  const [onlyOSR2eLib, setOnlyOSR2eLib] = useState<{ inferEreter: InferEreterFn; version: string } | null>(null);
   useEffect(() => {
-    if (typeof window === 'undefined' || !window.infohsorry?.osrLib) return;
-    window.infohsorry.osrLib.get().then((cached) => {
-      if (!cached || !cached.code || !cached.version) return;
-      // version 비교: cache > bundle 일 때만 override
-      const a = cached.version.split('.').map((n) => parseInt(n, 10) || 0);
-      const b = osrBundleVersion.split('.').map((n) => parseInt(n, 10) || 0);
-      let newer = false;
-      for (let i = 0; i < Math.max(a.length, b.length); i++) {
-        if ((a[i] || 0) > (b[i] || 0)) { newer = true; break; }
-        if ((a[i] || 0) < (b[i] || 0)) break;
-      }
-      if (!newer) {
-        console.log(`[osr] bundle (v${osrBundleVersion}) 사용 (cache v${cached.version} 동일 또는 옛 버전)`);
-        return;
-      }
+    if (typeof window === 'undefined') return;
+    (async () => {
       try {
-        // UMD wrapper 의 IIFE 실행 — window.ohSorryRating 에 등록됨
-        new Function(cached.code)();
-        const w = window as unknown as { ohSorryRating?: { inferUserTiered?: typeof osrInferUserTieredBundle } };
-        if (typeof w.ohSorryRating?.inferUserTiered === 'function') {
-          setOsrLibOverride({ inferUserTiered: w.ohSorryRating.inferUserTiered, version: cached.version });
-          console.log(`[osr] gist cache v${cached.version} 사용 (bundle v${osrBundleVersion})`);
+        // 선행 의존 (순서 무관, 모두 window 전역 등록). normTitle→OhsorryNorm, OSR13.5+→OSR135.
+        await loadGistModule(`${GIST_RAW}/normTitle.js`, 'OhsorryNorm');
+        await loadGistModule(`${GIST_RAW}/OSR13.5%2B.js`, 'OSR135');
+        await loadGistModule(`${GIST_RAW}/onlyOSR.js`, 'onlyOSR');
+        // onlyOSRtoEreter — 위 3개가 window 에 있으니 require 폴백 안 탐.
+        const lib = (await loadGistModule(`${GIST_RAW}/onlyOSRtoEreter.js`, 'onlyOSRtoEreter')) as
+          { inferEreter?: InferEreterFn; version?: string } | undefined;
+        if (typeof lib?.inferEreter === 'function') {
+          setOnlyOSR2eLib({ inferEreter: lib.inferEreter, version: lib.version || '?' });
+          const w = window as unknown as { onlyOSR?: { version?: string } };
+          console.log(`[★] onlyOSR v${w.onlyOSR?.version ?? '?'} + onlyOSRtoEreter v${lib.version ?? '?'} 로드`);
+        } else {
+          console.warn('[★] onlyOSRtoEreter.inferEreter 미등록 — 별값 N/A');
         }
       } catch (e) {
-        console.warn('[osr] cache eval 실패:', (e as Error).message);
+        console.warn('[★] 별값 lib 로드 실패:', (e as Error).message);
       }
-    });
+    })();
   }, []);
 
-  const osrTieredResult = useMemo<{ star: number; group?: string; nativeStar?: number; bandCorrection?: number; nEnriched?: number; nLv12Cleared?: number; nZ12_0upCleared?: number } | null>(() => {
-    if (!ratingData || osrChartsInput.length === 0) return null;
-    const inferFn = osrLibOverride?.inferUserTiered || osrInferUserTieredBundle;
+  // 표시 별값(ereterStar) + 추천 native base(ohsorryStar) 를 inferEreter 한 번에 산출.
+  const dp12StarResult = useMemo<StarResult | null>(() => {
+    if (!onlyOSR2eLib || !ratingData || !ereterData || osrChartsInput.length === 0) return null;
     try {
-      const r = inferFn(osrChartsInput, ratingData) as {
-        ereterCompatStar?: number;
-        nativeStar?: number;
-        group?: string;
-        bandCorrection?: number;
-        nEnriched?: number;
-        nLv12Cleared?: number;
-        nZ12_0upCleared?: number;
-      };
-      // v3.3.5 진단: 입력 chart 수 + 매칭 chart 수 + group 분기 결과
-      console.log(
-        `[osr] charts.in=${osrChartsInput.length} nEnriched=${r.nEnriched ?? '?'} ` +
-        `nLv12cl=${r.nLv12Cleared ?? '?'} nZ12cl=${r.nZ12_0upCleared ?? '?'} ` +
-        `group=${r.group ?? '-'} native=${r.nativeStar?.toFixed(2) ?? '?'} ` +
-        `compat=${r.ereterCompatStar?.toFixed(2) ?? '?'} (corr=${r.bandCorrection ?? 0})`
-      );
-      return typeof r.ereterCompatStar === 'number'
-        ? { star: r.ereterCompatStar, group: r.group, nativeStar: r.nativeStar, bandCorrection: r.bandCorrection, nEnriched: r.nEnriched, nLv12Cleared: r.nLv12Cleared, nZ12_0upCleared: r.nZ12_0upCleared }
-        : null;
+      const r = onlyOSR2eLib.inferEreter(osrChartsInput, ratingData, { charts: ereterData.charts, players: {} });
+      if (typeof r.ereterStar !== 'number') return null;
+      const nativeStar = typeof r.ohsorryStar === 'number' ? r.ohsorryStar : r.ereterStar;
+      console.log(`[★] ereterStar=${r.ereterStar.toFixed(2)} native(onlyOSR)=${nativeStar.toFixed(2)} tier=${r.tier ?? '-'} nFit12=${r.nFit12 ?? '?'}`);
+      return { star: r.ereterStar, nativeStar, tier: r.tier ?? null, nFit12: r.nFit12 ?? null };
     } catch (e) {
-      console.warn('[osr] inferUserTiered 실패:', (e as Error).message);
+      console.warn('[★] inferEreter 실패:', (e as Error).message);
       return null;
     }
-  }, [osrChartsInput, ratingData, osrLibOverride]);
+  }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput]);
 
-  // v3.3.5: OSR13.5+ lib (gist auto-update + cache eval) — window.OSR135 등록
-  const [osr135Lib, setOsr135Lib] = useState<{ inferUser: (charts: unknown, ereter: unknown) => { starEstimate: number; adopted: string }; version: string } | null>(null);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.infohsorry?.osrLib135) return;
-    window.infohsorry.osrLib135.get().then((cached) => {
-      if (!cached || !cached.code) return;
-      try {
-        new Function(cached.code)();
-        const w = window as unknown as { OSR135?: { inferUser?: (c: unknown, e: unknown) => { starEstimate: number; adopted: string }; version?: string } };
-        if (typeof w.OSR135?.inferUser === 'function') {
-          setOsr135Lib({ inferUser: w.OSR135.inferUser, version: w.OSR135.version || cached.version || '?' });
-          console.log(`[osr135] gist cache v${cached.version} 로드`);
-        }
-      } catch (e) {
-        console.warn('[osr135] cache eval 실패:', (e as Error).message);
-      }
-    });
-  }, []);
-
-  // OSR13.5+ 결과 계산 — ereterData.charts 필요. ec/hc/exh 도 spread gate 용으로 보존.
-  const osr135Result = useMemo<{ star: number; adopted: string; ec: number; hc: number; exh: number } | null>(() => {
-    if (!osr135Lib || !ereterData || osrChartsInput.length === 0) return null;
-    try {
-      // any cast — OSR135 의 inferUser 가 ec/hc/exh 도 반환 (lib 정의에 명시 안 돼 있어서)
-      const r = osr135Lib.inferUser(osrChartsInput, { charts: ereterData.charts }) as
-        { starEstimate?: number; adopted: string; ec?: { final: number }; hc?: { final: number }; exh?: { final: number } };
-      return typeof r.starEstimate === 'number'
-        ? { star: r.starEstimate, adopted: r.adopted, ec: r.ec?.final ?? 0, hc: r.hc?.final ?? 0, exh: r.exh?.final ?? 0 }
-        : null;
-    } catch (e) {
-      console.warn('[osr135] inferUser 실패:', (e as Error).message);
-      return null;
-    }
-  }, [osr135Lib, ereterData, osrChartsInput]);
-
-  // oldOSR (v3.3.3 4-scope inference) — gist auto-update + cache eval — window.oldOSR 등록
-  // INF오소리의 자체 dp12StarOldResult 가 ohSorry/recompute 와 알고리즘이 미세하게 달라 ★ 값이 어긋나서
-  // gist oldOSR.js 를 INF오소리도 fetch 해서 동일 결과를 쓰도록 통일.
-  const [oldOSRLib, setOldOSRLib] = useState<{ inferUser: (charts: unknown, rating: unknown, ereter: unknown) => unknown; version: string } | null>(null);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.infohsorry?.oldOSRLib) return;
-    window.infohsorry.oldOSRLib.get().then((cached) => {
-      if (!cached || !cached.code) return;
-      try {
-        new Function(cached.code)();
-        const w = window as unknown as { oldOSR?: { inferUser?: (c: unknown, r: unknown, e: unknown) => unknown; version?: string } };
-        if (typeof w.oldOSR?.inferUser === 'function') {
-          setOldOSRLib({ inferUser: w.oldOSR.inferUser, version: w.oldOSR.version || cached.version || '?' });
-          console.log(`[oldOSR] gist cache v${cached.version} 로드`);
-        }
-      } catch (e) {
-        console.warn('[oldOSR] cache eval 실패:', (e as Error).message);
-      }
-    });
-  }, []);
-
-  // oldOSR 결과 계산 — ratingData + ereterData.charts 필요. starEstimates 의 ereterOnly/lv12Only 는 group C 2-scope max 용.
-  const oldOSRResult = useMemo<{
-    starEstimate: number | null;
-    ereterOnly: number | null;
-    lv12Only: number | null;
-    adopted: string | null;
-  } | null>(() => {
-    if (!oldOSRLib || !ratingData || !ereterData || osrChartsInput.length === 0) return null;
-    try {
-      const r = oldOSRLib.inferUser(osrChartsInput, ratingData, { charts: ereterData.charts }) as {
-        starEstimate: number | null;
-        starEstimates?: { primary?: number | null; ereterOnly?: number | null; lv12Only?: number | null; all?: number | null };
-        adopted?: string | null;
-      };
-      return {
-        starEstimate: typeof r.starEstimate === 'number' ? r.starEstimate : null,
-        ereterOnly: typeof r.starEstimates?.ereterOnly === 'number' ? r.starEstimates.ereterOnly : null,
-        lv12Only: typeof r.starEstimates?.lv12Only === 'number' ? r.starEstimates.lv12Only : null,
-        adopted: r.adopted ?? null,
-      };
-    } catch (e) {
-      console.warn('[oldOSR] inferUser 실패:', (e as Error).message);
-      return null;
-    }
-  }, [oldOSRLib, ratingData, ereterData, osrChartsInput]);
-
-  // adopt.js (v335E 채택 분기 통합 lib) — bundle + override 패턴 (osr.js 와 동일)
-  //   기본: bundle (src/shared/adopt.ts) 사용 → 첫 부팅 / 오프라인에서도 작동
-  //   override: gist cache 가 더 최신이면 cache 사용 → 분기 로직 갱신 즉시 반영
-  // 세 lib (oldOSR/OSR/OSR135) raw 값을 받아 최종 ★ 결정. ohSorry/recompute/INFOhSorry 3곳 동일 lib 호출.
-  const [adoptLibOverride, setAdoptLibOverride] = useState<{ adoptStar: (input: AdoptInput) => AdoptOutput; version: string } | null>(null);
-  useEffect(() => {
-    if (typeof window === 'undefined' || !window.infohsorry?.adoptLib) return;
-    window.infohsorry.adoptLib.get().then((cached) => {
-      if (!cached || !cached.code || !cached.version) return;
-      // version 비교: cache > bundle 일 때만 override
-      const a = cached.version.split('.').map((n) => parseInt(n, 10) || 0);
-      const b = adoptBundleVersion.split('.').map((n) => parseInt(n, 10) || 0);
-      let newer = false;
-      for (let i = 0; i < Math.max(a.length, b.length); i++) {
-        if ((a[i] || 0) > (b[i] || 0)) { newer = true; break; }
-        if ((a[i] || 0) < (b[i] || 0)) break;
-      }
-      if (!newer) {
-        console.log(`[adopt] bundle (v${adoptBundleVersion}) 사용 (cache v${cached.version} 동일 또는 옛 버전)`);
-        return;
-      }
-      try {
-        new Function(cached.code)();
-        const w = window as unknown as { adopt?: { adoptStar?: (input: AdoptInput) => AdoptOutput; version?: string } };
-        if (typeof w.adopt?.adoptStar === 'function') {
-          setAdoptLibOverride({ adoptStar: w.adopt.adoptStar, version: w.adopt.version || cached.version || '?' });
-          console.log(`[adopt] gist cache v${cached.version} 사용 (bundle v${adoptBundleVersion})`);
-        }
-      } catch (e) {
-        console.warn('[adopt] cache eval 실패:', (e as Error).message);
-      }
-    });
-  }, []);
-  const adoptFn = adoptLibOverride?.adoptStar || adoptStarBundle;
-  const adoptVersion = adoptLibOverride?.version || adoptBundleVersion;
-
-  // dp12StarResult — v335E 채택 분기. adopt lib (bundle + gist override) 호출.
-  //   ohSorry/recompute/INFOhSorry 3곳이 동일 lib 호출 → drift 방지.
-  // group A/B/C 분기 + group C 2-scope max + OSR135 spread gate + OSR135_UNDER blend 다 lib 안에서 처리.
-  // 추천 풀 baseStar (ohsorryRecBase) 는 별도로 OSR (newStar) 단독 사용.
-  const dp12StarResult = useMemo(() => {
-    const star135 = typeof osr135Result?.star === 'number' ? osr135Result.star : null;
-    const newStar = typeof osrTieredResult?.star === 'number' ? osrTieredResult.star : null;
-    const group = (osrTieredResult?.group as 'A' | 'B' | 'C' | undefined) || null;
-    // oldStar (4-scope max) — gist oldOSR 우선, 없으면 자체 dp12StarOldResult fallback
-    const oldStarBase: number | null = oldOSRResult?.starEstimate ?? dp12StarOldResult?.star ?? null;
-    const starEreterOnly: number | null = oldOSRResult?.ereterOnly ?? null;
-    const starLv12Only: number | null = oldOSRResult?.lv12Only ?? null;
-    const osr135Stages = osr135Result
-      ? { ec: osr135Result.ec, hc: osr135Result.hc, exh: osr135Result.exh }
-      : null;
-
-    const r = adoptFn({
-      starOld: oldStarBase, starNew: newStar, star135: star135,
-      starEreterOnly: starEreterOnly, starLv12Only: starLv12Only,
-      osr135Stages: osr135Stages, group: group,
-    });
-
-    const adoptSrc = adoptLibOverride ? `gist v${adoptVersion}` : `bundle v${adoptVersion}`;
-    const oldSrc = oldOSRResult ? 'gist' : 'local';
-    console.log(
-      `[★] 채택=${r.adoptedLib ?? 'none'} final=${r.star?.toFixed(3) ?? 'N/A'} | ` +
-      `OSR135=${star135?.toFixed(3) ?? 'null'} OSR=${newStar?.toFixed(3) ?? 'null'} ` +
-      `old=${r.oldStarUsed?.toFixed(3) ?? 'null'} [${oldSrc}] | ` +
-      `group=${group ?? '-'} adopt=${adoptSrc}` +
-      (osr135Result ? ` | osr135 ec/hc/exh=${osr135Result.ec.toFixed(2)}/${osr135Result.hc.toFixed(2)}/${osr135Result.exh.toFixed(2)}${r.osr135Trusted ? '' : ' ⚠ spread>2.5'}` : ''),
-    );
-    if (r.star == null) return dp12StarOldResult;
-    return dp12StarOldResult
-      ? { ...dp12StarOldResult, star: r.star, _adoptedLib: r.adoptedLib } as typeof dp12StarOldResult & { _adoptedLib?: string | null }
-      : null;
-  }, [dp12StarOldResult, osrTieredResult, osr135Result, oldOSRResult, adoptFn, adoptLibOverride, adoptVersion]);
-
-  // 추천 baseStar — OSR (v0.0.2) 단독 사용 (D2 표기 ★ 와 분리)
-  //   이유: OSR135 의 12점대 over-estimation (+0.46 bias) 을 추천 풀 결정에서 배제
-  const ohsorryRecBase = useMemo(() => {
-    if (typeof osrTieredResult?.star === 'number') return osrTieredResult.star;
-    return dp12StarResult?.star ?? null;
-  }, [osrTieredResult, dp12StarResult]);
+  // 추천 baseStar = 표시 별값(ereterStar) 그대로 사용.
+  const ohsorryRecBase = useMemo(() => dp12StarResult?.star ?? null, [dp12StarResult]);
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
@@ -1748,7 +1476,7 @@ export default function App() {
           <ProfileCard
             profile={profile}
             starResult={dp12StarResult}
-            osrStar={osrTieredResult?.star ?? null}
+            osrStar={dp12StarResult?.nativeStar ?? null}
             dpRadar={userPublic.dpRadar}
             spRank={userPublic.spRank}
             dpRank={userPublic.dpRank}
@@ -1855,10 +1583,8 @@ export default function App() {
                 {!IS_BROWSER_REMOTE && devMode && (
                   <StarPanel
                     result={dp12StarResult}
-                    allScopes={dp12StarAll}
                     matched={dp12Match?.matched ?? 0}
                     unmatched={dp12Match?.unmatched ?? 0}
-                    fitDataCount={dp12StarInputs?.fitDataAll.length ?? 0}
                     matchedNonNp={dp12Match?.charts.filter((c) => c.lampNum > 0).length ?? 0}
                     ereterReady={!!ereterData}
                     unmatchedSamples={dp12Match?.unmatchedSamples ?? []}
@@ -2383,10 +2109,8 @@ function RecCard({
 // ============================================================
 function StarPanel({
   result,
-  allScopes,
   matched,
   unmatched,
-  fitDataCount,
   matchedNonNp,
   ereterReady,
   unmatchedSamples,
@@ -2397,11 +2121,9 @@ function StarPanel({
   ereterBusy,
   onRefreshEreter,
 }: {
-  result: ReturnType<typeof estimateStar>;
-  allScopes: { name: string; res: ReturnType<typeof estimateStar> }[] | null;
+  result: StarResult | null;
   matched: number;
   unmatched: number;
-  fitDataCount: number;
   matchedNonNp: number;
   ereterReady: boolean;
   unmatchedSamples: string[];
@@ -2439,16 +2161,14 @@ function StarPanel({
     return (
       <div className="star-panel waiting" style={{ textAlign: 'left' }}>
         <div style={{ fontWeight: 600, marginBottom: 6 }}>
-          별값 계산 표본 부족 — 데이터 점 {fitDataCount}개 / 30개 필요
+          별값 계산 대기 — onlyOSR/ereter lib 로드 또는 DP ☆12 플레이 필요
         </div>
         <div style={{ fontSize: 11.5, color: 'var(--text-muted)', lineHeight: 1.6 }}>
           DP ☆12 매칭된 차트: <b>{matched}</b>개 (NP 제외: <b>{matchedNonNp}</b>개) · 미매칭 시도:{' '}
           <b>{unmatched}</b>개
           <br />
-          모델은 <b>DP ☆12</b> (= ereter ★11.6~12.7) 만 대상. SP 또는 DP11 이하 플레이는 input 이
-          되지 않습니다.
-          <br />
-          최소 NP 제외 매칭 차트가 ~10개 이상 (= 데이터 점 30개) 있어야 추정 가능.
+          별값은 <b>onlyOSRtoEreter.inferEreter</b> (gist lib) 로 계산됩니다 — ratingData + ereter ★ +
+          DP 플레이 기록이 모두 있어야 산출됩니다.
         </div>
       </div>
     );
@@ -2456,16 +2176,14 @@ function StarPanel({
   return (
     <div className="star-panel">
       <div className="star-main">
-        <span className="star-label">DP ☆12 추정</span>
+        <span className="star-label">DP ☆12 (ereter★)</span>
         <span className="star-value">★ {result.star.toFixed(2)}</span>
       </div>
       <div className="star-detail">
-        <span>raw {result.raw.toFixed(2)}</span>
-        <span>표본 {result.fitDataCount}</span>
-        <span>클리어 {result.nClearedV32}</span>
-        <span>lamp {result.validStages.join('/')}</span>
+        <span>native {result.nativeStar != null ? result.nativeStar.toFixed(2) : '-'}</span>
+        <span>tier {result.tier ?? '-'}</span>
+        <span>nFit12 {result.nFit12 ?? '-'}</span>
         <span>매칭 {matched} / 미매칭 {unmatched}</span>
-        {result.isUnderCutoff && <span className="warning">CUTOFF 미달 (n_cleared &lt; 50)</span>}
       </div>
       <details className="star-debug">
         <summary>모델 내부 (디버그)</summary>
@@ -2558,46 +2276,10 @@ function StarPanel({
           </div>
         )}
         <ul>
-          {allScopes && (
-            <li>
-              <b>4종 scope 결과 (max 채택):</b>
-              <ul style={{ marginTop: 4, paddingLeft: 16 }}>
-                {allScopes.map((s) => {
-                  const isMax = s.res != null && result != null && s.res.star === result.star;
-                  return (
-                    <li
-                      key={s.name}
-                      style={{
-                        color: isMax ? '#0d5fbe' : 'var(--text-secondary, #555)',
-                        fontWeight: isMax ? 600 : 400,
-                      }}
-                    >
-                      {s.name}: {s.res
-                        ? `★${s.res.star.toFixed(2)} (raw=${s.res.raw.toFixed(2)}, n=${s.res.fitDataCount}, validStages=${s.res.validStages.join('/') || '비어있음'}${s.res.isEcOnlyValid ? ', EC-only' : ''}${s.res.ecOnlyApplied ? '+보정' : ''})`
-                        : 'N/A (표본 부족)'}
-                      {isMax && ' ← max'}
-                    </li>
-                  );
-                })}
-              </ul>
-            </li>
-          )}
           <li>
-            ridge 보정: {result.ridgeCorrection >= 0 ? '+' : ''}
-            {result.ridgeCorrection.toFixed(3)}
-            {result.ridgeMuted && ' (v3.2.9 ★음소거)'}
-          </li>
-          <li>
-            post 보정: {result.postCorrection >= 0 ? '+' : ''}
-            {result.postCorrection.toFixed(3)}
-            {result.binImplied &&
-              ` (${result.binImplied.stage} bin → ${result.binImplied.implied.toFixed(3)})`}
-          </li>
-          <li>
-            djLevel boost: {result.djBoost >= 0 ? '+' : ''}
-            {result.djBoost.toFixed(3)}
-            {result.djBoostInfo &&
-              ` (M lamp=EC, djLv=${result.djBoostInfo.djLevel}, gap=${result.djBoostInfo.gap.toFixed(2)})`}
+            ★ {result.star.toFixed(2)} (ereter) · native{' '}
+            {result.nativeStar != null ? result.nativeStar.toFixed(2) : '-'} · tier {result.tier ?? '-'} · nFit12{' '}
+            {result.nFit12 ?? '-'}
           </li>
           {unmatchedAll.length > 0 && (
             <li>

@@ -3,7 +3,7 @@
 // 프로필 데이터는 INFINITAS 메모리에서 직접 읽음 (useProfile).
 import { useState } from 'react';
 import type { ProfileInfo } from './useProfile';
-import type { StarResult } from '../../shared/star-estimator';
+import type { StarResult } from '../../shared/types';
 import type { DpRadarRow } from './supabaseSync';
 
 const STAR_CLICK_COOLDOWN_MS = 30 * 1000;
@@ -96,7 +96,7 @@ export function ProfileCard({
   // 메모리 read 가 한 번도 성공 X (게임 로그인 전 등) → 카드 자체 숨김
   if (!djName && !iidxId && !starResult) return null;
 
-  // OSR 표시: 채택 ★ (starResult.star) 와의 차이 함께
+  // native(onlyOSR) 표시: 표시 ★ (ereterStar) 와의 차이 함께
   const osrNote = (() => {
     if (!starResult || typeof osrStar !== 'number') return null;
     const diff = osrStar - starResult.star;
@@ -143,8 +143,8 @@ export function ProfileCard({
             ★{starResult.star.toFixed(2)}
           </div>
           {osrNote ? (
-            <div className="profile-card-star-note" title="OSR (osr v0.0.2) 추정값">
-              OSR: ★{osrNote.value.toFixed(2)}{' '}
+            <div className="profile-card-star-note" title="native (onlyOSR 전체곡 50%) 추정값">
+              native: ★{osrNote.value.toFixed(2)}{' '}
               <span style={{ opacity: 0.7 }}>({osrNote.diffStr})</span>
             </div>
           ) : (

@@ -10,7 +10,7 @@
 // (index.css 에 복사). 헤더 < 날짜 > N곡, 6 컬럼 grid (lamp / LV / 곡명 / LAMP변동 / DJ변동 / SCORE변동).
 //
 // 행 클릭 → DP 탭으로 이동 + 해당 곡 검색 (App.tsx 의 scrollTarget 패턴).
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ChartSlot, SongRow } from '../../shared/types';
 import { DP_SLOTS } from '../../shared/types';
 import { norm } from '../../shared/match';
@@ -18,6 +18,7 @@ import {
   fetchRecentDates,
   fetchRecentCharts,
   fetchUserLatestCharts,
+  loadDbrMap,
   type RecentChartRow,
   type LatestChartEntry,
 } from './supabaseSync';
@@ -143,6 +144,8 @@ function rowToRecent(
     prevDjLevel: prev?.djLevel ?? null,
     gameLevel: gameLevel ?? prev?.gameLevel ?? null,
     noteCount: noteCount ?? prev?.noteCount ?? null,
+    textageSongId: null,  // 당일 라이브(TSV)는 DP 전용 — DBR 매칭 불필요
+    date: null,
   };
 }
 
@@ -190,6 +193,20 @@ function sortRows(charts: RecentChartRow[]): RecentChartRow[] {
   });
 }
 
+// DBR 모드 정렬 — DBR 난이도(dbrLevel) desc → date desc (오소리웹 동일).
+function sortDbrRows(charts: RecentChartRow[], dbrMap: Map<string, number> | null): RecentChartRow[] {
+  const lvOf = (c: RecentChartRow): number => {
+    const dl = dbrMap?.get((c.textageSongId || '') + '|' + c.diff);
+    return typeof dl === 'number' ? dl : -Infinity;
+  };
+  return [...charts].sort((a, b) => {
+    const la = lvOf(a);
+    const lb = lvOf(b);
+    if (la !== lb) return lb - la;
+    return (b.date || '').localeCompare(a.date || '');
+  });
+}
+
 interface Props {
   rows: SongRow[];
   iidxId: string | null;
@@ -219,6 +236,11 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
   const [pastRows, setPastRows] = useState<RecentChartRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // DBR(배틀, played_version=-10) 토글 — ON 이면 DBR 만, OFF 면 DP(일반)만. (오소리웹 동일)
+  //   DBR 모드는 로컬 TSV "오늘 라이브" 개념이 없어 supabase DBR 날짜(dbrDates)만 본다.
+  const [dbrOnly, setDbrOnly] = useState(false);
+  const [dbrDates, setDbrDates] = useState<{ date_kst: string; row_count: number }[] | null>(null); // lazy
+  const [dbrMap, setDbrMap] = useState<Map<string, number> | null>(null); // DBR 난이도 (textageid|diff → dbrLevel)
 
   // 시스템 시간 기준 KST 오늘 날짜 — 마운트 1회만 계산. 헤더 라벨 + supabaseDates 첫 entry 중복 제거에 사용.
   // 자정 넘기는 케이스는 다음 마운트 시 refresh (over-engineering 회피).
@@ -238,6 +260,24 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
     }
     return supabaseDates;
   }, [supabaseDates, todayKst]);
+
+  // DBR 토글 — 모드 전환 + dateIdx 리셋. ON 전환 시 DBR 날짜/난이도 맵 lazy fetch.
+  const toggleDbr = useCallback(() => {
+    setDbrOnly((prev) => {
+      const next = !prev;
+      setDateIdx(0);
+      setPastRows(null);
+      if (next) {
+        if (normalizedId && /^[A-Z0-9]+$/.test(normalizedId)) {
+          fetchRecentDates(normalizedId, true).then(setDbrDates).catch(() => setDbrDates([]));
+        } else {
+          setDbrDates([]);
+        }
+        if (dbrMap == null) loadDbrMap().then(setDbrMap).catch(() => setDbrMap(new Map()));
+      }
+      return next;
+    });
+  }, [normalizedId, dbrMap]);
 
   // 마운트 / iidxId 변경 시: supabase 날짜 + latest (PREV source) 병렬 fetch.
   // 두 호출 다 실패해도 "오늘 (라이브)" 박스는 TSV-only 모드로 동작.
@@ -266,11 +306,13 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
     return () => { cancelled = true; };
   }, [normalizedId]);
 
-  // 이전 날짜 (dateIdx > 0) 선택 시: 해당 날짜의 charts fetch.
-  // dateIdx === 0 (= 오늘 박스) 면 fetch X — TSV/latest 로 직접 계산.
+  // supabase 날짜 charts fetch.
+  //   DP 모드: dateIdx 0 = 오늘 라이브(TSV) → fetch X. dateIdx>0 = pastDates[dateIdx-1].
+  //   DBR 모드: 라이브 없음 → 항상 dbrDates[dateIdx] fetch.
+  //   fetch 후 played_version 으로 모드별 필터 (DP: !=-10, DBR: ==-10).
   useEffect(() => {
-    if (dateIdx === 0) { setPastRows(null); setError(null); return; }
-    const targetDate = pastDates[dateIdx - 1]?.date_kst;
+    if (!dbrOnly && dateIdx === 0) { setPastRows(null); setError(null); return; }
+    const targetDate = dbrOnly ? dbrDates?.[dateIdx]?.date_kst : pastDates[dateIdx - 1]?.date_kst;
     if (!normalizedId || !targetDate) { setPastRows(null); return; }
     setLoading(true);
     setError(null);
@@ -278,7 +320,8 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
     void (async () => {
       try {
         const charts = await fetchRecentCharts(normalizedId, targetDate);
-        if (!cancelled) setPastRows(charts);
+        const filtered = charts.filter((c) => (dbrOnly ? c.playedVersion === -10 : c.playedVersion !== -10));
+        if (!cancelled) setPastRows(filtered);
       } catch (e) {
         if (!cancelled) setError((e as Error).message || 'fetch 실패');
       } finally {
@@ -286,32 +329,38 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
       }
     })();
     return () => { cancelled = true; };
-  }, [dateIdx, pastDates, normalizedId]);
+  }, [dateIdx, pastDates, dbrDates, dbrOnly, normalizedId]);
 
   // 현재 표시할 행들 — 오늘 모드면 TSV diff, 그 외엔 supabase 응답.
   //   오늘 모드: latest(DB) 로드 완료 전엔 [] 반환 — 전체 곡을 먼저 렌더했다가 필터하는 렉 방지.
   //   로드 완료 후 latestIdx 로 변동 곡만 계산 (실패 시 latestIdx=null → TSV-only fallback).
   const displayRows = useMemo(() => {
+    // DBR 모드: supabase DBR 날짜만, dbrLevel desc 정렬.
+    if (dbrOnly) {
+      return pastRows ? sortDbrRows(pastRows, dbrMap) : [];
+    }
+    // DP 모드: dateIdx 0 = 오늘 라이브(TSV), 그 외 supabase.
     if (dateIdx === 0) {
       if (!latestLoaded) return [];
       return sortRows(computeTodayCharts(rows, latestIdx));
     }
     return pastRows ? sortRows(pastRows) : [];
-  }, [dateIdx, rows, latestIdx, latestLoaded, pastRows]);
+  }, [dbrOnly, dateIdx, rows, latestIdx, latestLoaded, pastRows, dbrMap]);
 
-  // 헤더 라벨 / nav 버튼 표시 — 오늘 모드는 "YYYY-MM-DD (오늘, 라이브)" + 이전 버튼만, 그 외는 < 날짜 >.
-  // pastDates 가 없으면 nav 자체 비활성 (오프라인 / 신규 계정 / 오늘만 데이터 있음).
-  const isToday = dateIdx === 0;
-  // 오늘 모드에서 DB(latest) 로드 대기 중 — 로딩 표시 + 전체 목록 렌더 보류.
+  // 헤더 라벨 / nav — DP 모드: 오늘(라이브) + < 이전 supabase. DBR 모드: dbrDates 만 (라이브 없음).
+  const isToday = !dbrOnly && dateIdx === 0;
+  const dbrDateList = dbrDates || [];
+  // 로딩 표시: DP 오늘 모드 latest 대기 / DBR 모드 날짜 목록 미로드.
   const todayLoading = isToday && !latestLoaded;
-  const busy = loading || todayLoading;
-  const hasPrev = isToday
-    ? pastDates.length > 0
-    : dateIdx < pastDates.length;  // dateIdx 는 1 부터 시작 (오늘 = 0)
+  const dbrLoading = dbrOnly && dbrDates == null;
+  const busy = loading || todayLoading || dbrLoading;
+  const hasPrev = dbrOnly
+    ? dateIdx < dbrDateList.length - 1
+    : (isToday ? pastDates.length > 0 : dateIdx < pastDates.length);
   const hasNext = dateIdx > 0;
-  const headerLabel = isToday
-    ? `${todayKst} (오늘, 라이브)`
-    : (pastDates[dateIdx - 1]?.date_kst || '') + ' 업로드';
+  const headerLabel = dbrOnly
+    ? (dbrDateList[dateIdx]?.date_kst || '') + ' (DBR)'
+    : (isToday ? `${todayKst} (오늘, 라이브)` : (pastDates[dateIdx - 1]?.date_kst || '') + ' 업로드');
 
   if (!normalizedId || !/^[A-Z0-9]+$/.test(normalizedId)) {
     return (
@@ -347,8 +396,21 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
             </button>
           ) : <span style={{ width: 18 }} />}
         </div>
-        <span className="__uprofile_rcheader_count">
-          {busy ? '불러오는 중...' : `${displayRows.length}곡`}
+        <span className="__uprofile_rcheader_right" style={{ gridColumn: 3, display: 'inline-flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
+          <span className="__uprofile_rcheader_count">
+            {busy ? '불러오는 중...' : `${displayRows.length}곡`}
+          </span>
+          {/* DBR(배틀) 토글 — ON 분홍 / OFF 회색 (오소리웹 동일) */}
+          <button
+            type="button"
+            className="__uprofile_rcdbrtoggle"
+            onClick={toggleDbr}
+            style={dbrOnly
+              ? { fontSize: 11, fontWeight: 700, border: '1px solid #ff6b9d', borderRadius: 3, background: '#ff6b9d', color: '#fff', padding: '2px 8px', lineHeight: 1.2, cursor: 'pointer' }
+              : { fontSize: 11, border: '1px solid #495057', borderRadius: 3, background: '#2b2f36', color: '#adb5bd', padding: '2px 8px', lineHeight: 1.2, cursor: 'pointer' }}
+          >
+            DBR
+          </button>
         </span>
       </div>
 
@@ -358,9 +420,11 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
 
       {!error && displayRows.length === 0 && !busy && (
         <p className="__uprofile_tabempty">
-          {isToday
-            ? (latestIdx ? '마지막 업로드 이후 변동된 곡 없음' : '플레이 데이터 없음')
-            : '플레이 데이터 없음'}
+          {dbrOnly
+            ? 'DBR 기록이 없습니다'
+            : (isToday
+              ? (latestIdx ? '마지막 업로드 이후 변동된 곡 없음' : '플레이 데이터 없음')
+              : '플레이 데이터 없음')}
         </p>
       )}
 
@@ -373,26 +437,40 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
             const exDisplay = played ? c.exScore.toLocaleString() : '-';
             const prev = typeof c.prevExScore === 'number' ? c.prevExScore : 0;
             const prevDisplay = prev > 0 ? prev.toLocaleString() : '';
-            // 시즌 다르면 prev 안 보이게 (오소리웹 동일 로직). INFOhSorry 는 항상 INF (= 0) 라 같음.
-            const sameVersion = c.prevPlayedVersion == null || c.prevPlayedVersion === c.playedVersion;
+            // DBR 은 SP 2채보 합산이라 EX 만점 = noteCount*4 → djLevel/등급차를 effNote(=noteCount*2)로 재계산.
+            //   (SP 단일 기준이면 ex 가 2배라 거의 AAA 오판) — 오소리웹 동일.
+            const effNote = (dbrOnly && c.noteCount) ? c.noteCount * 2 : c.noteCount;
+            const djNow = (dbrOnly && c.noteCount) ? (djLevelFromScore(c.exScore, effNote) || '') : (c.djLevel || '');
+            const djPrev = (dbrOnly && typeof c.prevExScore === 'number' && effNote)
+              ? (djLevelFromScore(c.prevExScore, effNote) || '')
+              : (c.prevDjLevel || '');
+            // DBR 모드는 prev 가 같은 played_version(-10)일 때만 비교 — DP 기록이 prev 로 섞이지 않게 엄격(null 불허).
+            const sameVersion = dbrOnly
+              ? c.prevPlayedVersion === c.playedVersion
+              : (c.prevPlayedVersion == null || c.prevPlayedVersion === c.playedVersion);
             const showPrev = prevDisplay && prevDisplay !== exDisplay && sameVersion;
-            const gradeDiff = played && c.noteCount ? nextGradeDiff(c.djLevel, c.exScore, c.noteCount) : '';
+            const gradeDiff = played && effNote ? nextGradeDiff(djNow, c.exScore, effNote) : '';
 
             // 곡명 cell — LEG 면 † + slot 색
             const isLeg = c.diff === 'LEGGENDARIA';
             const titleStyle: React.CSSProperties = isLeg ? { color: slotColor } : {};
             const titleText = (isLeg ? '† ' : '') + c.title;
 
-            const zasaLabel = '';  // INFOhSorry Recent 는 zasa 표시 안 함 (오소리웹은 ratingData 보강 — INF 본인 화면엔 큰 의미 X)
+            // DBR 모드: 레벨 칸/곡명 앞 zasa 자리에 DBR 난이도 표시 (textageid|diff 매칭). 그 외 빈 문자열.
+            const dbrLevel = (dbrOnly && dbrMap) ? dbrMap.get((c.textageSongId || '') + '|' + c.diff) : undefined;
+            const zasaLabel = typeof dbrLevel === 'number' ? dbrLevel.toFixed(2) : '';
             const gameLevelLabel = c.gameLevel != null ? String(c.gameLevel) : '-';
 
             // LAMP 변동 — same 이면 단색 하나, diff 면 prev → now.
             const lampSame = c.prevLampAbbr === c.lampAbbr || c.prevLampAbbr == null;
             const lampPrevStr = lampAbbr(c.prevLamp);
             const lampNowStr = lampAbbr(c.lamp);
-            const djSame = (c.prevDjLevel || '') === (c.djLevel || '') || c.prevDjLevel == null;
-            const djPrevStr = c.prevDjLevel || '-';
-            const djNowStr = c.djLevel || '-';
+            // DBR 모드는 sameVersion 게이팅 — 시즌 다른 prev 면 현재값만. djLevel 은 effNote 재계산값 사용.
+            const showLampPrev = !lampSame && (!dbrOnly || sameVersion);
+            const djSame = djPrev === djNow;
+            const showDjPrev = !djSame && (!dbrOnly || sameVersion);
+            const djPrevStr = djPrev || '-';
+            const djNowStr = djNow || '-';
 
             // 사용자 요청 — RECENT 행 클릭 시 DP 탭 점프 비활성화. role/tabIndex/onClick 제거.
             return (
@@ -410,7 +488,7 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
                   {titleText}
                 </div>
                 <div className="__pd_cell __pd_rclampchange">
-                  {lampSame ? (
+                  {!showLampPrev ? (
                     <span style={{ color: lampTextColor(c.lamp) }}>{lampNowStr}</span>
                   ) : (
                     <>
@@ -421,13 +499,13 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
                   )}
                 </div>
                 <div className="__pd_cell __pd_rcdjchange">
-                  {djSame ? (
-                    <span style={{ color: djLetterColor(c.djLevel) }}>{djNowStr}</span>
+                  {!showDjPrev ? (
+                    <span style={{ color: djLetterColor(djNow) }}>{djNowStr}</span>
                   ) : (
                     <>
-                      <span style={{ color: djLetterColor(c.prevDjLevel) }}>{djPrevStr}</span>
+                      <span style={{ color: djLetterColor(djPrev) }}>{djPrevStr}</span>
                       →
-                      <span style={{ color: djLetterColor(c.djLevel) }}>{djNowStr}</span>
+                      <span style={{ color: djLetterColor(djNow) }}>{djNowStr}</span>
                     </>
                   )}
                 </div>

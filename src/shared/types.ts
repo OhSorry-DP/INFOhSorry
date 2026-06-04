@@ -27,6 +27,17 @@ export interface SongRow {
   charts: Partial<Record<ChartSlot, ChartCell>>;
 }
 
+// 별값(★) 계산 결과 — v3.4.0 onlyOSRtoEreter.inferEreter 산출.
+//   star: ereterStar (화면 표시 ★)
+//   nativeStar: ohsorryStar (onlyOSR 전체곡 native 50%, 본체 native_star)
+//   tier: OSR13.5 tier 라벨 / nFit12: lv12 fit 곡 수 (디버그)
+export interface StarResult {
+  star: number;
+  nativeStar?: number;
+  tier?: string | null;
+  nFit12?: number | null;
+}
+
 // 곡 row 를 펼쳐서 차트 단위 1행으로 변환한 형태 (ohSorry 모델 input 호환)
 export interface SongChart {
   title: string;

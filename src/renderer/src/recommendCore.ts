@@ -15,7 +15,7 @@ import type { SongRow, ChartSlot, RatingData, ZasaData, EreterData } from '../..
 import { norm } from '../../shared/match';
 
 // ─── gist URL ────────────────────────────────────────────────────────
-const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
+export const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
 const SERIES_GIST = 'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw';
 const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
 const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
@@ -27,7 +27,7 @@ const TEXTAGE_META_URL = `${GIST_RAW}/textage-meta.json`;
 const SERIES_NAME_URL = `${SERIES_GIST}/series-name.json`;
 
 // ─── module global cache (Analysis / PlayData / WeaknessRecommend 와 공유) ───
-async function loadGistModule(url: string, globalKey: string): Promise<unknown> {
+export async function loadGistModule(url: string, globalKey: string): Promise<unknown> {
   const w = window as unknown as Record<string, unknown>;
   if (w[globalKey]) return w[globalKey];
   const res = await fetch(`${url}?t=${Date.now()}`);

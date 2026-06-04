@@ -15,7 +15,7 @@
 //
 // fire-and-forget — 실패해도 사용자 경험에 영향 X.
 import type { ProfileInfo } from './useProfile';
-import type { StarResult } from '../../shared/star-estimator';
+import type { StarResult } from '../../shared/types';
 import type { RecInputChart } from '../../shared/recommend';
 import { norm } from '../../shared/match';
 
@@ -504,12 +504,14 @@ export interface RecentChartRow {
   prevDjLevel: string | null;
   gameLevel: number | null;
   noteCount: number | null;
+  textageSongId: string | null;     // DBR 난이도 맵 매칭용 (textageid|diff)
+  date: string | null;              // 같은 날짜 내 정렬용 (timestamp)
 }
 
 function viewRowToRecent(r: {
   title: string; diff: number; lamp: number; ex_score: number;
   prev_lamp?: number | null; prev_ex_score?: number | null; prev_played_version?: number | null;
-  played_version?: number; textage_song_id?: string | null;
+  played_version?: number; textage_song_id?: string | null; date?: string | null;
 }, textageMeta: TextageMeta | null): RecentChartRow {
   const diffStr = DIFF_INT_TO_STR[r.diff] || 'ANOTHER';
   const lampStr = LAMP_INT_TO_STR[typeof r.lamp === 'number' ? r.lamp : 0] || 'NO PLAY';
@@ -541,20 +543,49 @@ function viewRowToRecent(r: {
     prevDjLevel: djLevelFromScore(prevExScore, noteCount),
     gameLevel,
     noteCount,
+    textageSongId: r.textage_song_id ?? null,
+    date: r.date ?? null,
   };
 }
 
-export async function fetchRecentDates(iidxId: string): Promise<{ date_kst: string; row_count: number }[]> {
+// p_dbr=false(기본): DP 일반 플레이 날짜, true: DBR(배틀, played_version=-10) 날짜.
+export async function fetchRecentDates(iidxId: string, dbrOnly = false): Promise<{ date_kst: string; row_count: number }[]> {
   const id = String(iidxId || '').trim().replace(/-/g, '');
   if (!id) return [];
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_dates`, {
     method: 'POST',
     headers: HEADERS,
-    body: JSON.stringify({ p_iidx_id: id }),
+    body: JSON.stringify({ p_iidx_id: id, p_dbr: !!dbrOnly }),
   });
   if (!res.ok) throw new Error(`Recent 날짜 조회 실패 (HTTP ${res.status})`);
   const rows = await res.json();
   return Array.isArray(rows) ? rows : [];
+}
+
+// DBR 난이도 맵 — dbr-inf-recommend.json(gist) 에서 textageid|diff → dbrLevel 로드 (1회 캐시).
+//   DBR 모드 RECENT 의 레벨 칸/곡명 앞에 DBR 난이도 표시 + 정렬에 사용. 실패 시 빈 맵(graceful).
+const DBR_RECOMMEND_URL = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/dbr-inf-recommend.json';
+let _dbrMapCache: Map<string, number> | null = null;
+export async function loadDbrMap(): Promise<Map<string, number>> {
+  if (_dbrMapCache) return _dbrMapCache;
+  const m = new Map<string, number>();
+  try {
+    const res = await fetch(`${DBR_RECOMMEND_URL}?t=${Date.now()}`, { cache: 'no-store' });
+    if (res.ok) {
+      const arr = await res.json();
+      if (Array.isArray(arr)) {
+        for (const s of arr) {
+          if (s && s.textageid && s.diff && typeof s.dbrLevel === 'number') {
+            m.set(`${s.textageid}|${s.diff}`, s.dbrLevel);
+          }
+        }
+      }
+    }
+  } catch {
+    /* graceful — 못 받으면 빈 맵, 난이도 미표시 */
+  }
+  _dbrMapCache = m;
+  return m;
 }
 
 export async function fetchRecentCharts(iidxId: string, dateKst: string): Promise<RecentChartRow[]> {

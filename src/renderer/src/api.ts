@@ -169,26 +169,6 @@ if (!IS_HOST) {
       status: () =>
         callIpc('rating:status') as ReturnType<Window['infohsorry']['rating']['status']>,
     },
-    osrLib: {
-      get: () => callIpc('osrLib:get') as ReturnType<Window['infohsorry']['osrLib']['get']>,
-      checkUpdate: () =>
-        callIpc('osrLib:checkUpdate') as ReturnType<Window['infohsorry']['osrLib']['checkUpdate']>,
-    },
-    osrLib135: {
-      get: () => callIpc('osrLib135:get') as ReturnType<Window['infohsorry']['osrLib135']['get']>,
-      checkUpdate: () =>
-        callIpc('osrLib135:checkUpdate') as ReturnType<Window['infohsorry']['osrLib135']['checkUpdate']>,
-    },
-    oldOSRLib: {
-      get: () => callIpc('oldOSRLib:get') as ReturnType<Window['infohsorry']['oldOSRLib']['get']>,
-      checkUpdate: () =>
-        callIpc('oldOSRLib:checkUpdate') as ReturnType<Window['infohsorry']['oldOSRLib']['checkUpdate']>,
-    },
-    adoptLib: {
-      get: () => callIpc('adoptLib:get') as ReturnType<Window['infohsorry']['adoptLib']['get']>,
-      checkUpdate: () =>
-        callIpc('adoptLib:checkUpdate') as ReturnType<Window['infohsorry']['adoptLib']['checkUpdate']>,
-    },
     // 브라우저 원격에선 포터블 자동 업데이트 의미 없음 (호스트 exe 를 원격 기기에서 받아 실행 불가) — noop/reject
     portable: {
       download: async (): Promise<string> => {

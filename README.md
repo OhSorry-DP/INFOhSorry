@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.73.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.73-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.74.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.74-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,17 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.74 — 별값(★) 파이프라인 v3.4.0 교체 + RECENT DP/DBR 토글
+- **별값 파이프라인 v3.4.0(onlyOSR + toEreter) 전면 교체**
+  - 별값 계산을 본체 v3.4.0(core 0.0.368) 방식으로 통일 — gist `onlyOSR.js` + `onlyOSRtoEreter.js` 2개 lib 의 `inferEreter` 단일 호출로 표시 별값(ereterStar)과 추천 base 를 산출.
+  - 옛 다단계 파이프라인 **완전 제거**: osr / OSR13.5+ / oldOSR / adopt 4-lib + `estimateStar` / `calc-osrating` / `star-estimator` / `adopt`. gist lib 가 UMD(`require`) 참조로 eval 되며 `require is not defined` 로 별값이 N/A 되던 문제 해소. (의존 lib 로딩은 recommendCore 의 `loadGistModule` 로 일원화)
+  - 추천곡 base = 표시 별값(ereterStar) 사용. dp12Match / 추천 / 업로드 경로는 그대로 유지.
+  - (보류) supabase `native_star` 업로드 정렬 — RPC `upsert_user` 시그니처 확인 후 후속.
+- **RECENT 탭 DP/DBR 토글 추가** (오소리웹 동일)
+  - 헤더 우측 `DBR` 버튼 — OFF: DP(일반)만, ON: DBR(배틀, `played_version=-10`)만. 그동안 DP 탭에 DBR 기록이 섞여 보이던 문제 해소.
+  - DBR 모드는 DBR 난이도(dbr-inf-recommend.json) 표시 + 그 기준 정렬, EX 2채보 합산 보정(djLevel/등급차를 노트수×2 기준 재계산), prev 는 같은 시즌(-10)만 비교.
+- Reflux offsets `P2D:J:B:A:2026060300`(6/3 INFINITAS 패치) 반영 + `profileOffsets.refluxVersion` 갱신 (djName/iidxId 메모리 offset 은 변동 없어 유지).
 
 ### 0.0.73 — 서열표 곡 클릭 시 플레이데이터에서 자동 검색·선택(점프)
 - 0.0.72 에서 서열표 곡 클릭 시 검색창에 곡명 **입력**까지만 됐는데, 이제 **드롭다운 결과를 자동 선택해 해당 곡으로 점프**(폴더 열림 + 스크롤 + 하이라이트)까지 수행.

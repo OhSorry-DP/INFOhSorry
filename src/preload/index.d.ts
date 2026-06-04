@@ -56,22 +56,6 @@ declare global {
         get: (force?: boolean) => Promise<RatingGetResult>;
         status: () => Promise<RatingCacheStatus>;
       };
-      osrLib: {
-        get: () => Promise<{ code: string; version: string | null } | null>;
-        checkUpdate: () => Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }>;
-      };
-      osrLib135: {
-        get: () => Promise<{ code: string; version: string | null } | null>;
-        checkUpdate: () => Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }>;
-      };
-      oldOSRLib: {
-        get: () => Promise<{ code: string; version: string | null } | null>;
-        checkUpdate: () => Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }>;
-      };
-      adoptLib: {
-        get: () => Promise<{ code: string; version: string | null } | null>;
-        checkUpdate: () => Promise<{ updated: boolean; version: string | null; source: 'fetch' | 'cache' | 'none'; error?: string }>;
-      };
       portable: {
         download: (url: string, fileName: string) => Promise<string>;
         run: (filePath: string) => Promise<{ ok: boolean; error?: string }>;

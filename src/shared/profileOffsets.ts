@@ -27,18 +27,21 @@ export const PROFILE_OFFSETS: {
   spRank?: ProfileOffsetEntry;
   dpRank?: ProfileOffsetEntry;
 } = {
-  refluxVersion: 'P2D:J:B:A:2026042200',
+  // 2026-04-22 패치로 프로필 struct 가 +0x80 이동 → MemoryScanner 로 재스캔하여 갱신했던 값.
+  //   (djName 0x690cbe→0x690d3e, iidxId 0x690cb0→0x690d30, 둘 다 +0x80).
+  //   2026-06-03 패치(refluxVersion 2026060300)에서는 djName/iidxId 메모리 offset 변동 없음 — 버전 문자열만 갱신.
+  refluxVersion: 'P2D:J:B:A:2026060300',
   // DJ NAME — 정적 버퍼, 보통 16~64 byte 길이
   djName: {
-    offset: '0x690cbe',
-    encoding: 'ascii',
+    offset: '0x690d3e',
+    encoding: 'utf8',
     maxBytes: 64,
   },
   // INFINITAS ID — "C-XXXX-XXXX-XXXX" 형식 14자 (하이픈 포함은 17자)
   // 발견된 메모리에서는 하이픈 없이 13자 (예: "C293036891870")
   iidxId: {
-    offset: '0x690cb0',
-    encoding: 'ascii',
+    offset: '0x690d30',
+    encoding: 'utf8',
     maxBytes: 32,
   },
   // SP 단위 — 한자 (中伝, 皆伝, 一段~十段, 무취득은 "-") UTF-16LE 정적 버퍼
