@@ -19,6 +19,7 @@ import { request as httpsRequest } from 'https';
 import { EventEmitter } from 'events';
 import { promisify } from 'util';
 import type { RefluxState } from '../shared/types';
+import { getRemoteOffsets } from './offsetsRemote';
 
 const execAsync = promisify(exec);
 
@@ -73,6 +74,16 @@ function offsetsVersionNum(content: string): number {
   const first = content.split(/\r?\n/)[0]?.trim() || '';
   const m = first.match(/(\d{10})\s*$/);
   return m ? parseInt(m[1], 10) : 0;
+}
+
+// gist offsets.json 의 reflux 객체 → Reflux offsets.txt 텍스트 형식으로 변환.
+const REFLUX_OFFSET_KEYS = ['songList', 'unlockdata', 'playSettings', 'playData', 'currentsong', 'judgeData', 'datamap'];
+function refluxObjToTxt(version: string, reflux: Record<string, string>): string {
+  let out = (version || '').trim() + '\n';
+  for (const k of REFLUX_OFFSET_KEYS) {
+    if (reflux[k]) out += `${k} = ${reflux[k]}\n`;
+  }
+  return out;
 }
 
 export async function readRefluxOffsets(): Promise<RefluxOffsets | null> {
@@ -429,9 +440,23 @@ export class RefluxManager extends EventEmitter {
         /* 못 읽으면 0 으로 간주 → 번들로 덮어씀 */
       }
     }
-    // 후보 = 번들(항상 가용). olji master 가 더 최신이면 olji 우선.
+    // 후보 = 번들(항상 가용). olji master / 우리 gist 가 더 최신이면 그쪽 우선.
     let best = BUNDLED_OFFSETS;
     let bestVer = BUNDLED_OFFSETS_VERSION;
+    // (1) 우리 gist offsets.json — 패치 시 gist 만 갱신하면 자동 반영.
+    try {
+      const remote = await getRemoteOffsets();
+      if (remote?.reflux && remote.version) {
+        const gistVer = offsetsVersionNum(remote.version);
+        if (gistVer > bestVer) {
+          best = refluxObjToTxt(remote.version, remote.reflux);
+          bestVer = gistVer;
+        }
+      }
+    } catch {
+      /* gist 실패 — 번들/olji 사용 */
+    }
+    // (2) olji/Reflux master — olji 가 우리보다 최신으로 올라오면 olji 우선.
     try {
       const res = await httpsGet(`${RAW_BASE}/offsets.txt`);
       if (res.statusCode === 200 && res.data) {

@@ -80,6 +80,12 @@ const api = {
     status: (): Promise<RatingCacheStatus> => ipcRenderer.invoke('rating:status'),
   },
 
+  // gist offsets.json 의 프로필 메모리 offset (useProfile 기본값)
+  offsets: {
+    getProfile: (): Promise<Record<string, { offset: string; encoding: string; maxBytes: number }> | null> =>
+      ipcRenderer.invoke('offsets:getProfile'),
+  },
+
   // 포터블 자동 다운로드 + 실행 (v0.0.19+)
   portable: {
     download: (url: string, fileName: string): Promise<string> =>

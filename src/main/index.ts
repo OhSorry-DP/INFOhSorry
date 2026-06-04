@@ -16,6 +16,7 @@ import {
   type StringEncoding,
 } from './memory';
 import { RefluxManager, readRefluxOffsets } from './reflux';
+import { getRemoteProfileOffsets } from './offsetsRemote';
 import {
   getEreterData,
   getCacheStatus as getEreterCacheStatus,
@@ -100,6 +101,9 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
   'rating:status': async () => getRatingCacheStatus(),
+
+  // gist offsets.json 의 프로필 메모리 offset — useProfile 이 기본값으로 사용 (없으면 profileOffsets.ts 상수 fallback)
+  'offsets:getProfile': async () => getRemoteProfileOffsets(),
 
   // GitHub 최신 릴리즈 체크 — "v0.0.X 있음 → 다운로드" 알림용 (자동 다운로드 X)
   'update:check': async () => checkForUpdate(),

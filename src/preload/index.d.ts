@@ -56,6 +56,9 @@ declare global {
         get: (force?: boolean) => Promise<RatingGetResult>;
         status: () => Promise<RatingCacheStatus>;
       };
+      offsets: {
+        getProfile: () => Promise<Record<string, { offset: string; encoding: string; maxBytes: number }> | null>;
+      };
       portable: {
         download: (url: string, fileName: string) => Promise<string>;
         run: (filePath: string) => Promise<{ ok: boolean; error?: string }>;

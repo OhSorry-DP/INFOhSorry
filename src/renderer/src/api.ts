@@ -169,6 +169,10 @@ if (!IS_HOST) {
       status: () =>
         callIpc('rating:status') as ReturnType<Window['infohsorry']['rating']['status']>,
     },
+    offsets: {
+      getProfile: () =>
+        callIpc('offsets:getProfile') as ReturnType<Window['infohsorry']['offsets']['getProfile']>,
+    },
     // 브라우저 원격에선 포터블 자동 업데이트 의미 없음 (호스트 exe 를 원격 기기에서 받아 실행 불가) — noop/reject
     portable: {
       download: async (): Promise<string> => {

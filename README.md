@@ -90,6 +90,13 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### (미릴리즈) offsets gist 연동 — Reflux + 프로필 메모리 offset 원격 관리
+- gist `offsets.json` 한 파일로 **Reflux offsets + 프로필(djName/iidxId/단위) 메모리 offset** 통합 관리. INFINITAS 패치 시 gist 만 갱신하면 양쪽 자동 반영(재빌드 불필요).
+- `main/offsetsRemote.ts` 추가 — gist `offsets.json` fetch+캐시 (`{ version, reflux, profile }`).
+- `reflux.ts` `ensureOffsetsFile` 버전비교 후보에 gist 추가 → `max(디스크, olji master, gist, 번들)`.
+- `useProfile` 이 gist profile offset 을 기본값으로 사용 (사용자 저장 > gist > `profileOffsets.ts` 상수 fallback).
+- gist: `OhSorry-DP/30c3ba6…/offsets.json`. (MemoryScanner 수동 스캔 보조 UI 는 코드 상수 유지)
+
 ### 0.0.75 — Reflux offsets 자동 갱신 (게임 패치 시 앱만 켜면 복구)
 - 게임 패치로 메모리 offset 이 이동하면 olji/Reflux master 가 따라잡기 전까지 라이브 트래킹(곡/점수)이 깨지던 문제 해소.
 - 최신 offsets 를 앱에 **번들**하고, 앱 시작(startAll)마다 **디스크 / olji master / 번들 버전을 비교**해 디스크가 구버전이면 자동으로 최신 덮어쓰기. olji 가 더 최신이면 olji 우선(버전비교 우선).
