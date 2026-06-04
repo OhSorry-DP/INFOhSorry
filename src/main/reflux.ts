@@ -55,6 +55,26 @@ export interface RefluxOffsets {
 
 const REFLUX_PREFERRED_BASE = 0x140000_0000n;
 
+// 번들 offsets.txt — 게임 패치로 메모리 offset 이 이동하면 olji/Reflux master 가 갱신될 때까지
+// 라이브 트래킹이 깨진다. olji 가 따라잡기 전까지 우리가 최신 값을 앱에 번들해 자동 복구.
+//   ※ 새 INFINITAS 패치로 offset 이 또 바뀌면 이 블록 + 버전(끝 YYYYMMDDxx) 을 갱신할 것.
+const BUNDLED_OFFSETS = `P2D:J:B:A:2026060300
+songList = 0x1431CD850
+unlockdata = 0x1429019C0
+playSettings = 0x1425D2154
+playData = 0x1425D2404
+currentsong = 0x14287F370
+judgeData = 0x14287F18C
+datamap = 0x1435B3B28
+`;
+// 첫 줄 헤더 `P2D:J:B:A:YYYYMMDDxx` 끝 10자리 숫자 = 버전. 클수록 최신.
+const BUNDLED_OFFSETS_VERSION = 2026060300;
+function offsetsVersionNum(content: string): number {
+  const first = content.split(/\r?\n/)[0]?.trim() || '';
+  const m = first.match(/(\d{10})\s*$/);
+  return m ? parseInt(m[1], 10) : 0;
+}
+
 export async function readRefluxOffsets(): Promise<RefluxOffsets | null> {
   const p = offsetsPath();
   if (!existsSync(p)) return null;
@@ -267,7 +287,14 @@ export class RefluxManager extends EventEmitter {
         this.setState({ installed: true });
       }
       await this.ensureConfig();
-      await this.ensureOffsets();
+      const offsetsChanged = await this.ensureOffsets();
+      // offsets 가 갱신됐는데 Reflux 가 이미 떠 있으면(child 살아있음 → spawnReflux 가 skip),
+      // 새 offset 을 LoadOffsets 로 다시 읽도록 강제 재시작.
+      if (offsetsChanged && this.child) {
+        this.addLine('(offsets 갱신 — Reflux 재시작)');
+        await this.killAllRefluxProcesses();
+        this.child = null;
+      }
       // kill + cleanup 은 spawnReflux 안에서 매번 수행됨 (startAll / health check 재spawn 모두)
       await this.spawnReflux();
       this.watchTsv();
@@ -366,27 +393,63 @@ export class RefluxManager extends EventEmitter {
   // Reflux 가 시작 직후 LoadOffsets() 에서 읽는 파일들. 자동 update (Update.updateFiles=true) 가
   // 동작하기 전에 먼저 필요해서, 우리가 GitHub raw 에서 미리 받아 둬야 첫 실행이 죽지 않음.
   // Reflux 가 자기 update 로 새로 받으면 그게 덮어쓰니 덮어쓰기 OK.
-  private async ensureOffsets(): Promise<void> {
+  // 반환: offsets.txt 가 실제로 갱신됐는지 (true 면 호출측이 Reflux 재시작해 새 offset 재로드).
+  private async ensureOffsets(): Promise<boolean> {
     const RAW_BASE = 'https://raw.githubusercontent.com/olji/Reflux/master/Reflux';
-    // 핵심 파일들 — 없으면 Reflux 가 죽는 것들 + 보조 파일
-    const files = [
-      'offsets.txt',
-      'customtypes.txt',
-      'encodingfixes.txt',
-      'beginners.txt',
-    ];
     await fsp.mkdir(workDir(), { recursive: true });
-    for (const name of files) {
+
+    // offsets.txt — 버전비교 우선(디스크 / olji master / 번들 중 최신). 게임 패치로 깨진 offset 자동 복구.
+    const offsetsChanged = await this.ensureOffsetsFile(RAW_BASE);
+
+    // 보조 파일 — 없으면 olji 에서 받기 (있으면 보존). Reflux 가 파일 없으면 죽으므로 빈 파일이라도.
+    for (const name of ['customtypes.txt', 'encodingfixes.txt', 'beginners.txt']) {
       const dest = join(workDir(), name);
       if (existsSync(dest)) continue;
       try {
         await downloadFile(`${RAW_BASE}/${name}`, dest, () => {});
       } catch (e) {
-        // 파일 못 받으면 일단 빈 파일이라도 만들어 둠 (Reflux 가 파일 없으면 죽으므로)
         await fsp.writeFile(dest, '', 'utf-8');
         console.warn(`[reflux] ${name} 다운로드 실패, 빈 파일 생성:`, (e as Error).message);
       }
     }
+    return offsetsChanged;
+  }
+
+  // offsets.txt 자동 갱신 — 디스크가 번들/olji 보다 구버전이면 최신으로 덮어쓰기.
+  //   앱을 켜기만 해도(startAll) 게임 패치로 깨진 offset 이 자동 복구된다.
+  //   우선순위: max(디스크, olji master, 번들). olji 가 우리 번들 이상으로 올라오면 olji 존중.
+  //   반환: 디스크 파일을 실제로 바꿨으면 true.
+  private async ensureOffsetsFile(RAW_BASE: string): Promise<boolean> {
+    const dest = join(workDir(), 'offsets.txt');
+    let diskVer = 0;
+    if (existsSync(dest)) {
+      try {
+        diskVer = offsetsVersionNum(await fsp.readFile(dest, 'utf-8'));
+      } catch {
+        /* 못 읽으면 0 으로 간주 → 번들로 덮어씀 */
+      }
+    }
+    // 후보 = 번들(항상 가용). olji master 가 더 최신이면 olji 우선.
+    let best = BUNDLED_OFFSETS;
+    let bestVer = BUNDLED_OFFSETS_VERSION;
+    try {
+      const res = await httpsGet(`${RAW_BASE}/offsets.txt`);
+      if (res.statusCode === 200 && res.data) {
+        const ojliVer = offsetsVersionNum(res.data);
+        if (ojliVer > bestVer) {
+          best = res.data;
+          bestVer = ojliVer;
+        }
+      }
+    } catch {
+      /* 오프라인 — 번들 사용 */
+    }
+    if (bestVer > diskVer) {
+      await fsp.writeFile(dest, best, 'utf-8');
+      this.addLine(`(offsets.txt 자동 갱신: ${diskVer || '없음'} → ${bestVer})`);
+      return true;
+    }
+    return false;
   }
 
   // Windows 의 `start` 명령으로 Reflux 를 띄움 (탐색기 더블클릭과 동일한 방식).

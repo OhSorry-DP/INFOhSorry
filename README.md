@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.74.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.74-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.75.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.75-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -89,6 +89,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 - **electron-builder 24** — Windows 배포 빌드
 
 ## 변경 이력
+
+### 0.0.75 — Reflux offsets 자동 갱신 (게임 패치 시 앱만 켜면 복구)
+- 게임 패치로 메모리 offset 이 이동하면 olji/Reflux master 가 따라잡기 전까지 라이브 트래킹(곡/점수)이 깨지던 문제 해소.
+- 최신 offsets 를 앱에 **번들**하고, 앱 시작(startAll)마다 **디스크 / olji master / 번들 버전을 비교**해 디스크가 구버전이면 자동으로 최신 덮어쓰기. olji 가 더 최신이면 olji 우선(버전비교 우선).
+- offsets 가 실제로 갱신되면 Reflux 를 **재시작**해 새 offset 을 다시 읽도록 처리.
+- 현재 번들: `P2D:J:B:A:2026060300`(6/3 INFINITAS 패치). 이후 패치 시 reflux.ts 의 `BUNDLED_OFFSETS` 갱신.
 
 ### 0.0.74 — 별값(★) 파이프라인 v3.4.0 교체 + RECENT DP/DBR 토글
 - **별값 파이프라인 v3.4.0(onlyOSR + toEreter) 전면 교체**
