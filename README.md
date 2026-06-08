@@ -90,6 +90,12 @@ npm run release          # NSIS + portable .exe 생성 (release/)
 
 ## 변경 이력
 
+### (미릴리즈) patterns 레벨 구간 분할 lazy 로드 (평소 11·12 만 fetch)
+- gist patterns 를 레벨 구간 3분할(1112/0810/rest)한 것에 맞춰, 평소엔 `patterns-dp-1112`(1.8MB)만 fetch (기존 `patterns-all-slim` 7MB).
+- `recommendCore`: 1112 기본 + `ensurePatternsLevel(libs, band)` 로 0810/rest 를 `libs.patterns` 에 in-place lazy 병합 (ohSorry / ohSorryWeb 과 동일 구조).
+- `App`: 추천 baseStar<6 또는 약점 zasaMin<11 일 때만 하위 구간 lazy 로드 후 recCtx 재생성. 평소(11·12)엔 미발생.
+- `Analysis` / `PlayData`: 약점 분석은 고렙 기준이라 1112 로 충분 (lazy 불필요).
+
 ### (미릴리즈) offsets gist 연동 — Reflux + 프로필 메모리 offset 원격 관리
 - gist `offsets.json` 한 파일로 **Reflux offsets + 프로필(djName/iidxId/단위) 메모리 offset** 통합 관리. INFINITAS 패치 시 gist 만 갱신하면 양쪽 자동 반영(재빌드 불필요).
 - `main/offsetsRemote.ts` 추가 — gist `offsets.json` fetch+캐시 (`{ version, reflux, profile }`).

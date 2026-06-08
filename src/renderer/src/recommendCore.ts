@@ -20,7 +20,11 @@ const SERIES_GIST = 'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9
 const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
 const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
 const RECOMMEND_URL = `${GIST_RAW}/recommend.js`;
-const PATTERNS_URL = `${GIST_RAW}/patterns-all-slim.json`;
+// 평소 11·12 만 fetch (7MB→1.8MB). 하위 레벨(8~10 / 1~7)은 추천이 저렙을 다룰 때만
+// ensurePatternsLevel 로 lazy 병합 (ohSorry / ohSorryWeb 과 동일 구조).
+const PATTERNS_URL = `${GIST_RAW}/patterns-dp-1112.json`;
+const PATTERNS_URL_0810 = `${GIST_RAW}/patterns-dp-0810.json`;
+const PATTERNS_URL_REST = `${GIST_RAW}/patterns-dp-rest.json`;
 const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
 const FEATURE_SCORES_URL = `${GIST_RAW}/feature-scores-slim.json`;
 const TEXTAGE_META_URL = `${GIST_RAW}/textage-meta.json`;
@@ -240,6 +244,33 @@ export async function loadRecLibs(): Promise<RecCoreLibs> {
     loadJson<Record<string, string>>(SERIES_NAME_URL).catch(() => ({} as Record<string, string>)),
   ]);
   return { weakness, normLib, recommend, patterns, rateRef, featureScores, textageMeta, seriesNames };
+}
+
+// 레벨 구간 lazy 병합 — 추천/약점이 하위 레벨(8~10 / 1~7)을 다룰 때만 호출.
+//   기본 1112 patternsMap (libs.patterns) 에 in-place 병합 → 이후 createRecCtx 가 같은 객체를
+//   참조하므로 자동 반영 (ohSorry loaders.ensurePatternsLevel 과 동일 로직).
+//   호출 후 createRecCtx 를 다시 돌려야 patternsTitleMap 이 병합분까지 재빌드됨.
+const patBandsByMap = new WeakMap<object, Set<string>>();
+export async function ensurePatternsLevel(libs: RecCoreLibs, band: '0810' | 'rest'): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const base = libs.patterns as Record<string, any>;
+  if (!base) return; // 기본 1112 아직 로드 전이면 skip (loadRecLibs 가 먼저)
+  const loaded = patBandsByMap.get(base) || new Set<string>(['1112']);
+  patBandsByMap.set(base, loaded);
+  if (loaded.has(band)) return;
+  const url = band === '0810' ? PATTERNS_URL_0810 : PATTERNS_URL_REST;
+  loaded.add(band);
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const data = await loadJson<Record<string, any>>(url);
+    for (const id in data) {
+      if (base[id]) Object.assign(base[id].c, data[id].c);
+      else base[id] = data[id];
+    }
+  } catch (e) {
+    loaded.delete(band);
+    console.warn(`[recommendCore] patterns ${band} lazy 로드 실패:`, (e as Error).message);
+  }
 }
 
 export interface RecContextInput {

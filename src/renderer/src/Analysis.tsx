@@ -13,7 +13,8 @@ import type { SongChart, RatingData, ZasaData } from '../../shared/types';
 import { IS_BROWSER_REMOTE } from './api';
 
 const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
-const PATTERNS_URL = `${GIST_RAW}/patterns-all-slim.json`;
+// 평소 11·12 만 fetch (7MB→1.8MB). 약점 분석은 고렙 기준이라 1112 로 충분.
+const PATTERNS_URL = `${GIST_RAW}/patterns-dp-1112.json`;
 const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
 const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
 const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;

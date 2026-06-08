@@ -21,7 +21,7 @@ import DpTable from './DpTable';
 import Analysis from './Analysis';
 import Recent from './Recent';
 import PlayData from './PlayData';
-import { loadRecLibs, createRecCtx, loadGistModule, GIST_RAW, type RecCoreLibs } from './recommendCore';
+import { loadRecLibs, createRecCtx, ensurePatternsLevel, loadGistModule, GIST_RAW, type RecCoreLibs } from './recommendCore';
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
@@ -975,6 +975,9 @@ export default function App() {
   //   마운트 1회만 fetch. ctx 는 rows / rating / zasa / ereter 변경 시 재생성.
   //   ctx 활용해서 추천곡 별 chartStrengthMatchByHand + computeRecHashtags 결과를 Map 으로.
   const [recLibs, setRecLibs] = useState<RecCoreLibs | null>(null);
+  // patterns 하위 구간(0810/rest) lazy 병합이 끝날 때마다 +1 → recCtx 재생성 트리거.
+  //   ensurePatternsLevel 이 recLibs.patterns 를 in-place 병합하므로 ctx 만 다시 돌리면 병합분 반영.
+  const [patBandsReady, setPatBandsReady] = useState(0);
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -1023,7 +1026,7 @@ export default function App() {
       console.warn('[App] recCtx 생성 실패:', (e as Error).message);
       return null;
     }
-  }, [recLibs, rows, ratingData, zasaData, ereterData, isInfChart]);
+  }, [recLibs, rows, ratingData, zasaData, ereterData, isInfChart, patBandsReady]);
 
   const lastRerollEC = useRef(-1);
   const lastRerollHC = useRef(-1);
@@ -1167,6 +1170,20 @@ export default function App() {
   // zasa ★ 범위 — null 이면 recommend.js 의 default (practiceZasaDefault: {min:11.6, max:12.7}) 사용.
   const [weakZasaMin, setWeakZasaMin] = useState<number | null>(null);
   const [weakZasaMax, setWeakZasaMax] = useState<number | null>(null);
+  // 하위 레벨 patterns lazy 병합 트리거 — 추천 baseStar 가 저렙(<6)이거나 약점 zasaMin 이 11 미만일 때만
+  //   0810 / rest 구간을 받아 recLibs.patterns 에 병합 (ohSorryWeb users.js 와 동일 조건). 평소(11·12)엔 미발생.
+  useEffect(() => {
+    if (!recLibs) return;
+    const needLow = (ohsorryRecBase != null && ohsorryRecBase < 6) || (weakZasaMin != null && weakZasaMin < 11);
+    if (!needLow) return;
+    let cancelled = false;
+    void (async () => {
+      await ensurePatternsLevel(recLibs, '0810');
+      await ensurePatternsLevel(recLibs, 'rest');
+      if (!cancelled) setPatBandsReady((n) => n + 1);
+    })();
+    return () => { cancelled = true; };
+  }, [recLibs, ohsorryRecBase, weakZasaMin]);
   // recCtx 의 practiceZasaDefault 를 표시용 fallback 으로 노출. ctx 없으면 안전 default.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const weakZasaDefault: { min: number; max: number } = useMemo(() => {
