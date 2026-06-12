@@ -200,9 +200,9 @@ export default function App() {
   // tsv 읽기 정책 (0.0.41 변경):
   //   - 마운트 시 readTsv 호출 안 함 — 옛 stale tsv 가 race condition 으로 보이던 문제 해소.
   //   - 대신 Reflux spawn 완료 (spawned: false → true) 시점에 readTsv 1회 자동 호출.
-  //   - 그 후 1분 timer (STAR_REFRESH_INTERVAL_MS) 가 매 60초마다 추가로 자동 갱신.
+  //   - 그 후 tracker.tsv 변경 시 실시간 reload effect 가 즉시 갱신 (Supabase 업로드는 3분 timer).
   //
-  // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 1분마다 자동 갱신.
+  // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 이후 tsv 변경마다 실시간 갱신.
   // (옛 동작: 마운트 즉시 옛 tsv 표시 → race condition 으로 stale 데이터 영구 노출 가능했음)
   const prevSpawnedRef = useRef(false);
   useEffect(() => {
@@ -351,8 +351,25 @@ export default function App() {
     }
   }
 
-  // (이전: Reflux 의 lastTsvMtime 변화 감지 → 자동 reload. 제거됨.)
-  // 실력값 추정 + tsv 재읽기는 별도 1분 timer 로만 trigger (Reflux 이벤트 안 받음).
+  // tracker.tsv 실시간 재읽기 — Reflux 가 mtime 변경을 감지하면(watchTsv → onState) 즉시 reload.
+  //   "읽기는 실시간, Supabase 업로드는 3분" 분리 정책. 업로드/vec 는 아래 3분 timer 가 담당.
+  //   debounce 400ms — 메모리 덤프가 짧은 간격으로 연속 갱신될 때 loadTsv 폭주 방지.
+  //   (0.0.41~0.0.75 에선 race 우려로 이 이벤트 reload 를 끄고 timer 로만 읽었으나, 실시간성 위해 부활.
+  //    옛 ID 잘못 업로드 사고는 loadTsv 의 rowsSourceIidxIdRef 태깅 + 업로드 가드가 별도로 막음.)
+  const liveReloadRef = useRef({ loadTsv: (_p: string): Promise<void> => Promise.resolve(), tsvPath });
+  const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;                  // 원격(PC2)은 호스트가 읽어 push — 중복 방지
+    const mtime = refluxState.lastTsvMtime;
+    if (!mtime) return;
+    const { loadTsv: lt, tsvPath: path } = liveReloadRef.current;
+    if (!path) return;
+    if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
+    reloadDebounceRef.current = window.setTimeout(() => { void lt(path); }, 400);
+    return () => {
+      if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
+    };
+  }, [refluxState.lastTsvMtime]);
 
   async function loadTsv(path: string): Promise<void> {
     setError(null);
@@ -369,6 +386,8 @@ export default function App() {
       setError((e as Error).message);
     }
   }
+  // 실시간 reload effect 가 최신 loadTsv / tsvPath 를 참조하도록 매 렌더 갱신 (위 useEffect 의 dep 최소화용).
+  liveReloadRef.current = { loadTsv, tsvPath };
 
   // "데이터 불러오기" 버튼 — Reflux 설치 + 실행 한 번에
   async function startReflux(): Promise<void> {
@@ -863,8 +882,9 @@ export default function App() {
     return () => { cancelled = true; };
   }, [profile.iidxId]);
 
-  // 실력값 추정 + Supabase 업로드 — 1분 주기 (이전엔 Reflux mtime 이벤트 + 3분 upload).
-  // 새 동작: 1분마다 tracker.tsv 강제 재읽기 → rows 갱신 → dp12StarResult 자동 재계산 → upload.
+  // 실력값 추정 + Supabase 업로드 — 3분 주기 (STAR_REFRESH_INTERVAL_MS).
+  // tsv 재읽기는 위 실시간 reload effect(refluxState.lastTsvMtime 감지)가 담당 →
+  //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
   const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match, tsvPath });
@@ -919,15 +939,11 @@ export default function App() {
     (window as unknown as { updateSupabase: () => void }).updateSupabase = (): void =>
       tryUpload('manual');
 
-    // 3분마다: tsv 강제 재읽기 → 500ms 뒤 star upload → 추가 200ms 뒤 vec 재계산 + upsert.
-    //   순차처리: rows 갱신 → star (dp12StarResult) upload → Analysis 의 vec 재계산 + supabase os_* upsert.
+    // 3분마다: Supabase star upload → 200ms 뒤 vec 재계산 + upsert.
+    //   tsv 재읽기는 위 실시간 reload effect(refluxState.lastTsvMtime 감지)가 담당 — 읽기/업로드 분리.
     const interval = window.setInterval(() => {
-      const path = uploadStateRef.current.tsvPath;
-      if (path) void loadTsv(path);
-      setTimeout(() => {
-        tryUpload('auto');
-        setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
-      }, 500);
+      tryUpload('auto');
+      setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
     }, STAR_REFRESH_INTERVAL_MS);
     console.log(`[supabase] 실력값 추정 + 업로드 + pattern vec 활성화 — ${STAR_REFRESH_INTERVAL_MS / 1000}초 간격, 수동: updateSupabase()`);
 
