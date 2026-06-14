@@ -36,6 +36,8 @@ const refluxManager = new RefluxManager();
 // 원격모드(LAN 로컬보드) — renderer 가 계산해 push 한 오소리웹 user 객체(별값 + charts_json) 캐시.
 //   http-server 의 GET /api/me 가 이 값을 노출 → 오소리웹 원격 카드가 supabase 대신 읽음.
 let remoteUser: unknown = null;
+// SSE me:update broadcaster — startHttpServer 가 채움. setUser 시 PC2 에 갱신 알림용.
+let notifyMeUpdate: (() => void) | null = null;
 
 // 모든 IPC handler 를 단일 map 에. ipcMain.handle + HTTP /api/ipc 둘 다 같은 함수.
 // 시그니처: (...args) → Promise<any> | any. event 파라미터는 ipcMain.handle wrapper 에서 제거.
@@ -498,8 +500,10 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
   // 원격모드 — renderer 가 user 객체(별값 + charts_json)를 계산해 push. http-server /api/me 가 노출.
+  //   갱신될 때마다 SSE 로 PC2(오소리웹 ?remote)에 me:update 알림 → 보고 있는 본인 카드 조용히 재렌더.
   'remote:setUser': (user: unknown) => {
     remoteUser = user;
+    notifyMeUpdate?.();
     return { ok: true };
   },
 };
@@ -582,7 +586,8 @@ app.whenReady().then(() => {
   if (!process.env.ELECTRON_RENDERER_URL) {
     const rendererDir = join(__dirname, '../renderer');
     try {
-      startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'));
+      const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'));
+      notifyMeUpdate = http.notifyMeUpdate;
     } catch (e) {
       console.warn('[http] 서버 시작 실패:', (e as Error).message);
     }

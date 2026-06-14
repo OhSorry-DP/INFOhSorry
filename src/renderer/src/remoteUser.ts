@@ -2,8 +2,9 @@
 //   http-server 의 GET /api/me 가 이 객체를 노출 → 오소리웹 fetchUserProfile 의 원격 분기(?remote)가
 //   supabase 대신 읽는다. 필드 매핑은 ohSorryWeb/modules/api.js 의 fetchUserProfile / viewRowToChart
 //   반환 형식과 1:1 (어긋나면 카드가 안 그려짐).
-import type { StarResult } from '../../shared/types';
+import type { SongChart, SpTierData, StarResult } from '../../shared/types';
 import type { RecInputChart } from '../../shared/recommend';
+import { lampNum, slotToDiff } from '../../shared/match';
 
 interface RemoteProfile {
   iidxId: string | null;
@@ -43,13 +44,50 @@ function toChartJson(c: ChartLike): unknown {
   };
 }
 
+// SongChart(SP TSV 추출) → 오소리웹 charts_json 항목. DP charts_json 과 동일 형식 + playStyle:'SP'.
+//   소스 비종속 설계 — 나중에 오소리본체가 supabase 에 SP 를 실으면 같은 형식이 그대로 재사용됨.
+//   SP 는 별값/zasa 매칭이 없어 level/zasaLevel/ereterLevel 은 null (PlayData 는 gameLevel 로 그림).
+function spChartToJson(c: SongChart): unknown {
+  const diff = slotToDiff(c.slot);
+  return {
+    title: c.title,
+    diff,
+    slot: c.slot,
+    playStyle: 'SP',
+    lamp: c.lamp,
+    lampNum: lampNum(c.lamp),
+    exScore: typeof c.exScore === 'number' ? c.exScore : 0,
+    prevLamp: null,
+    prevExScore: null,
+    prevPlayedVersion: null,
+    djLevel: c.letter || null,
+    prevDjLevel: null,
+    gameLevel: typeof c.level === 'number' ? c.level : null,
+    level: null,
+    zasaLevel: null,
+    ereterLevel: c.ereterLevel ?? null,
+    pgreat: null,
+    great: null,
+    missCount: typeof c.missCount === 'number' ? c.missCount : null,
+    noteCount: typeof c.noteCount === 'number' ? c.noteCount : null,
+    unlocked: c.unlocked ?? true,
+    date: null,
+    __songId: null,
+    __playedVersion: 0,
+    __textageSongId: null,
+  };
+}
+
 // INF 로컬 값(profile + 별값 + 분류/미분류 charts) → 오소리웹 user 객체.
 //   notes_radar / os_pattern_score 는 옵션(null) — 카드 내부 calcWeakness 가 charts_json 으로 패턴 보강.
+//   spCharts / spTier12 는 원격모드 SP 표시용 (소스 비종속 — 추후 DB 백필 시 같은 필드 재사용).
 export function buildRemoteUser(
   profile: RemoteProfile,
   starResult: StarResult,
   charts: RecInputChart[],
   unclassified: Array<Omit<RecInputChart, 'level'>>,
+  spCharts?: SongChart[],
+  spTier12?: SpTierData | null,
 ): unknown {
   const allCharts: ChartLike[] = [...charts, ...unclassified];
   return {
@@ -63,6 +101,9 @@ export function buildRemoteUser(
     series: 'INF',
     played_version: 0,
     charts_json: allCharts.map(toChartJson),
+    // SP — 친 모든 SP 채보(전 레벨/시리즈) + SP12 서열표. 오소리웹이 ?remote 에서 SP 모드로 표시.
+    sp_charts_json: Array.isArray(spCharts) ? spCharts.map(spChartToJson) : [],
+    sp_tier12: spTier12 ?? null,
     notes_radar: null,
     os_pattern_score: null,
     _ratingData: null,

@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.78 — 2026-06-14 원격모드 ⑤본인 카드 진입 + ⑥SSE 실시간 갱신 + SP 데이터 토대
+- **SP 데이터 노출(원격모드)** — `remoteUser.ts`: `spChartToJson` + `buildRemoteUser(…, spCharts, spTier12)` 로 `/api/me` 에 `sp_charts_json`(친 모든 SP 채보, DP charts_json 과 동일 형식 + playStyle:'SP') + `sp_tier12`(SP12 서열표) 추가. `App.tsx`: `spAllCharts`(전 레벨/시리즈 SP 플레이 채보) + setUser 에 spTierData 전달. 소스 비종속 설계 — 추후 오소리본체가 supabase 에 SP 백필(play_style 컬럼) 시 같은 필드 재사용. (오소리웹 SP 모드 UI 는 ohSorryWeb CHANGELOG.)
+- **⑥ SSE 실시간 갱신** — `http-server.ts`: `setupSseBroadcast` 에 `notifyMeUpdate()`(SSE `me:update` 이벤트) 추가, `startHttpServer` 가 이를 반환. `index.ts`: `remote:setUser` IPC 가 호출될 때마다 `me:update` broadcast → PC2(오소리웹 `?remote`)가 보고 있는 본인 카드를 새로고침 없이 조용히 다시 그림.
+- **⑥ 실시간 push 분리** — `App.tsx`: 원격모드 본인 카드(`setUser`)를 3분 supabase 업로드 타이머에서 떼어내 **dp12(별값/매칭) 재계산 즉시** push 하는 별도 effect 로 이동. 플레이 직후 곧장 반영(이전엔 최대 3분 지연), supabase 업로드는 그대로 3분 주기.
+- (⑤ 본인 카드 자동 진입 / 유저 목록 최상단 핀 / 조용한 제자리 갱신 UI 는 오소리웹쪽 변경 — ohSorryWeb CHANGELOG 참고.)
+
 ### v0.0.77 — 2026-06-14 원격모드(LAN 로컬보드) 오소리웹 카드 — 본인 실시간 표시
 - LAN 원격모드(`http://PC-IP:3000`)에서 INF 자체 UI 대신 **오소리웹 카드**를 띄우고 본인 플레이데이터·별값을 **실시간** 표시 (매번 오소리웹→INF 포팅을 없애고 UI 를 오소리웹 단일 소스로).
 - `http-server.ts`: `GET /api/me`(renderer 가 계산한 별값 + charts_json 을 로컬 실시간 노출) + `/osr/*` 오소리웹 서빙(vercel 캐시/프록시 — 오프라인 캐시 A + 최신화 B). `remote:setUser` IPC 로 renderer→main user push.

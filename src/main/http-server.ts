@@ -166,6 +166,7 @@ async function handleIpc(
 // EventSource 가 자동 재연결하므로 서버는 client 끊기면 set 에서 제거만 하면 됨.
 function setupSseBroadcast(refluxManager: RefluxManager): {
   attach: (req: http.IncomingMessage, res: http.ServerResponse) => void;
+  notifyMeUpdate: () => void;
 } {
   const clients = new Set<http.ServerResponse>();
 
@@ -215,6 +216,9 @@ function setupSseBroadcast(refluxManager: RefluxManager): {
       req.on('close', cleanup);
       req.on('error', cleanup);
     },
+    // 원격모드 본인 카드 갱신 신호 — renderer 가 setUser 로 /api/me 를 새로 채울 때마다 호출.
+    //   PC2(오소리웹 ?remote)가 이 이벤트를 받아 보고 있는 본인 카드를 조용히 다시 fetch/렌더.
+    notifyMeUpdate: () => broadcast('me:update', { ts: Date.now() }),
   };
 }
 
@@ -224,7 +228,7 @@ export function startHttpServer(
   ipcHandlers: IpcHandlers,
   getRemoteUser?: () => unknown,
   osrCacheDir?: string,
-): http.Server {
+): { server: http.Server; notifyMeUpdate: () => void } {
   const sse = setupSseBroadcast(refluxManager);
 
   const server = http.createServer(async (req, res) => {
@@ -305,5 +309,5 @@ export function startHttpServer(
     console.log(`[http] LAN 원격 제어 서버 :${PORT}`);
     for (const ip of ips) console.log(`         http://${ip}:${PORT}`);
   });
-  return server;
+  return { server, notifyMeUpdate: sse.notifyMeUpdate };
 }

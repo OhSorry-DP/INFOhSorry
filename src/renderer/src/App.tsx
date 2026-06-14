@@ -520,6 +520,16 @@ export default function App() {
     [rows, notInInfSet],
   );
 
+  // 원격모드 SP — 친 모든 SP 채보(전 레벨/시리즈, 플레이한 것만). /api/me 의 sp_charts_json 으로 실어
+  //   오소리웹 카드가 SP 모드 PlayData/연습추천/통계에 사용. (미플레이는 제외 — payload 축소, 폴더는 textage 로 채움.)
+  const spAllCharts = useMemo(
+    () =>
+      extractCharts(rows, { slots: SP_SLOTS }).filter(
+        (c) => lampNum(c.lamp) > 0 || c.exScore > 0,
+      ),
+    [rows],
+  );
+
   // 서열표 미분류 곡 JSON payload — ereter / ratingMap / zasaData 셋 다 매칭 안 된 곡 (lv11+lv12).
   const unclassifiedJson = useMemo(() => {
     const toEntry = (c: typeof dp12Charts[number], gameLevel: 11 | 12) => {
@@ -923,8 +933,7 @@ export default function App() {
         return;
       }
       console.log(`${tag} 업로드 시작 → iidxId:`, p.iidxId, 'star:', s.star.toFixed(2));
-      // 원격모드 본인 카드 — main 에 오소리웹 user 객체(별값 + charts_json) push → http-server /api/me 노출.
-      void window.infohsorry.remote.setUser(buildRemoteUser(p, s, m.charts, m.unclassifiedCharts));
+      // (원격모드 본인 카드 setUser 는 아래 별도 effect 가 dp12 재계산 즉시 실시간 push — 3분 supabase 업로드와 분리.)
       void uploadProfile({
         appVersion: APP_VERSION,
         profile: p,
@@ -975,6 +984,21 @@ export default function App() {
     const fn = (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial;
     if (fn) fn();
   }, [profile, dp12StarResult, dp12Match]);
+
+  // 원격모드 본인 카드 — 실시간 push. TSV 변경으로 dp12(별값/매칭)가 재계산될 때마다 /api/me 를 갱신하고,
+  //   main 이 SSE me:update 를 broadcast → PC2(오소리웹 ?remote)가 보고 있는 본인 카드를 조용히 다시 그림.
+  //   supabase 업로드(3분 주기, 위 effect)와 분리 — 화면 반영은 플레이 즉시, DB 부하는 그대로 3분.
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
+    if (!profile.iidxId || !profile.djName) return;
+    if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return;
+    // rows 출처 ID 가드 — ID 전환 직후 옛 덤프로 만든 카드를 올리지 않게 (업로드 가드와 동일 정책).
+    if (rowsSourceIidxIdRef.current && rowsSourceIidxIdRef.current !== profile.iidxId) return;
+    if (!dp12StarResult || !dp12Match) return;
+    void window.infohsorry.remote.setUser(
+      buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData),
+    );
+  }, [profile, dp12StarResult, dp12Match, spAllCharts, spTierData]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:
