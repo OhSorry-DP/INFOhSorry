@@ -202,6 +202,12 @@ const api = {
       };
     },
   },
+
+  // 원격모드(LAN 로컬보드) — renderer 가 계산한 오소리웹 user 객체(별값 + charts_json)를 main 에 push.
+  //   http-server /api/me 가 이 값을 노출 → 폰 등 원격 클라이언트가 본인 카드를 실시간으로 받음.
+  remote: {
+    setUser: (user: unknown): Promise<{ ok: boolean }> => ipcRenderer.invoke('remote:setUser', user),
+  },
 };
 
 contextBridge.exposeInMainWorld('infohsorry', api);

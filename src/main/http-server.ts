@@ -11,12 +11,14 @@
 // production 빌드 (npm run release) 에서만 시작 — dev 모드는 vite 가 :5173 띄움.
 import http from 'http';
 import { promises as fsp } from 'fs';
-import { extname, join } from 'path';
+import { extname, join, dirname } from 'path';
 import { networkInterfaces } from 'os';
 import { RefluxManager } from './reflux';
 import type { RefluxState } from '../shared/types';
 
 const PORT = 3000;
+// 원격모드 오소리웹 서빙 — vercel 배포본을 받아 로컬 캐시(A: 오프라인) + 캐시 비우면 재fetch(B: 최신화).
+const OSR_ORIGIN = 'https://ohsorry.vercel.app';
 
 function mimeOf(ext: string): string {
   switch (ext.toLowerCase()) {
@@ -51,6 +53,46 @@ export function lanAddresses(): string[] {
     }
   }
   return out;
+}
+
+// /osr/* → 오소리웹 정적 서빙. 로컬 캐시 우선(A: 오프라인), 없으면 vercel 에서 받아 캐시(B: 최신화).
+//   오소리웹은 상대경로(./modules/, ./styles.css)라 /osr/ 하위에서 그대로 동작.
+//   오소리웹의 /api/me 는 절대경로 → 루트로 가서 INF http-server 가 처리(same-origin, mixed content 없음).
+async function serveOsr(
+  urlPath: string,
+  osrCacheDir: string,
+  res: http.ServerResponse,
+): Promise<void> {
+  let rel = urlPath.replace(/^\/osr\/?/, '');
+  if (rel === '' || rel.endsWith('/')) rel = rel + 'index.html';
+  rel = rel.split('/').filter((s) => s && s !== '..').join('/'); // 경로 탈출 방지
+  const cachePath = join(osrCacheDir, rel);
+  let buf: Buffer | null = null;
+  try {
+    buf = await fsp.readFile(cachePath);
+  } catch {
+    try {
+      const resp = await fetch(`${OSR_ORIGIN}/${rel}`);
+      if (!resp.ok) {
+        res.writeHead(resp.status, { 'content-type': 'text/plain; charset=utf-8' });
+        res.end(`osr fetch ${resp.status}`);
+        return;
+      }
+      buf = Buffer.from(await resp.arrayBuffer());
+      await fsp.mkdir(dirname(cachePath), { recursive: true });
+      await fsp.writeFile(cachePath, buf).catch(() => {});
+    } catch (e) {
+      res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
+      res.end('osr proxy fail: ' + (e as Error).message);
+      return;
+    }
+  }
+  res.writeHead(200, {
+    'content-type': mimeOf(extname(rel)),
+    'access-control-allow-origin': '*',
+    'cache-control': 'no-cache',
+  });
+  res.end(buf);
 }
 
 async function readBody(req: http.IncomingMessage, maxBytes = 50 * 1024 * 1024): Promise<string> {
@@ -180,6 +222,8 @@ export function startHttpServer(
   refluxManager: RefluxManager,
   rendererDir: string,
   ipcHandlers: IpcHandlers,
+  getRemoteUser?: () => unknown,
+  osrCacheDir?: string,
 ): http.Server {
   const sse = setupSseBroadcast(refluxManager);
 
@@ -207,6 +251,25 @@ export function startHttpServer(
       // SSE event stream — reflux state push (5초 polling 대체)
       if (urlPath === '/api/events' && req.method === 'GET') {
         sse.attach(req, res);
+        return;
+      }
+
+      // 원격모드 본인 카드 — renderer 가 계산해 push 한 오소리웹 user 객체(별값 + charts_json)를 로컬 실시간 노출.
+      //   오소리웹 fetchUserProfile 의 원격 분기(?remote)가 supabase 대신 이 엔드포인트를 읽는다.
+      if (urlPath === '/api/me' && req.method === 'GET') {
+        const user = getRemoteUser ? getRemoteUser() : null;
+        res.writeHead(user ? 200 : 404, {
+          'content-type': 'application/json; charset=utf-8',
+          'access-control-allow-origin': '*',
+          'cache-control': 'no-cache',
+        });
+        res.end(JSON.stringify(user ?? { error: 'no remote user yet' }));
+        return;
+      }
+
+      // 원격모드 오소리웹 — /osr/* 를 vercel 캐시/프록시로 서빙 (A 동봉/오프라인 + B 최신화).
+      if (osrCacheDir && (urlPath === '/osr' || urlPath.startsWith('/osr/'))) {
+        await serveOsr(urlPath, osrCacheDir, res);
         return;
       }
 

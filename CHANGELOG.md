@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.77 — 2026-06-14 원격모드(LAN 로컬보드) 오소리웹 카드 — 본인 실시간 표시
+- LAN 원격모드(`http://PC-IP:3000`)에서 INF 자체 UI 대신 **오소리웹 카드**를 띄우고 본인 플레이데이터·별값을 **실시간** 표시 (매번 오소리웹→INF 포팅을 없애고 UI 를 오소리웹 단일 소스로).
+- `http-server.ts`: `GET /api/me`(renderer 가 계산한 별값 + charts_json 을 로컬 실시간 노출) + `/osr/*` 오소리웹 서빙(vercel 캐시/프록시 — 오프라인 캐시 A + 최신화 B). `remote:setUser` IPC 로 renderer→main user push.
+- `remoteUser.ts`: INF 로컬값(별값 `StarResult` + `RecInputChart[]`) → 오소리웹 `user` 객체 어댑터(charts_json rename). `App.tsx` 가 supabase 업로드 시점에 함께 push.
+- 사용: 폰 등 원격 클라이언트 → `http://PC-IP:3000/osr/?remote` → 오소리웹 + 본인 카드. (오소리웹은 `?remote` 일 때만 `/api/me` 분기 — 일반 사용자 무영향.)
+
 ### v0.0.76 — 2026-06-13 tracker.tsv 실시간 reload + 문서 구조 개편
 - `tracker.tsv` 변경 시 **실시간 reload**(debounce 400ms) 부활 — UI 곡 표/별값을 즉시 갱신. Supabase 업로드는 3분 주기로 분리(이전엔 3분 timer 가 읽기+업로드를 함께 처리). 옛 ID 오업로드는 `rowsSourceIidxIdRef` 태깅 + 업로드 가드가 그대로 방어.
 - 문서: README 를 앱 사용법 중심으로 정리, 개발 상세는 `docs/`(architecture / memory-reading / data-flow / ipc-reference) 로 분리, 변경 이력은 `CHANGELOG.md` 로 분리.

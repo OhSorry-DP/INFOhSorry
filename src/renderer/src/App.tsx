@@ -27,6 +27,7 @@ import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
 import { useProfile } from './useProfile';
 import { uploadProfile, fetchUserPublic, getInfChartChecker, type UserPublicInfo } from './supabaseSync';
+import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
@@ -922,6 +923,8 @@ export default function App() {
         return;
       }
       console.log(`${tag} 업로드 시작 → iidxId:`, p.iidxId, 'star:', s.star.toFixed(2));
+      // 원격모드 본인 카드 — main 에 오소리웹 user 객체(별값 + charts_json) push → http-server /api/me 노출.
+      void window.infohsorry.remote.setUser(buildRemoteUser(p, s, m.charts, m.unclassifiedCharts));
       void uploadProfile({
         appVersion: APP_VERSION,
         profile: p,

@@ -146,6 +146,9 @@ declare global {
         isMaximized: () => Promise<boolean>;
         onMaximizedChange: (cb: (maximized: boolean) => void) => () => void;
       };
+      remote: {
+        setUser: (user: unknown) => Promise<{ ok: boolean }>;
+      };
     };
   }
 }

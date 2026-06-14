@@ -239,6 +239,11 @@ if (!IS_HOST) {
       isMaximized: async () => false,
       onMaximizedChange: () => () => {},
     },
+    // 브라우저 원격(폰)에선 setUser 를 직접 쓰지 않지만(본인 user push 는 PC 본체가 함), 타입 일치 위해 bridge 제공.
+    remote: {
+      setUser: (user: unknown) =>
+        callIpc('remote:setUser', user) as Promise<{ ok: boolean }>,
+    },
   };
   (window as unknown as { infohsorry: Window['infohsorry'] }).infohsorry = bridge;
   console.log('[api] browser 환경 — HTTP bridge 활성');
