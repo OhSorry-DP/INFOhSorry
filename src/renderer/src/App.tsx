@@ -988,6 +988,9 @@ export default function App() {
   // 원격모드 본인 카드 — 실시간 push. TSV 변경으로 dp12(별값/매칭)가 재계산될 때마다 /api/me 를 갱신하고,
   //   main 이 SSE me:update 를 broadcast → PC2(오소리웹 ?remote)가 보고 있는 본인 카드를 조용히 다시 그림.
   //   supabase 업로드(3분 주기, 위 effect)와 분리 — 화면 반영은 플레이 즉시, DB 부하는 그대로 3분.
+  // profile(useProfile) 은 매 렌더 새 객체라 effect 가 매 렌더 fire → 내용 안 바뀌어도 setUser 폭주 →
+  //   SSE me:update 폭주 → 오소리웹 카드가 계속 재렌더되던 문제. 내용 시그니처로 dedup, 바뀔 때만 push.
+  const lastRemoteSigRef = useRef('');
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
     if (!profile.iidxId || !profile.djName) return;
@@ -995,6 +998,18 @@ export default function App() {
     // rows 출처 ID 가드 — ID 전환 직후 옛 덤프로 만든 카드를 올리지 않게 (업로드 가드와 동일 정책).
     if (rowsSourceIidxIdRef.current && rowsSourceIidxIdRef.current !== profile.iidxId) return;
     if (!dp12StarResult || !dp12Match) return;
+    const sumEx = (arr: { exScore?: number | null }[]): number =>
+      arr.reduce((s, c) => s + (typeof c.exScore === 'number' ? c.exScore : 0), 0);
+    const sig = [
+      profile.iidxId,
+      dp12StarResult.star.toFixed(3),
+      dp12Match.charts.length + ':' + sumEx(dp12Match.charts),
+      dp12Match.unclassifiedCharts.length,
+      spAllCharts.length + ':' + sumEx(spAllCharts),
+      spTierData ? '1' : '0',
+    ].join('|');
+    if (sig === lastRemoteSigRef.current) return;  // 내용 동일 → push 안 함 (재렌더 폭주 방지)
+    lastRemoteSigRef.current = sig;
     void window.infohsorry.remote.setUser(
       buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData),
     );

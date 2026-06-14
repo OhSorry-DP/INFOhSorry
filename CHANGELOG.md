@@ -2,6 +2,9 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.80 — 2026-06-14 원격모드 setUser push dedup (카드 무한 재렌더 수정)
+- `App.tsx`: 원격모드 실시간 setUser effect 가 `profile`(useProfile, 매 렌더 새 객체) 의존으로 **매 렌더 fire → setUser 폭주 → SSE me:update 폭주 → 오소리웹 카드가 계속 재렌더**되던 문제. 내용 시그니처(iidx·star·charts 길이/exScore합·SP 길이·tier)로 dedup — 실제로 바뀔 때만 push.
+
 ### v0.0.79 — 2026-06-14 /osr 프록시 네트워크 우선(stale 웹 수정)
 - `http-server.ts` `serveOsr`: **캐시 우선 → 네트워크 우선**으로 변경. 매 요청마다 cache-bust 쿼리(`?t=`)로 오소리웹을 받아 항상 최신 서빙, 네트워크 실패 시에만 디스크 캐시 fallback. (이전엔 캐시가 있으면 영원히 stale, 또는 CDN edge 가 옛 파일을 캐시해 새 배포(SP 토글·본인행 핀 등)가 폰에 안 뜨던 문제.) `OSR_ORIGIN` 을 정본 도메인 `ohsorry.iidx.in`(vercel.app 은 여기로 308)로 직접 지정해 리다이렉트 라운드트립 제거.
 
