@@ -2,6 +2,10 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.81 — 2026-06-14 SP10~12 기록 supabase 적재 (play_style:0)
+- `supabaseSync.ts`: `uploadProfile` 에 `spCharts` 입력 추가 → SP 채보 중 **gameLevel 10·11·12** 만 추려 `upsert_scores` 에 **`play_style:0`** 으로 함께 전송(played_version=0 INF, song_id 는 곡 단위라 DP 와 공유, songs 미등록 곡은 skip). dedup 키에 play_style 포함(SP/DP 클라단 충돌 방지). `ScoreRow` 에 play_style 필드, DP 행은 play_style:1 명시.
+- `App.tsx`: 3분 주기 업로드 `uploadStateRef` 에 `spAllCharts` 추가 → 최신 SP 기록으로 업로드. (오소리웹 DP 화면은 RPC 의 play_style=1 필터로 SP 안 섞임 — ohSorryAdmin sql/04·05.)
+
 ### v0.0.80 — 2026-06-14 원격모드 setUser push dedup (카드 무한 재렌더 수정)
 - `App.tsx`: 원격모드 실시간 setUser effect 가 `profile`(useProfile, 매 렌더 새 객체) 의존으로 **매 렌더 fire → setUser 폭주 → SSE me:update 폭주 → 오소리웹 카드가 계속 재렌더**되던 문제. 내용 시그니처(iidx·star·charts 길이/exScore합·SP 길이·tier)로 dedup — 실제로 바뀔 때만 push.
 

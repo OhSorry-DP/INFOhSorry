@@ -898,8 +898,8 @@ export default function App() {
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match, tsvPath });
-  uploadStateRef.current = { profile, dp12StarResult, dp12Match, tsvPath };
+  const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match, tsvPath, spAllCharts });
+  uploadStateRef.current = { profile, dp12StarResult, dp12Match, tsvPath, spAllCharts };
   // Analysis 의 vec 재계산 + supabase upsert 트리거 — 동일 timer 가 star upload 후 증가시킴
   const [vecRecomputeKey, setVecRecomputeKey] = useState(0);
 
@@ -907,7 +907,7 @@ export default function App() {
     if (IS_BROWSER_REMOTE) return;
 
     const tryUpload = (trigger: 'auto' | 'manual' | 'initial'): void => {
-      const { profile: p, dp12StarResult: s, dp12Match: m } = uploadStateRef.current;
+      const { profile: p, dp12StarResult: s, dp12Match: m, spAllCharts: spAll } = uploadStateRef.current;
       const tag = `[supabase:${trigger}]`;
       if (!p.iidxId || !p.djName) {
         console.log(`${tag} skip: 프로필 미로드`, { iidxId: p.iidxId, djName: p.djName });
@@ -941,6 +941,7 @@ export default function App() {
         charts: m.charts,
         // 서열표 '미분류' 곡 — charts_json 에만 합쳐 올림 (lamp 통계는 m.charts 만 집계)
         unclassifiedCharts: m.unclassifiedCharts,
+        spCharts: spAll,   // SP 차트 — 업로더가 gameLevel 10~12 만 play_style:0 으로 적재
       }).then((r) => {
         if (r.ok) console.log(`${tag} 업로드 성공`);
         else console.warn(`${tag} upsert 실패:`, r.error);

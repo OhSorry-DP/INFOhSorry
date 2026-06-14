@@ -15,9 +15,9 @@
 //
 // fire-and-forget — 실패해도 사용자 경험에 영향 X.
 import type { ProfileInfo } from './useProfile';
-import type { StarResult } from '../../shared/types';
+import type { StarResult, SongChart } from '../../shared/types';
 import type { RecInputChart } from '../../shared/recommend';
-import { norm } from '../../shared/match';
+import { norm, slotToDiff } from '../../shared/match';
 
 const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
@@ -229,6 +229,8 @@ export interface UploadInput {
   starResult: StarResult;
   charts: RecInputChart[]; // dp12Match.charts (★11.6~12.7 ereter 매칭된 차트) + unclassified 도 합쳐 올림
   unclassifiedCharts?: Omit<RecInputChart, 'level'>[];
+  // SP 차트 (전체) — gameLevel 10~12 만 추려 play_style:0 으로 함께 업로드.
+  spCharts?: SongChart[];
   // 선택: ereter 매핑 있으면 함께 (대개 INF ID 는 ereter 에 없어 null)
   ereterStar?: number | null;
 }
@@ -240,6 +242,7 @@ interface ScoreRow {
   lamp: number | null;
   ex_score: number | null;
   played_version: number;
+  play_style: number;   // 0=SP, 1=DP
   date: string;
 }
 
@@ -359,9 +362,10 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
       lamp: lampInt,
       ex_score: exScore,
       played_version: PLAYED_VERSION_INF,
+      play_style: 1,   // DP
       date: scoreDate,
     };
-    const pk = `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}`;
+    const pk = `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}|1`;
     const prev = dedup.get(pk);
     if (!prev) {
       dedup.set(pk, newRow);
@@ -373,6 +377,33 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
       }
     }
   }
+  // SP 차트 — gameLevel 10~12 만 play_style:0 으로 (song_id 는 곡 단위라 DP 와 공유. songs 미등록 신곡은 skip).
+  let spUnmatched = 0;
+  let spCount = 0;
+  for (const c of (input.spCharts ?? [])) {
+    if (c.level < 10 || c.level > 12) continue;
+    if ((c.exScore ?? 0) <= 0) continue;  // 미플레이 skip
+    const diffInt = DIFF_MAP[slotToDiff(c.slot)];
+    if (diffInt == null) continue;
+    const songId = pickSongId(songMap.get(norm(c.title)), PLAYED_VERSION_INF);
+    if (songId == null) { spUnmatched++; continue; }
+    const lampInt = c.lamp != null && LAMP_MAP[c.lamp] != null ? LAMP_MAP[c.lamp] : null;
+    const exScore = c.exScore != null ? Number(c.exScore) : null;
+    const newRow: ScoreRow = {
+      song_id: songId, iidx_id: iidxIdNorm, diff: diffInt, lamp: lampInt,
+      ex_score: exScore, played_version: PLAYED_VERSION_INF, play_style: 0, date: scoreDate,
+    };
+    const pk = `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}|0`;
+    const prev = dedup.get(pk);
+    if (!prev) { dedup.set(pk, newRow); spCount++; }
+    else {
+      const prevEx = prev.ex_score || 0; const newEx = exScore || 0;
+      if (newEx > prevEx || (newEx === prevEx && (lampInt || 0) > (prev.lamp || 0))) dedup.set(pk, newRow);
+    }
+  }
+  if (spUnmatched > 0) console.warn(`[supabaseSync] SP song 매칭 실패 ${spUnmatched}건 (skip, songs 미등록)`);
+  if (spCount > 0) console.log(`[supabaseSync] SP10~12 scores: ${spCount}건 (play_style:0)`);
+
   const scoreRows = [...dedup.values()];
   if (autoEnsured > 0) console.log(`[supabaseSync] songs 마스터 자동 등록 (ensure_song) ${autoEnsured}건:`, autoEnsuredSamples);
   if (unmatched > 0) console.warn(`[supabaseSync] song 매칭 실패 ${unmatched}건 (skip). 샘플:`, unmatchedSamples);
