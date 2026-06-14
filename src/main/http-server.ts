@@ -18,7 +18,7 @@ import type { RefluxState } from '../shared/types';
 
 const PORT = 3000;
 // 원격모드 오소리웹 서빙 — vercel 배포본을 받아 로컬 캐시(A: 오프라인) + 캐시 비우면 재fetch(B: 최신화).
-const OSR_ORIGIN = 'https://ohsorry.vercel.app';
+const OSR_ORIGIN = 'https://ohsorry.iidx.in';  // 정본 도메인 (vercel.app 은 여기로 308 redirect)
 
 function mimeOf(ext: string): string {
   switch (ext.toLowerCase()) {
@@ -68,22 +68,25 @@ async function serveOsr(
   rel = rel.split('/').filter((s) => s && s !== '..').join('/'); // 경로 탈출 방지
   const cachePath = join(osrCacheDir, rel);
   let buf: Buffer | null = null;
+  // 네트워크 우선 — 항상 최신 오소리웹을 받는다. cache-bust 쿼리로 CDN edge stale 회피(예: 새 배포 직후
+  //   특정 PoP 가 옛 파일을 들고 있어 토글/신규 UI 가 안 뜨던 문제). 받은 건 디스크에도 저장(오프라인 fallback).
+  //   네트워크 실패(오프라인 등) 시에만 디스크 캐시로 fallback. (이전엔 캐시 우선이라 한 번 받으면 영원히 stale.)
   try {
-    buf = await fsp.readFile(cachePath);
-  } catch {
-    try {
-      const resp = await fetch(`${OSR_ORIGIN}/${rel}`);
-      if (!resp.ok) {
-        res.writeHead(resp.status, { 'content-type': 'text/plain; charset=utf-8' });
-        res.end(`osr fetch ${resp.status}`);
-        return;
-      }
+    const resp = await fetch(`${OSR_ORIGIN}/${rel}?t=${Date.now()}`, { cache: 'no-store' });
+    if (resp.ok) {
       buf = Buffer.from(await resp.arrayBuffer());
       await fsp.mkdir(dirname(cachePath), { recursive: true });
       await fsp.writeFile(cachePath, buf).catch(() => {});
-    } catch (e) {
+    }
+  } catch {
+    /* 오프라인/네트워크 실패 → 아래 디스크 캐시 fallback */
+  }
+  if (!buf) {
+    try {
+      buf = await fsp.readFile(cachePath);
+    } catch {
       res.writeHead(502, { 'content-type': 'text/plain; charset=utf-8' });
-      res.end('osr proxy fail: ' + (e as Error).message);
+      res.end('osr unavailable (오프라인 + 캐시 없음)');
       return;
     }
   }

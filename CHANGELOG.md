@@ -2,6 +2,9 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.79 — 2026-06-14 /osr 프록시 네트워크 우선(stale 웹 수정)
+- `http-server.ts` `serveOsr`: **캐시 우선 → 네트워크 우선**으로 변경. 매 요청마다 cache-bust 쿼리(`?t=`)로 오소리웹을 받아 항상 최신 서빙, 네트워크 실패 시에만 디스크 캐시 fallback. (이전엔 캐시가 있으면 영원히 stale, 또는 CDN edge 가 옛 파일을 캐시해 새 배포(SP 토글·본인행 핀 등)가 폰에 안 뜨던 문제.) `OSR_ORIGIN` 을 정본 도메인 `ohsorry.iidx.in`(vercel.app 은 여기로 308)로 직접 지정해 리다이렉트 라운드트립 제거.
+
 ### v0.0.78 — 2026-06-14 원격모드 ⑤본인 카드 진입 + ⑥SSE 실시간 갱신 + SP 데이터 토대
 - **SP 데이터 노출(원격모드)** — `remoteUser.ts`: `spChartToJson` + `buildRemoteUser(…, spCharts, spTier12)` 로 `/api/me` 에 `sp_charts_json`(친 모든 SP 채보, DP charts_json 과 동일 형식 + playStyle:'SP') + `sp_tier12`(SP12 서열표) 추가. `App.tsx`: `spAllCharts`(전 레벨/시리즈 SP 플레이 채보) + setUser 에 spTierData 전달. 소스 비종속 설계 — 추후 오소리본체가 supabase 에 SP 백필(play_style 컬럼) 시 같은 필드 재사용. (오소리웹 SP 모드 UI 는 ohSorryWeb CHANGELOG.)
 - **⑥ SSE 실시간 갱신** — `http-server.ts`: `setupSseBroadcast` 에 `notifyMeUpdate()`(SSE `me:update` 이벤트) 추가, `startHttpServer` 가 이를 반환. `index.ts`: `remote:setUser` IPC 가 호출될 때마다 `me:update` broadcast → PC2(오소리웹 `?remote`)가 보고 있는 본인 카드를 새로고침 없이 조용히 다시 그림.
