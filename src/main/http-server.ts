@@ -6,7 +6,10 @@
 //                             (window.infohsorry 의 모든 메서드 일대일 대응)
 //   GET  /api/events       — SSE (text/event-stream) — reflux state 변경을 PC2 에 실시간 push.
 //                             기존 5초 polling 대체. EventSource 가 자동 재연결 처리.
-//   GET /*                 — out/renderer/ 의 정적 파일 (SPA fallback 으로 index.html)
+//   GET  /api/me           — renderer 가 push 한 오소리웹 user 객체(원격모드 본인 카드).
+//   GET  /osr/*            — 오소리웹 정적 서빙(vercel 캐시/프록시).
+//   GET  /                 — /osr/?remote 로 302 리다이렉트 (폰에서 IP:3000 만 쳐도 원격 카드).
+//   GET  /*                — out/renderer/ 의 정적 파일 (SPA fallback 으로 index.html; INF 자체 화면)
 //
 // production 빌드 (npm run release) 에서만 시작 — dev 모드는 vite 가 :5173 띄움.
 import http from 'http';
@@ -277,6 +280,15 @@ export function startHttpServer(
       // 원격모드 오소리웹 — /osr/* 를 vercel 캐시/프록시로 서빙 (A 동봉/오프라인 + B 최신화).
       if (osrCacheDir && (urlPath === '/osr' || urlPath.startsWith('/osr/'))) {
         await serveOsr(urlPath, osrCacheDir, res);
+        return;
+      }
+
+      // 루트(IP:3000) 진입 → 오소리웹 원격모드로 자동 리다이렉트.
+      //   폰/PC2 에서 IP:3000 만 쳐도 바로 본인 카드(원격 실시간, /api/me)가 뜨게.
+      //   INF 자체 renderer 원격제어 화면이 필요하면 /index.html 로 직접 접근.
+      if (osrCacheDir && urlPath === '/' && req.method === 'GET') {
+        res.writeHead(302, { location: '/osr/?remote' });
+        res.end();
         return;
       }
 
