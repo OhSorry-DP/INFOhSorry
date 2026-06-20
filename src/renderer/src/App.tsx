@@ -992,13 +992,21 @@ export default function App() {
   // profile(useProfile) 은 매 렌더 새 객체라 effect 가 매 렌더 fire → 내용 안 바뀌어도 setUser 폭주 →
   //   SSE me:update 폭주 → 오소리웹 카드가 계속 재렌더되던 문제. 내용 시그니처로 dedup, 바뀔 때만 push.
   const lastRemoteSigRef = useRef('');
+  const lastSetUserLogRef = useRef('');   // [임시 진단] 같은 사유 연속 로그는 1회만
   useEffect(() => {
-    if (IS_BROWSER_REMOTE) return;
-    if (!profile.iidxId || !profile.djName) return;
-    if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return;
+    // [임시 진단] setUser(/api/me) 가 어느 단계에서 멈추는지 콘솔에 1줄. 원인 확정 후 제거.
+    const dbg = (msg: string): void => {
+      if (lastSetUserLogRef.current === msg) return;
+      lastSetUserLogRef.current = msg;
+      console.log('[setUser진단]', msg);
+    };
+    if (IS_BROWSER_REMOTE) return dbg('skip: browser-remote');
+    if (!profile.iidxId || !profile.djName) return dbg(`skip: profile 없음 (id=${profile.iidxId} dj=${profile.djName})`);
+    if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return dbg(`skip: iidx 형식 불일치 (${profile.iidxId})`);
     // rows 출처 ID 가드 — ID 전환 직후 옛 덤프로 만든 카드를 올리지 않게 (업로드 가드와 동일 정책).
-    if (rowsSourceIidxIdRef.current && rowsSourceIidxIdRef.current !== profile.iidxId) return;
-    if (!dp12StarResult || !dp12Match) return;
+    if (rowsSourceIidxIdRef.current && rowsSourceIidxIdRef.current !== profile.iidxId)
+      return dbg(`skip: 출처ID 불일치 (rows=${rowsSourceIidxIdRef.current} != profile=${profile.iidxId})`);
+    if (!dp12StarResult || !dp12Match) return dbg(`skip: dp12 미준비 (star=${!!dp12StarResult} match=${!!dp12Match})`);
     const sumEx = (arr: { exScore?: number | null }[]): number =>
       arr.reduce((s, c) => s + (typeof c.exScore === 'number' ? c.exScore : 0), 0);
     const sig = [
@@ -1009,8 +1017,9 @@ export default function App() {
       spAllCharts.length + ':' + sumEx(spAllCharts),
       spTierData ? '1' : '0',
     ].join('|');
-    if (sig === lastRemoteSigRef.current) return;  // 내용 동일 → push 안 함 (재렌더 폭주 방지)
+    if (sig === lastRemoteSigRef.current) return dbg('skip: sig 동일(중복)');  // 내용 동일 → push 안 함
     lastRemoteSigRef.current = sig;
+    dbg('PUSH ✅ setUser 호출');
     void window.infohsorry.remote.setUser(
       buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData),
     );
