@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.84 — 2026-06-22 원격모드 오소리웹 루트 마운트 (패스 라우터 호환)
+- `http-server.ts`: 오소리웹을 `/osr/` 하위가 아닌 **서버 루트에 마운트**. 오소리웹이 해시 라우터→패스 라우터로 전환되면서 `<base href="/">` + 루트 기준 절대경로(`/user/*`, `/readme-page.js` 등)를 쓰게 돼, `/osr/` prefix 하위에선 진입 스크립트/자산이 루트로 빠져 **앱이 아예 안 뜨던 문제** 수정.
+- 새 라우팅 우선순위: ① `/api/ipc`·`/api/events`·`/api/me`(INF API 최우선) → ② `/index.html`(exact)·`/assets/*`(INF 자체 원격제어 화면, 로컬 `out/renderer`) → ③ `/osr`·`/osr/*`(레거시 → 같은 경로의 루트 등가물로 302, 쿼리 보존) → ④ 그 외 전부(`/`, `/user/*`, `/grid/*`, `/docs`, 정적 JS/CSS)는 오소리웹 `serveOsr`.
+- `GET /`: `remote` 쿼리 없으면 `/?remote` 로 302(IP:3000 만 쳐도 원격 본인카드 + `REMOTE_MODE` 보장), 이미 `?remote` 면 리다이렉트 안 함(루프 방지).
+- `serveOsr`: 루트 마운트에 맞춰 선행 슬래시만 제거. 확장자 없는 SPA 라우트(`/user/*` 등, vercel rewrites 가 index.html 반환)는 `content-type` 을 `text/html` 로 명시 — octet-stream 기본값으로 덮여 브라우저가 다운로드하던 회귀 방지.
+- 충돌 없음 확인: 오소리웹은 `/api/`(→`services/`)·`/assets/` 를 안 쓰고, INF renderer 는 클라이언트 라우팅(react-router/pushState) 미사용. 오소리웹(`<base href="/">`) 변경 없음.
+
 ### v0.0.83 — 2026-06-20 원격모드 setUser 진단 빌드 (임시 로그)
 - `App.tsx`: 게임 껐다 켜면 `/api/me` 가 `no remote user yet`(setUser 0회)으로 막히는 원인 추적용 **임시 진단 로그** 추가. setUser effect 의 각 단계(browser-remote / profile 없음 / iidx 형식 / 출처ID 불일치 / dp12 미준비 / sig 중복 / PUSH)에서 어디서 멈추는지 devtools 콘솔에 `[setUser진단]` 1줄 출력(같은 사유 연속은 1회만).
 - **동작 변화 없음(로그만).** 정적 분석으로 4개 가드가 모두 모순이라 런타임 값이 필요 → 이 빌드로 게임 재시작 재현 후 콘솔 메시지로 원인 확정, 다음 버전에서 정밀 수정 + 로그 제거 예정.

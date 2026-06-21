@@ -7,9 +7,10 @@
 //   GET  /api/events       — SSE (text/event-stream) — reflux state 변경을 PC2 에 실시간 push.
 //                             기존 5초 polling 대체. EventSource 가 자동 재연결 처리.
 //   GET  /api/me           — renderer 가 push 한 오소리웹 user 객체(원격모드 본인 카드).
-//   GET  /osr/*            — 오소리웹 정적 서빙(vercel 캐시/프록시).
-//   GET  /                 — /osr/?remote 로 302 리다이렉트 (폰에서 IP:3000 만 쳐도 원격 카드).
-//   GET  /*                — out/renderer/ 의 정적 파일 (SPA fallback 으로 index.html; INF 자체 화면)
+//   GET  /index.html,/assets/* — out/renderer/ 의 INF 자체 화면(LAN 원격제어). 로컬 정적.
+//   GET  /osr, /osr/*      — 레거시 → 같은 경로의 루트 등가물로 302 (호환).
+//   GET  /                 — remote 쿼리 없으면 /?remote 로 302 (IP:3000 만 쳐도 원격 카드).
+//   GET  /* (그 외)         — 오소리웹 루트 마운트(serveOsr: vercel 캐시/프록시 + SPA fallback).
 //
 // production 빌드 (npm run release) 에서만 시작 — dev 모드는 vite 가 :5173 띄움.
 import http from 'http';
@@ -58,15 +59,17 @@ export function lanAddresses(): string[] {
   return out;
 }
 
-// /osr/* → 오소리웹 정적 서빙. 로컬 캐시 우선(A: 오프라인), 없으면 vercel 에서 받아 캐시(B: 최신화).
-//   오소리웹은 상대경로(./modules/, ./styles.css)라 /osr/ 하위에서 그대로 동작.
+// 오소리웹 정적 서빙 — 루트 마운트. 네트워크 우선(vercel), 실패 시 로컬 캐시(오프라인) fallback.
+//   오소리웹은 서버 루트에 마운트되므로 urlPath 의 선행 슬래시만 떼어 vercel 경로로 사용한다
+//   (예: /styles.css→styles.css, /user/X→user/X, /→index.html). <base href="/"> 가 루트 기준이라 자산도 정상.
+//   SPA 라우트(/user/*, /grid/* 등)는 vercel rewrites 가 index.html 을 반환 → 별도 fallback 불필요.
 //   오소리웹의 /api/me 는 절대경로 → 루트로 가서 INF http-server 가 처리(same-origin, mixed content 없음).
 async function serveOsr(
   urlPath: string,
   osrCacheDir: string,
   res: http.ServerResponse,
 ): Promise<void> {
-  let rel = urlPath.replace(/^\/osr\/?/, '');
+  let rel = urlPath.replace(/^\/+/, '');
   if (rel === '' || rel.endsWith('/')) rel = rel + 'index.html';
   rel = rel.split('/').filter((s) => s && s !== '..').join('/'); // 경로 탈출 방지
   const cachePath = join(osrCacheDir, rel);
@@ -93,8 +96,11 @@ async function serveOsr(
       return;
     }
   }
+  // 확장자 없는 경로 = SPA 라우트(/user/*, /grid/*, /docs …) → vercel rewrites 가 index.html(HTML)을 반환.
+  //   mimeOf 의 octet-stream 기본값으로 덮으면 브라우저가 문서 렌더 대신 다운로드하므로 text/html 로 명시.
+  const ext = extname(rel);
   res.writeHead(200, {
-    'content-type': mimeOf(extname(rel)),
+    'content-type': ext ? mimeOf(ext) : 'text/html; charset=utf-8',
     'access-control-allow-origin': '*',
     'cache-control': 'no-cache',
   });
@@ -239,7 +245,9 @@ export function startHttpServer(
 
   const server = http.createServer(async (req, res) => {
     try {
-      const urlPath = (req.url || '/').split('?')[0];
+      const rawUrl = req.url || '/';
+      const urlPath = rawUrl.split('?')[0];
+      const query = rawUrl.slice(urlPath.length);   // '?remote' 등 (없으면 '')
 
       // CORS preflight (LAN 내 브라우저들이 OPTIONS 요청 보낼 수 있음)
       if (req.method === 'OPTIONS') {
@@ -277,22 +285,48 @@ export function startHttpServer(
         return;
       }
 
-      // 원격모드 오소리웹 — /osr/* 를 vercel 캐시/프록시로 서빙 (A 동봉/오프라인 + B 최신화).
-      if (osrCacheDir && (urlPath === '/osr' || urlPath.startsWith('/osr/'))) {
-        await serveOsr(urlPath, osrCacheDir, res);
+      // INF 자체 renderer(LAN 원격제어 화면) — /index.html(exact) 와 /assets/* 만 로컬 빌드(out/renderer)에서 서빙.
+      //   오소리웹은 /assets/ 를 안 쓰고 index 는 '/' 로 받으므로, 이 둘만 INF 전용으로 떼어내면 루트 마운트와 충돌 없음.
+      if (urlPath === '/index.html' || urlPath === '/assets' || urlPath.startsWith('/assets/')) {
+        const filePath = join(rendererDir, urlPath);
+        try {
+          const buf = await fsp.readFile(filePath);
+          res.writeHead(200, {
+            'content-type': mimeOf(extname(filePath)),
+            'cache-control': 'no-cache',
+          });
+          res.end(buf);
+        } catch {
+          res.writeHead(404);
+          res.end('Not Found');
+        }
         return;
       }
 
-      // 루트(IP:3000) 진입 → 오소리웹 원격모드로 자동 리다이렉트.
-      //   폰/PC2 에서 IP:3000 만 쳐도 바로 본인 카드(원격 실시간, /api/me)가 뜨게.
-      //   INF 자체 renderer 원격제어 화면이 필요하면 /index.html 로 직접 접근.
-      if (osrCacheDir && urlPath === '/' && req.method === 'GET') {
-        res.writeHead(302, { location: '/osr/?remote' });
+      // 레거시 /osr/* — 루트 마운트로 전환됨. 같은 경로의 루트 등가물로 302 (기존 캐시/북마크/공유 링크 호환).
+      //   예: /osr/?remote→/?remote, /osr/styles.css→/styles.css. 쿼리는 그대로 보존.
+      if (urlPath === '/osr' || urlPath.startsWith('/osr/')) {
+        const rest = urlPath.replace(/^\/osr/, '') || '/';
+        res.writeHead(302, { location: rest + query });
         res.end();
         return;
       }
 
-      // 정적 파일 (out/renderer/...)
+      // 루트 마운트 — 그 외 모든 경로(/, /user/*, /grid/*, /docs, /styles.css, /readme-page.js, /services/* …)는
+      //   오소리웹을 serveOsr(vercel 캐시/프록시)로 서빙. SPA fallback 은 vercel rewrites 가 처리.
+      if (osrCacheDir) {
+        // '/' 에 remote 쿼리가 없으면 ?remote 붙여 302 — IP:3000 만 쳐도 원격 본인카드 + REMOTE_MODE 보장.
+        //   이미 ?remote 면 리다이렉트하지 않음(루프 방지).
+        if (urlPath === '/' && req.method === 'GET' && !new URLSearchParams(query).has('remote')) {
+          res.writeHead(302, { location: '/?remote' });
+          res.end();
+          return;
+        }
+        await serveOsr(urlPath, osrCacheDir, res);
+        return;
+      }
+
+      // osrCacheDir 미설정(이론상 없음) — 최후 fallback: 로컬 정적 + SPA fallback(INF index.html)
       const target = urlPath === '/' ? '/index.html' : urlPath;
       const filePath = join(rendererDir, target);
       try {
@@ -305,7 +339,6 @@ export function startHttpServer(
         return;
       } catch {
         try {
-          // SPA fallback — 없는 경로는 index.html
           const html = await fsp.readFile(join(rendererDir, 'index.html'));
           res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
           res.end(html);
