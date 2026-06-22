@@ -194,11 +194,20 @@ function computeOsPercentilesFromList(
 //   backfill-pattern-score.js (ohSorryRating) 및 ohSorry dbConn 과 동일 알고리즘을 calcWeakness 가 통합 제공.
 //   diff 매핑 (NORMAL/HYPER/ANOTHER/LEGGENDARIA) 필요 — songChartsToWeaknessCharts 의 SLOT_TO_DIFF 그대로 활용.
 
-// RPC 시그니처: migration_mirror_features.sql 의 29 인자 (text + 28 numeric).
-//   기존 10 dim (mirror-invariant) + 신규 18 dim (mirror 9 × L/R) — 모두 보내야 PostgREST 가 매칭.
+// RPC 시그니처: migration_ohsorry_36feat.sql 의 37 인자 (text + 36 numeric).
+//   기존 28 dim 뒤에 신규 8 dim(겹계단/계마/양손계단) append. 신규값은 gist calcWeakness+feature-scores 가 36키로 배포된 뒤 산출.
 async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): Promise<boolean> {
   const numOrNull = (v: number | undefined): number | null =>
     typeof v === 'number' && isFinite(v) ? v : null;
+  // payload 직전 신규 8값 로그 (검증용 — window.__OHSORRY_DEBUG_FEAT 켜면 출력)
+  if (typeof window !== 'undefined' && (window as any).__OHSORRY_DEBUG_FEAT) {
+    console.log('[upsert 신규8]', {
+      DOUBLE_STAIR_L: vec.DOUBLE_STAIR_L, DOUBLE_STAIR_R: vec.DOUBLE_STAIR_R,
+      KEIMA_L: vec.KEIMA_L, KEIMA_R: vec.KEIMA_R,
+      HSTAIR_ONEHAND: vec.HSTAIR_ONEHAND, HSTAIR_SYNC: vec.HSTAIR_SYNC,
+      HSTAIR_SAMESHAPE: vec.HSTAIR_SAMESHAPE, HSTAIR_DIFFSHAPE: vec.HSTAIR_DIFFSHAPE,
+    });
+  }
   try {
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_feature_score`, {
       method: 'POST',
@@ -226,6 +235,11 @@ async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): 
         p_os_k5_l: numOrNull(vec.K5_L), p_os_k5_r: numOrNull(vec.K5_R),
         p_os_k6_l: numOrNull(vec.K6_L), p_os_k6_r: numOrNull(vec.K6_R),
         p_os_k7_l: numOrNull(vec.K7_L), p_os_k7_r: numOrNull(vec.K7_R),
+        // 신규 8
+        p_os_double_stair_l: numOrNull(vec.DOUBLE_STAIR_L), p_os_double_stair_r: numOrNull(vec.DOUBLE_STAIR_R),
+        p_os_keima_l: numOrNull(vec.KEIMA_L), p_os_keima_r: numOrNull(vec.KEIMA_R),
+        p_os_hstair_onehand: numOrNull(vec.HSTAIR_ONEHAND), p_os_hstair_sync: numOrNull(vec.HSTAIR_SYNC),
+        p_os_hstair_sameshape: numOrNull(vec.HSTAIR_SAMESHAPE), p_os_hstair_diffshape: numOrNull(vec.HSTAIR_DIFFSHAPE),
       }),
     });
     return res.ok;

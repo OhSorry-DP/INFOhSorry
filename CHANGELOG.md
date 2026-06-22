@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.85 — 2026-06-23 패턴 피처 28→36 업로드 (겹계단/계마/양손계단)
+- `src/renderer/src/Analysis.tsx`: `upsertFeatureScore` 를 supabase `upsert_user_feature_score` **37-arg(text + 36 numeric)** 로 확장. 기존 28 인자 뒤에 신규 8 append — `p_os_double_stair_l/r`, `p_os_keima_l/r`, `p_os_hstair_onehand/sync/sameshape/diffshape`. 분석탭 진입 시 `user_ohsorry_radars` 의 신규 8 컬럼(겹계단/계마/한손·쌍계단)까지 채움.
+- 신규값은 gist `calcWeakness.js`(36 UPSERT_FEATS) + `feature-scores-slim.json`(36키) 로 산출 — 둘 다 배포 완료. payload 직전 `window.__OHSORRY_DEBUG_FEAT` 켜면 신규 8값 콘솔 로그.
+- 기존 28 인자 순서/계산 불변. supabase 측은 37-arg RPC(신규 8 = DEFAULT NULL) 적용 완료라 구버전 호출도 호환.
+
 ### v0.0.84 — 2026-06-22 원격모드 오소리웹 루트 마운트 (패스 라우터 호환)
 - `http-server.ts`: 오소리웹을 `/osr/` 하위가 아닌 **서버 루트에 마운트**. 오소리웹이 해시 라우터→패스 라우터로 전환되면서 `<base href="/">` + 루트 기준 절대경로(`/user/*`, `/readme-page.js` 등)를 쓰게 돼, `/osr/` prefix 하위에선 진입 스크립트/자산이 루트로 빠져 **앱이 아예 안 뜨던 문제** 수정.
 - 새 라우팅 우선순위: ① `/api/ipc`·`/api/events`·`/api/me`(INF API 최우선) → ② `/index.html`(exact)·`/assets/*`(INF 자체 원격제어 화면, 로컬 `out/renderer`) → ③ `/osr`·`/osr/*`(레거시 → 같은 경로의 루트 등가물로 302, 쿼리 보존) → ④ 그 외 전부(`/`, `/user/*`, `/grid/*`, `/docs`, 정적 JS/CSS)는 오소리웹 `serveOsr`.
