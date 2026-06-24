@@ -167,6 +167,7 @@ export interface ZasaChart {
   title: string;
   diff: string; // 'HYPER' | 'ANOTHER' | 'LEGGENDARIA'
   level: number;
+  gameLevel?: number; // 게임 내 정수 레벨(11/12 등) — 변종(AC≠INF) 가드에서 AC 채보 식별용
 }
 
 export interface ZasaData {

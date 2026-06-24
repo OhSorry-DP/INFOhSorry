@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.86 — 2026-06-24 변종 채보(AC≠INF) INF 별값 차용 차단
+- 같은 곡명+diff 인데 AC 재수록 ≠ INF/구 로 채보가 2개인 변종 9곡에서, INFINITAS 가 쓰는 INF/구 채보(★7~9)에 ohSorryRating 의 AC 채보(★11/12) rating/zasa 가 잘못 붙던 문제 수정. 예: ミッドナイト堕天使 ANOTHER 가 INFINITAS ★9 인데 AC ★12 별값을 물던 것.
+- 신규 `src/shared/variants.ts` — 변종 9곡 `isVariantTitle`(정본 ohSorryAdmin/variant-map.json).
+- `src/renderer/src/App.tsx` `dp12Match`: ratingData↔TSV 의 `norm(title)|diff` 조인에서 변종이고 유저 TSV 채보의 in-game level 이 AC rating 의 gameLevel 과 다르면(=INF 채보) AC rating/zasa 부착을 건너뜀 → 미분류(unclassified)로 처리. 미분류 경로의 zasa★ 도 gameLevel 불일치 시 차단. DP11/DP12 격자는 in-game level 추출이라 INF 변종(★7~9)이 원래부터 제외됨.
+- `src/shared/types.ts`: `ZasaChart.gameLevel?` 추가(변종 가드용).
+- 비변종 곡·레벨 일치(AC) 채보는 동작 변화 없음. 별값 파이프라인(ohSorryRating) 은 3단계에서 AC 채보 데이터 정화 완료(INF 변종 점수 분리).
+
 ### v0.0.85 — 2026-06-23 패턴 피처 28→36 업로드 (겹계단/계마/양손계단)
 - `src/renderer/src/Analysis.tsx`: `upsertFeatureScore` 를 supabase `upsert_user_feature_score` **37-arg(text + 36 numeric)** 로 확장. 기존 28 인자 뒤에 신규 8 append — `p_os_double_stair_l/r`, `p_os_keima_l/r`, `p_os_hstair_onehand/sync/sameshape/diffshape`. 분석탭 진입 시 `user_ohsorry_radars` 의 신규 8 컬럼(겹계단/계마/한손·쌍계단)까지 채움.
 - 신규값은 gist `calcWeakness.js`(36 UPSERT_FEATS) + `feature-scores-slim.json`(36키) 로 산출 — 둘 다 배포 완료. payload 직전 `window.__OHSORRY_DEBUG_FEAT` 켜면 신규 8값 콘솔 로그.

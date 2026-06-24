@@ -3,6 +3,7 @@ import type { ChartSlot, EreterCacheStatus, EreterData, NotInInfChart, RatingDat
 import './api';
 import { DP_SLOTS, SP_SLOTS, extractCharts } from '../../shared/types';
 import { buildEreterIndex, lampNum, norm, slotToDiff } from '../../shared/match';
+import { isVariantTitle } from '../../shared/variants';
 import {
   compareRateDesc,
   shouldDropFromRecs,
@@ -437,10 +438,18 @@ export default function App() {
   }, [rows, tab]);
 
   // INFINITAS 미수록 차트 제외 Set — service-status.json 의 notInINF 기반. key: norm(title)+'|'+slot
-  const notInInfSet = useMemo(
-    () => new Set(notInINF.map((e) => norm(e.title) + '|' + e.diff)),
-    [notInINF],
-  );
+  //   diff 는 slot(DPL/SPL …) 콤마 다중 지원 ("DPL,SPL" → 한 곡 두 채보) — 이중 항목 없이 한 줄로.
+  const notInInfSet = useMemo(() => {
+    const s = new Set<string>();
+    for (const e of notInINF) {
+      if (!e?.title || !e?.diff) continue;
+      for (const tok of String(e.diff).split(',')) {
+        const slot = tok.trim().toUpperCase();
+        if (slot) s.add(norm(e.title) + '|' + slot);
+      }
+    }
+    return s;
+  }, [notInINF]);
 
   // DP ☆12 차트 추출 — 서열표 input
   // 매칭 우선순위: ereter ★ → ohSorryRating (gameLevel===12) zasaLevel (둘 다 없으면 미분류).
@@ -568,9 +577,11 @@ export default function App() {
     const ereterIdx = ereterData ? buildEreterIndex(ereterData.charts).index : new Map();
     // zasa-data lookup
     const zasaIdx = new Map<string, number>();
+    const zasaGLIdx = new Map<string, number>();  // 변종 가드용 — norm|diff → 그 zasa 엔트리(=AC 채보)의 gameLevel
     if (zasaData) {
       for (const z of zasaData.charts) {
         zasaIdx.set(norm(z.title) + '|' + z.diff, z.level);
+        if (typeof z.gameLevel === 'number') zasaGLIdx.set(norm(z.title) + '|' + z.diff, z.gameLevel);
       }
     }
     // tsv (Reflux row) index: normKey → { title, slot, c, type, label }
@@ -606,8 +617,12 @@ export default function App() {
       if (rt.gameLevel !== 11 && rt.gameLevel !== 12) continue;
       if (typeof rt.zasaLevel !== 'number' || rt.zasaLevel > 12.7) continue;
       const normKey = norm(rt.title) + '|' + rt.diff;
-      ratingKeyset.add(normKey);
       const hit = tsvIdx.get(normKey);
+      // 변종(AC≠INF) 가드 — INFINITAS 유저 TSV 채보(INF/구)의 in-game level 이 AC rating 의 gameLevel 과
+      //   다르면 = INF 채보 → AC rating/zasa 부착 금지(continue). ratingKeyset 에 안 넣어 아래 미분류로 떨어진다.
+      //   비변종/AC(레벨 일치)는 영향 없음. (예: ミッドナイト ANOTHER INF★9 가 AC★12 rating 을 물지 않게)
+      if (hit && isVariantTitle(rt.title) && hit.c.level !== rt.gameLevel) continue;
+      ratingKeyset.add(normKey);
       if (!hit) {
         ratingMissCount++;
         ratingMissedInTsv.push({ title: rt.title, diff: rt.diff, gameLevel: rt.gameLevel, zasaLevel: rt.zasaLevel, normKey });
@@ -692,7 +707,10 @@ export default function App() {
         ereterHcN: null,
         ereterExhN: null,
         gameLevel: hit.c.level,
-        zasaLevel: zasaIdx.get(key) ?? null,
+        // 변종(AC≠INF): zasa-data 는 AC 채보만 수록 → 유저 INF 채보의 in-game level 이 zasa 엔트리(AC)의
+        //   gameLevel 과 다르면 AC zasa★ 를 물지 않게 null. 비변종/같은 레벨은 기존대로.
+        zasaLevel: (isVariantTitle(hit.title) && zasaGLIdx.get(key) !== hit.c.level)
+          ? null : (zasaIdx.get(key) ?? null),
         isRatingFallback: true,
         unlocked: c.unlocked,
         exScore: typeof c.exScore === 'number' ? c.exScore : null,
