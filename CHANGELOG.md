@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.88 — 2026-06-25 곡명 norm 을 normTitle 마스터에서 직접 import (손복제 제거)
+- `src/shared/match.ts` 가 들고 있던 `TITLE_ALIASES`/`NORM_OVERRIDES`/`basicNorm`/`norm`/`denorm` **손복제를 제거**하고, normTitle 마스터(ohSorryRating/modules/normTitle.js)의 동기 사본을 import 해 재노출.
+  - 신규 `src/shared/normTitle.js` — 마스터 바이트 동일 사본(4번째 동기 대상). 타입은 옆 `src/shared/normTitle.d.ts`(UMD → default export 선언, tsc 가 .js 본체 미컴파일).
+  - `electron.vite.config.ts`: UMD(`module.exports`) 를 Rollup 이 CJS→ESM 변환하도록 `commonjsOptions.include` 에 `normTitle.js` 추가(main·renderer).
+  - `ohSorryAdmin/scripts/syncNormTitle.js` TARGETS 에 INFOhSorry 사본 추가 → 이제 `node scripts/syncNormTitle.js` 한 번이면 4곳(레이팅·본체·어드민·INF)이 동일 norm.
+- **효과**: 그동안 match.ts 손복제에 별칭이 누락돼 곡이 중복 생성되던 문제 근절. 예: `Lagrangian Point ?`(인코딩 깨짐)·`Lagrangian Point 0`(숫자) → `Lagrangian Point Ø` 별칭이 이제 INF앱에도 적용돼 정본(textage `lagrang0`)으로 매칭. (이미 생성된 DB 중복행은 ohSorryAdmin `mergeLagrangianDup.js` 로 별도 병합.)
+- norm 결과값 자체는 마스터와 동일 — 동작 회귀 없음. typecheck(node+web) + build 통과.
+
 ### v0.0.87 — 2026-06-25 TSV 전곡 songs 마스터 등록 + INF 비트 보정 (미플레이 신곡 노출)
 - 기존엔 곡을 **플레이해야만**(exScore>0) `ensure_song` 으로 supabase `songs` 마스터에 등록·INF 비트 갱신됐음 → 미플레이 신곡, 그리고 "기존 AC 곡이 INF 에 새로 수록된 경우"가 플레이 전까지 누락. 이제 TSV 에 보이는 곡은 플레이 무관하게 등록되고 INF 비트도 켜짐.
 - `src/renderer/src/App.tsx`: `allTsvCharts` memo 추가 — `extractCharts(rows, { slots: [...DP_SLOTS, ...SP_SLOTS] })` 에서 INFINITAS 미수록(`notInInf`) 채보만 제외한 TSV 전곡. `uploadProfile` 입력 + `uploadStateRef` 에 연결.

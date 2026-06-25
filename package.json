@@ -1,6 +1,6 @@
 {
   "name": "infohsorry",
-  "version": "0.0.87",
+  "version": "0.0.88",
   "description": "ohSorryScoreINF",
   "productName": "ohSorryScoreINF",
   "main": "./out/main/index.js",
