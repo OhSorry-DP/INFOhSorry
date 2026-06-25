@@ -158,6 +158,27 @@ function pickSongId(candidates: SongEntry[] | undefined, playedVersion: number):
   return filtered[0].song_id;
 }
 
+// ensure_song RPC 호출 — 신곡 등록 / 기존곡 ac·legen 비트 OR. 성공 시 song_id, 실패 시 null (graceful).
+//   INFOhSorry 는 항상 INF: 일반채보 있으면 p_ac=2, LEG 채보 있으면 p_legen=2.
+async function callEnsureSong(
+  title: string, txId: string | null, pAc: number | null, pLegen: number | null,
+): Promise<number | null> {
+  try {
+    const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/ensure_song`, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify({ p_title: title, p_textage_song_id: txId, p_ac: pAc, p_legen: pLegen }),
+    });
+    if (!res.ok) throw new Error(`ensure_song HTTP ${res.status}`);
+    const ensured = await res.json();
+    const newId = typeof ensured === 'number' ? ensured : parseInt(ensured, 10);
+    if (!Number.isFinite(newId) || newId <= 0) throw new Error('ensure_song returned non-numeric');
+    return newId;
+  } catch {
+    return null;
+  }
+}
+
 // user_radars 한 row 의 6 지표.
 export interface DpRadarRow {
   notes: number | null;
@@ -231,6 +252,10 @@ export interface UploadInput {
   unclassifiedCharts?: Omit<RecInputChart, 'level'>[];
   // SP 차트 (전체) — gameLevel 10~12 만 추려 play_style:0 으로 함께 업로드.
   spCharts?: SongChart[];
+  // TSV 전곡 (DP+SP 전 난이도/전 레벨, notInInf 제외) — songs 마스터 "곡 존재" 등록용.
+  //   플레이 여부와 무관하게, 마스터에 없는 곡은 ensure_song 으로 등록 (미플레이 신곡도 목록에 노출).
+  //   점수(scores) 업로드는 여기에 영향받지 않음 — 아래 scores 루프는 그대로 exScore>0 만 적재.
+  allTsvCharts?: SongChart[];
   // 선택: ereter 매핑 있으면 함께 (대개 INF ID 는 ereter 에 없어 null)
   ereterStar?: number | null;
 }
@@ -297,6 +322,61 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     songMap = await getSongsCache();
   } catch (e) {
     return { ok: false, error: `songs cache fetch: ${(e as Error).message}` };
+  }
+
+  // ── 곡 등록 패스 — TSV 전곡(플레이 무관)을 songs 마스터에 등록 + INF 비트 보정. 점수 루프와 독립. ──
+  //   목적 1: 미플레이 신곡도 songs 마스터에 "존재"를 남겨 다른 유저/목록에 노출.
+  //   목적 2: 기존 AC 곡이 INF 에 새로 들어온 경우, 플레이 전이라도 INF 비트(ac&2 / legen&2)를 켬.
+  //   판정 기준 = "있나?" 가 아니라 "필요한 INF 비트가 켜져 있나?". 다 켜져 있으면 skip → 평상시 네트워크 0건,
+  //     신곡/INF 신규수록 곡이 들어온 직후 주기에만 ensure_song 발생.
+  //   비트 OR 은 ensure_song 이 textage_song_id 기준 ON CONFLICT (또는 NULL-textage 행 title 매칭) 으로 처리 →
+  //     기존 행을 갱신하지 신규 행을 만들지 않음(중복 안전). songMap 도 갱신해 scores 루프 중복 RPC 방지.
+  const LEG_SLOTS = new Set(['SPL', 'DPL']);
+  if (input.allTsvCharts && input.allTsvCharts.length > 0) {
+    // norm(title) → { title(raw), hasNonLeg, hasLeg } 집계
+    const songAgg = new Map<string, { title: string; hasNonLeg: boolean; hasLeg: boolean }>();
+    for (const c of input.allTsvCharts) {
+      if (!c.title) continue;
+      const k = norm(c.title);
+      if (!k) continue;
+      let agg = songAgg.get(k);
+      if (!agg) { agg = { title: c.title, hasNonLeg: false, hasLeg: false }; songAgg.set(k, agg); }
+      if (LEG_SLOTS.has(c.slot)) agg.hasLeg = true;
+      else agg.hasNonLeg = true;
+    }
+    const txMap = await getTextageByTitle();
+    let regNew = 0;       // 신규 곡 등록
+    let regBitFix = 0;    // 기존 곡 INF 비트 보정
+    const regSamples: string[] = [];
+    for (const [k, agg] of songAgg) {
+      const candidates = songMap.get(k);
+      const pAc = agg.hasNonLeg ? 2 : null;
+      const pLegen = agg.hasLeg ? 2 : null;
+      // 필요한 INF 비트가 이미 어느 후보에든 켜져 있으면 skip. (동명이곡: INF 행이 이미 ac&2 → AC 행 안 건드림)
+      const acCovered = pAc == null || (candidates?.some((c) => ((c.ac ?? 0) & 2) !== 0) ?? false);
+      const legenCovered = pLegen == null || (candidates?.some((c) => ((c.legen ?? 0) & 2) !== 0) ?? false);
+      const exists = !!candidates && candidates.length > 0;
+      if (exists && acCovered && legenCovered) continue;
+
+      const newId = await callEnsureSong(agg.title, txMap.get(k) || null, pAc, pLegen);
+      if (newId == null) continue; // 실패 graceful skip (다음 주기 재시도)
+
+      // songMap 갱신 — 반환 song_id 가 기존 후보면 비트 OR, 아니면(신규/중복) 새 entry 추가.
+      const hit = candidates?.find((c) => c.song_id === newId);
+      if (hit) {
+        if (pAc != null) hit.ac = (hit.ac ?? 0) | 2;
+        if (pLegen != null) hit.legen = (hit.legen ?? 0) | 2;
+        regBitFix++;
+      } else {
+        if (!songMap.has(k)) songMap.set(k, []);
+        songMap.get(k)!.push({ song_id: newId, title: agg.title, ac: pAc ?? 0, legen: pLegen ?? 0 });
+        regNew++;
+      }
+      if (regSamples.length < 10) regSamples.push(agg.title);
+    }
+    if (regNew > 0 || regBitFix > 0) {
+      console.log(`[supabaseSync] songs 마스터 곡 등록 (TSV 전곡) — 신규 ${regNew}건 / INF비트 보정 ${regBitFix}건:`, regSamples);
+    }
   }
 
   // dedup map — key: `${song_id}|${iidx_id}|${diff}|${played_version}` → row

@@ -2,6 +2,15 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.87 — 2026-06-25 TSV 전곡 songs 마스터 등록 + INF 비트 보정 (미플레이 신곡 노출)
+- 기존엔 곡을 **플레이해야만**(exScore>0) `ensure_song` 으로 supabase `songs` 마스터에 등록·INF 비트 갱신됐음 → 미플레이 신곡, 그리고 "기존 AC 곡이 INF 에 새로 수록된 경우"가 플레이 전까지 누락. 이제 TSV 에 보이는 곡은 플레이 무관하게 등록되고 INF 비트도 켜짐.
+- `src/renderer/src/App.tsx`: `allTsvCharts` memo 추가 — `extractCharts(rows, { slots: [...DP_SLOTS, ...SP_SLOTS] })` 에서 INFINITAS 미수록(`notInInf`) 채보만 제외한 TSV 전곡. `uploadProfile` 입력 + `uploadStateRef` 에 연결.
+- `src/renderer/src/supabaseSync.ts`: `UploadInput.allTsvCharts` 추가. `uploadProfile` 에 **곡 등록 패스** 신설 — 곡 단위로 일반채보(`p_ac=2`)/LEG채보(`p_legen=2`) 비트 집계.
+  - 판정 기준 = "있나?" 가 아니라 **"필요한 INF 비트가 켜져 있나?"**. 후보 중 누구도 `ac&2`(또는 `legen&2`)가 없으면 `ensure_song` 호출 → 비트 OR. 동명이곡은 INF 행이 이미 `ac&2` 라 AC 행을 건드리지 않음.
+  - 비트 OR 은 `ensure_song` 이 `textage_song_id` 기준 `ON CONFLICT`(또는 NULL-textage 행 title 매칭)으로 처리 → 기존 행 갱신, 신규 행 안 만듦(중복 안전). 반환 `song_id` 로 `songMap` 갱신해 scores 루프 중복 RPC 방지. `callEnsureSong` 헬퍼로 RPC 호출 일원화.
+- **점수(scores) 업로드는 불변** — 여전히 `exScore>0` 인 플레이한 곡만 적재. 이번 변경은 "곡 존재" 등록 + INF 비트 보정만 확대.
+- 평상시(모든 INF 비트 이미 셋) 네트워크 호출 0건, 신곡/INF 신규수록 곡 들어온 직후 주기에만 등록 발생. 건수는 콘솔 `[supabaseSync] songs 마스터 곡 등록 (TSV 전곡) — 신규 N건 / INF비트 보정 M건` 로그로 확인.
+
 ### v0.0.86 — 2026-06-24 변종 채보(AC≠INF) INF 별값 차용 차단
 - 같은 곡명+diff 인데 AC 재수록 ≠ INF/구 로 채보가 2개인 변종 9곡에서, INFINITAS 가 쓰는 INF/구 채보(★7~9)에 ohSorryRating 의 AC 채보(★11/12) rating/zasa 가 잘못 붙던 문제 수정. 예: ミッドナイト堕天使 ANOTHER 가 INFINITAS ★9 인데 AC ★12 별값을 물던 것.
 - 신규 `src/shared/variants.ts` — 변종 9곡 `isVariantTitle`(정본 ohSorryAdmin/variant-map.json).
