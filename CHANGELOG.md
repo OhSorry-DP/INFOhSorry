@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.89 — 2026-06-25 원격모드 실시간 push 트리거 수정 (미플레이→플레이 누락)
+- **증상**: 원격모드(오소리웹 ?remote)에서 곡을 쳐도 카드 값이 안 바뀜. 특히 **미플레이곡을 플레이**(exScore 0→11 등)해도 갱신 안 됨. SSE 캡처 결과 `me:update` 0건(= INF 가 push 자체를 안 함) 확인.
+- **원인**: `src/renderer/src/App.tsx` 의 원격 setUser push 트리거(sig)가 `unclassifiedCharts`(rated 미등재 DP 차트)를 **개수만** 추적하고 exScore/lamp 변동은 안 봄. 미플레이→플레이는 개수 불변(이미 NP 행 존재)이라 sig 동일 → push 생략.
+- **수정**: sig 를 **"tsv 값 변동 감지"** 로 변경 — rated DP + unclassified DP + SP **모든 차트의 exScore 합 + lamp 합**을 추적. 한 곳이라도 바뀌면 push(미플레이→플레이/fail/클리어/기록갱신 전부). 동일 내용의 idle 재기록(Reflux ~2초 주기)은 sig 동일 → skip(2.6MB `/api/me` 폭주 방지).
+- 웹 측 동반 수정(별도 배포): 원격 실시간 값 **in-place 갱신(리렌더 제거, 추천 폴더 보존)** + **DBR 추천 원격 작동**(`os_pattern_score` supabase 보강).
+
 ### v0.0.88 — 2026-06-25 곡명 norm 을 normTitle 마스터에서 직접 import (손복제 제거)
 - `src/shared/match.ts` 가 들고 있던 `TITLE_ALIASES`/`NORM_OVERRIDES`/`basicNorm`/`norm`/`denorm` **손복제를 제거**하고, normTitle 마스터(ohSorryRating/modules/normTitle.js)의 동기 사본을 import 해 재노출.
   - 신규 `src/shared/normTitle.js` — 마스터 바이트 동일 사본(4번째 동기 대상). 타입은 옆 `src/shared/normTitle.d.ts`(UMD → default export 선언, tsc 가 .js 본체 미컴파일).

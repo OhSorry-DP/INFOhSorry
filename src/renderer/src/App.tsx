@@ -1019,8 +1019,8 @@ export default function App() {
   // 원격모드 본인 카드 — 실시간 push. TSV 변경으로 dp12(별값/매칭)가 재계산될 때마다 /api/me 를 갱신하고,
   //   main 이 SSE me:update 를 broadcast → PC2(오소리웹 ?remote)가 보고 있는 본인 카드를 조용히 다시 그림.
   //   supabase 업로드(3분 주기, 위 effect)와 분리 — 화면 반영은 플레이 즉시, DB 부하는 그대로 3분.
-  // profile(useProfile) 은 매 렌더 새 객체라 effect 가 매 렌더 fire → 내용 안 바뀌어도 setUser 폭주 →
-  //   SSE me:update 폭주 → 오소리웹 카드가 계속 재렌더되던 문제. 내용 시그니처로 dedup, 바뀔 때만 push.
+  // 트리거 = "tsv 값 변동 감지" — 모든 차트의 exScore/lamp 가 하나라도 바뀌면 push (미플레이→플레이/fail/클리어 전부).
+  //   profile(useProfile) 은 매 렌더 새 객체라 effect 가 매 렌더 fire 하므로, 값 시그니처로 dedup(동일 idle 재기록 skip).
   const lastRemoteSigRef = useRef('');
   const lastSetUserLogRef = useRef('');   // [임시 진단] 같은 사유 연속 로그는 1회만
   useEffect(() => {
@@ -1037,17 +1037,25 @@ export default function App() {
     if (rowsSourceIidxIdRef.current && rowsSourceIidxIdRef.current !== profile.iidxId)
       return dbg(`skip: 출처ID 불일치 (rows=${rowsSourceIidxIdRef.current} != profile=${profile.iidxId})`);
     if (!dp12StarResult || !dp12Match) return dbg(`skip: dp12 미준비 (star=${!!dp12StarResult} match=${!!dp12Match})`);
-    const sumEx = (arr: { exScore?: number | null }[]): number =>
+    // tsv 값 변동 감지 — 모든 차트(rated DP + unclassified DP + SP)의 exScore 합 + lamp 합.
+    //   exScore 든 lamp 든 한 곳이라도 바뀌면 sig 변경 → push. (미플레이→플레이, fail, 클리어 등 전부 포함.)
+    //   동일 내용의 idle 재기록(Reflux 가 ~2초마다 같은 값 다시 씀)은 sig 동일 → skip (2.6MB /api/me 폭주 방지).
+    type ChartLike = { exScore?: number | null; lampNum?: number | null; lamp?: string };
+    const sumEx = (arr: ChartLike[]): number =>
       arr.reduce((s, c) => s + (typeof c.exScore === 'number' ? c.exScore : 0), 0);
+    const sumLamp = (arr: ChartLike[]): number =>
+      arr.reduce((s, c) => s + (typeof c.lampNum === 'number' ? c.lampNum : lampNum(c.lamp ?? '')), 0);
+    const part = (tag: string, arr: ChartLike[]): string =>
+      tag + arr.length + ':' + sumEx(arr) + ':' + sumLamp(arr);
     const sig = [
       profile.iidxId,
       dp12StarResult.star.toFixed(3),
-      dp12Match.charts.length + ':' + sumEx(dp12Match.charts),
-      dp12Match.unclassifiedCharts.length,
-      spAllCharts.length + ':' + sumEx(spAllCharts),
+      part('c', dp12Match.charts),
+      part('u', dp12Match.unclassifiedCharts),
+      part('s', spAllCharts),
       spTierData ? '1' : '0',
     ].join('|');
-    if (sig === lastRemoteSigRef.current) return dbg('skip: sig 동일(중복)');  // 내용 동일 → push 안 함
+    if (sig === lastRemoteSigRef.current) return dbg('skip: tsv 값 변동 없음(동일)');  // 값 동일 → push 안 함
     lastRemoteSigRef.current = sig;
     dbg('PUSH ✅ setUser 호출');
     void window.infohsorry.remote.setUser(
