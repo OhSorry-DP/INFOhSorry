@@ -247,11 +247,14 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
 export interface UploadInput {
   appVersion: string; // package.json version, e.g. '0.0.9'
   profile: ProfileInfo;
-  starResult: StarResult;
+  starResult: StarResult | null; // null = ★ 미산출 (SP 전용·DP 저레벨 전용 유저) → users.star = null
   charts: RecInputChart[]; // dp12Match.charts (★11.6~12.7 ereter 매칭된 차트) + unclassified 도 합쳐 올림
   unclassifiedCharts?: Omit<RecInputChart, 'level'>[];
   // SP 차트 (전체) — gameLevel 10~12 만 추려 play_style:0 으로 함께 업로드.
   spCharts?: SongChart[];
+  // DP 차트 (전체, 플레이한 것만) — 전 레벨 play_style:1 로 업로드. lv11/12 는 charts(dp12Match)와 겹치나 dedup 병합.
+  //   charts(dp12Match)는 레이팅 매칭/ensure_song 경로라 유지하고, 이 필드가 저레벨 DP 까지 커버를 확장.
+  dpAllCharts?: SongChart[];
   // TSV 전곡 (DP+SP 전 난이도/전 레벨, notInInf 제외) — songs 마스터 "곡 존재" 등록용.
   //   플레이 여부와 무관하게, 마스터에 없는 곡은 ensure_song 으로 등록 (미플레이 신곡도 목록에 노출).
   //   점수(scores) 업로드는 여기에 영향받지 않음 — 아래 scores 루프는 그대로 exScore>0 만 적재.
@@ -293,7 +296,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
       body: JSON.stringify({
         p_iidx_id: iidxIdNorm,
         p_dj_name: profile.djName ?? null,
-        p_star: Number(starResult.star.toFixed(4)),
+        p_star: starResult ? Number(starResult.star.toFixed(4)) : null,
         p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
         // SP/DP 단위는 절대 업셋하지 않음 — null 보내 RPC COALESCE 가 기존 값 유지.
         // 단위 채우는 책임: ohSorryAdmin/getInfRadar.js (eagate djdata 페이지에서 fetch).
@@ -483,6 +486,34 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   }
   if (spUnmatched > 0) console.warn(`[supabaseSync] SP song 매칭 실패 ${spUnmatched}건 (skip, songs 미등록)`);
   if (spCount > 0) console.log(`[supabaseSync] SP10~12 scores: ${spCount}건 (play_style:0)`);
+
+  // DP 전 레벨 — play_style:1 로 적재 (위 charts(dp12Match)는 lv11/12 만 → 저레벨 DP 보강).
+  //   songs 미등록 신곡은 skip — allTsvCharts 등록 패스가 모든 DP 곡을 이미 ensure_song 했으므로 정상 매칭됨.
+  //   lv11/12 는 위 루프와 겹치지만 같은 PK(play_style:1) dedup 으로 best ex/lamp 만 남음.
+  let dpAllUnmatched = 0;
+  let dpAllCount = 0;
+  for (const c of (input.dpAllCharts ?? [])) {
+    if ((c.exScore ?? 0) <= 0) continue;  // 미플레이 skip
+    const diffInt = DIFF_MAP[slotToDiff(c.slot)];
+    if (diffInt == null) continue;
+    const songId = pickSongId(songMap.get(norm(c.title)), PLAYED_VERSION_INF);
+    if (songId == null) { dpAllUnmatched++; continue; }
+    const lampInt = c.lamp != null && LAMP_MAP[c.lamp] != null ? LAMP_MAP[c.lamp] : null;
+    const exScore = c.exScore != null ? Number(c.exScore) : null;
+    const newRow: ScoreRow = {
+      song_id: songId, iidx_id: iidxIdNorm, diff: diffInt, lamp: lampInt,
+      ex_score: exScore, played_version: PLAYED_VERSION_INF, play_style: 1, date: scoreDate,
+    };
+    const pk = `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}|1`;
+    const prev = dedup.get(pk);
+    if (!prev) { dedup.set(pk, newRow); dpAllCount++; }
+    else {
+      const prevEx = prev.ex_score || 0; const newEx = exScore || 0;
+      if (newEx > prevEx || (newEx === prevEx && (lampInt || 0) > (prev.lamp || 0))) dedup.set(pk, newRow);
+    }
+  }
+  if (dpAllUnmatched > 0) console.warn(`[supabaseSync] DP(전레벨) song 매칭 실패 ${dpAllUnmatched}건 (skip, songs 미등록)`);
+  if (dpAllCount > 0) console.log(`[supabaseSync] DP 전레벨 scores: +${dpAllCount}건 신규 (play_style:1, lv11/12 제외 보강분)`);
 
   const scoreRows = [...dedup.values()];
   if (autoEnsured > 0) console.log(`[supabaseSync] songs 마스터 자동 등록 (ensure_song) ${autoEnsured}건:`, autoEnsuredSamples);

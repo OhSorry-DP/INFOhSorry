@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.91 — 2026-06-26 SP 전용·DP 저레벨 전용 유저도 저장 + DP 전 레벨 scores 적재 (미배포)
+- 기존엔 `src/renderer/src/App.tsx` 의 3분 주기 supabase 업로드가 `dp12StarResult`(★) 또는 `dp12Match`(DP12 매칭)가 없으면 **전체 skip** → SP 만 하거나 DP 를 11/12 미만 레벨만 치는 유저는 `users` row 조차 등록되지 않았음.
+- **업로드 게이트 완화**: `iidxId` + `djName`(+ ID 형식) 만 있으면 업로드하도록 `!s`/`!m` 두 게이트 제거. `s`(★)/`m`(dp12Match)가 null 이어도 진행 — `charts: m?.charts ?? []`, `starResult: s`(null 허용).
+- `src/renderer/src/supabaseSync.ts`: `UploadInput.starResult` 를 `StarResult | null` 로, `p_star` 를 `starResult ? … : null` 로. SP 전용 유저는 `users.star = null` 로 저장(DP 별값 없음). RPC(`upsert_user`) 는 미변경 — 클라에서만 처리.
+- **DP scores 를 전 레벨로 확장** — 기존엔 DP 가 `dp12Match`(lv11/12)만 적재됐음. `App.tsx` 에 `dpAllCharts` memo 신설(`extractCharts(rows, { slots: DP_SLOTS })` 의 플레이한 채보, notInInf 제외) → `uploadProfile` 입력 + `uploadStateRef` 연결. `supabaseSync.ts` 에 DP 전레벨 루프 추가(play_style:1, 레벨 무관). lv11/12 는 기존 `charts` 루프와 겹치나 동일 PK dedup 으로 best ex/lamp 만 남음(중복 없음). songs 미등록 신곡은 `allTsvCharts` 등록 패스가 선행 ensure_song 하므로 정상 매칭.
+- SP scores 는 종전대로 lv10~12 만(이번 변경 대상 아님).
+- ⚠️ `users.star = EXCLUDED.star`(무조건 덮어쓰기)라, DP star 있던 유저가 DP12 기록 없는 tsv 로 업로드되면 star 가 null 로 지워질 수 있음(tsv 누적이라 실제론 드묾). typecheck(web) 통과. **미배포**(빌드/배포 별도).
+
 ### v0.0.90 — 2026-06-26 추천 deps 공용화 + INF usernorm 적용 (구조개편 Phase 3-3/4, 미배포)
 - [recommendCore.ts](src/renderer/src/recommendCore.ts) `createRecCtx`: 자체 helper 6개(`buildRatingMap`/`buildEreterMap`/`buildZasaMap`/`buildZasaAvgByGameLv`/`buildPatternsTitleMap`/`buildTextageSeriesByNorm`)를 **삭제**하고 gist `recommend.js` 의 공용 `buildRecommendDeps`(웹 canonical) 호출로 교체. deps 산식이 웹과 통일(ratingMap estEc/estHc 필터, zasaAvgByGameLv = ratings+zasa 합산).
 - **weaknessPopMean 신규 로드·주입** — `loadRecLibs` 에 `weakness-popmean.json`(웹과 동일 gist) fetch 추가, `RecCoreLibs` 타입 + `createRecCtx` 가 `createContext` 에 주입. 그동안 INF 만 누락돼 raw vec 으로 돌던 ③④ 추천에 **usernorm 정규화(`normalizeWeaknessVec`) 적용** → 웹과 동일 산식.
