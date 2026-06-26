@@ -2,6 +2,15 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.93 — 2026-06-27 재실행 시 이전 유저 TSV 업로드 오염 차단 + 변종 9→10 (빌드/배포 별도)
+- **[App.tsx](src/renderer/src/App.tsx) 재실행 오염 방지** — 앱을 끈 상태에서 다른 계정으로 전환 후 재실행하면, 디스크에 남은 **이전 유저 `tracker.tsv`** 가 spawn 시 읽혀 새 유저 ID 로 잘못 업로드되던 사고 차단.
+  - **근본**: 업로드 가드가 `if (src && src !== id)` — `src`(rows 출처 ID)가 null 이면 `&&` 단락으로 **우회**됐음. 재실행 직후 메모리 ID 확정 전 읽힌 rows 는 src=null → 가드 통과 → 옛 데이터가 새 ID 로 업로드.
+  - **수정 1 (가드 강화)**: tryUpload(3분/초기/수동) + `/api/me` 원격 push 양쪽 — `src` 가 유효형식(`^[A-Z]\d{12}$`) **AND** 현재 `profile.iidxId` 와 일치할 때만 업로드. null·garbage·불일치 전부 차단.
+  - **수정 2 (spawn read = 표시 전용, HOLE 2 차단)**: Reflux spawn 직후 최초 TSV read 는 디스크 잔존 옛 TSV 일 수 있어 **업로드 출처로 인정하지 않음**(src=null). 그 mtime 을 세션 baseline 으로 기록 → **baseline 초과(=이번 세션 새 덤프) reload + 유효 ID** 일 때만 업로드 출처로 승격. 즉 cross-restart stale 은 profile 이 이미 잡혀 있어도 업로드 불가.
+  - 기존 세션 중 가드(A→B 전환·null 5초 끊김 doReset)는 유지 + baseline 도 같이 리셋. typecheck 통과.
+  - ⚠️ 상호작용: SP 전용·DP 저레벨 *즉시 초기 업로드*(v0.0.92)도 이제 "이번 세션 새 덤프(유효 ID 태깅)" 가 들어와야 진행 → 앱 실행 후 한 번 칠 때까지 대기(데이터 손실 없음, 안전쪽). SP 저장 로직 자체는 무변경.
+- **[src/shared/variants.ts](src/shared/variants.ts) 변종 9→10** — variant-map 정본(ohSorryAdmin/ohSorryRating) 동기화: `L'amour et la liberté` 추가(AC `lamour31`/INF `lamour`, AC만 ANOTHER ★10). `VARIANT_TITLES` 최상단 배치.
+
 ### v0.0.92 — 2026-06-26 SP 전용·DP 저레벨 유저 즉시 업로드 (TSV 인식 시)
 - v0.0.91 의 SP/DP 저장이 **초기 즉시 업로드 effect 의 dp12(★/DP12 매칭) 게이트**에 막혀, SP 만·DP 저레벨만 친 유저는 3분 auto timer 첫 트리거 전까지 저장이 안 되던 문제 수정.
 - [App.tsx](src/renderer/src/App.tsx) 초기 업로드 게이트를 dp12 → `rows.length`(TSV 인식)로 교체. **TSV 인식 즉시** `users` 등록 + 그 시점 가진 scores(SP10~12 / DP 전레벨) 1회 적재(빈 업로드 방지). dp12(★)는 안 기다림(늦게 준비돼도 3분 timer 가 보강). typecheck 통과.

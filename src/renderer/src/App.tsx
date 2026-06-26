@@ -144,6 +144,10 @@ export default function App() {
   // 현재 rows(TSV 점수) 가 어느 IIDX ID 의 덤프에서 온 것인지 — TSV read 성공 시 그 시점 live ID 로 태깅.
   //   업로드 직전 현재 ID 와 비교해, ID 가 바뀐 뒤 옛 rows 가 새 ID 로 잘못 올라가는 것을 차단(이중 안전장치).
   const rowsSourceIidxIdRef = useRef<string | null>(null);
+  // spawn 직후 최초 read 한 디스크 tracker.tsv 의 mtime("세션 baseline"). 이 값 이하의 read = 디스크 잔존
+  //   옛 유저 TSV(cross-restart stale)일 수 있어 표시 전용. 이 값을 "초과"하는 read 만 = 이번 세션 새 덤프 →
+  //   업로드 출처로 승격(HOLE 2 차단). null = baseline 미설정(빈 파일로 시작 등) → 첫 실데이터를 fresh 로 인정.
+  const spawnTsvBaselineRef = useRef<number | null>(null);
   // 매 렌더마다 갱신되는 현재 live IIDX ID — profile 선언(아래쪽) 보다 위에 정의된 loadTsv / 초기 read 에서 참조용.
   const liveIidxIdRef = useRef<string | null>(null);
   const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
@@ -217,7 +221,11 @@ export default function App() {
           const r = await window.infohsorry.readTsv(path);
           if (r.ok && r.rows && r.rows.length > 0) {
             setRows(r.rows);
-            rowsSourceIidxIdRef.current = liveIidxIdRef.current;   // 이 TSV 덤프의 출처 ID 태깅
+            // ⚠️ spawn 직후 최초 read = 디스크에 남은 옛 유저 tracker.tsv 일 수 있음(cross-restart stale).
+            //   → 표시/분석 전용. 업로드 출처로 인정하지 않음(src=null → 업로드 가드가 막음). 이 mtime 을
+            //   세션 baseline 으로 기록 → 이후 baseline 초과(=이번 세션 새 덤프) reload 만 업로드 출처로 승격.
+            rowsSourceIidxIdRef.current = null;
+            spawnTsvBaselineRef.current = r.mtime ?? null;
             if (r.mtime) {
               lastLoadedMtime.current = r.mtime;
               setTsvMtime(r.mtime);
@@ -381,7 +389,14 @@ export default function App() {
         setError(r.error || '읽기 실패');
       } else {
         setRows(r.rows || []);
-        rowsSourceIidxIdRef.current = liveIidxIdRef.current;   // 이 TSV 덤프의 출처 ID 태깅
+        // 출처 ID 태깅 — "이번 세션에 새로 생성/갱신된 덤프"(mtime 이 spawn baseline 초과) + 유효 ID 일 때만
+        //   업로드 출처로 인정. spawn baseline 이하 re-read(디스크 잔존 옛 TSV)는 표시 전용(src=null)
+        //   → cross-restart stale 업로드 차단(HOLE 2). baseline=null(빈 파일 시작)이면 첫 실데이터를 fresh 로 인정.
+        { const liveId = liveIidxIdRef.current;
+          const baseline = spawnTsvBaselineRef.current;
+          const isFreshDump = r.mtime != null && (baseline == null || r.mtime > baseline);
+          rowsSourceIidxIdRef.current =
+            (isFreshDump && liveId && /^[A-Z]\d{12}$/.test(liveId)) ? liveId : null; }
         if (r.mtime) setTsvMtime(r.mtime);
       }
     } catch (e) {
@@ -875,6 +890,7 @@ export default function App() {
       setTsvMtime(0);
       lastLoadedMtime.current = 0;
       rowsSourceIidxIdRef.current = null;
+      spawnTsvBaselineRef.current = null;   // baseline 리셋 — 정리 후 tracker.tsv truncate → 다음 새 덤프를 fresh 로 인정
       initialUploadDoneRef.current = false;
       if (!IS_BROWSER_REMOTE && tsvPath) {
         void (async () => {
@@ -959,11 +975,13 @@ export default function App() {
         console.log(`${tag} skip: IIDX ID 형식 불일치 —`, p.iidxId);
         return;
       }
-      // 이중 안전장치 — 현재 rows 가 다른 ID 의 덤프에서 온 것이면 업로드 건너뜀(새 TSV 덤프 대기).
-      //   ID 전환 직후 가드 cleanup 과 비동기 upload 가 경쟁하는 상황까지 방어.
+      // 출처 ID 가드 — rows 가 "현재 메모리 유저가 이번 세션에 덤프한 TSV" 임을 보장.
+      //   src 가 미확정(null/형식불일치 = 재실행 직후 디스크에 남은 옛 유저 tracker.tsv) 이거나
+      //   현재 ID 와 다르면 업로드 금지. (옛 src && 비교 → null 이면 우회되던 구멍을 막음: 이전 유저 데이터 오염 방지.)
+      //   유효 ID 로 태깅된 새 덤프가 들어올 때까지 대기.
       const src = rowsSourceIidxIdRef.current;
-      if (src && src !== p.iidxId) {
-        console.warn(`${tag} skip: rows 출처 ID(${src}) ≠ 현재 ID(${p.iidxId}) — 새 TSV 덤프 대기`);
+      if (!src || !/^[A-Z]\d{12}$/.test(src) || src !== p.iidxId) {
+        console.warn(`${tag} skip: rows 출처 ID(${src}) 미확정/불일치 (현재 ${p.iidxId}) — 새 TSV 덤프 대기`);
         return;
       }
       // ★ 추정(s) / dp12Match(m) 가 없어도 — SP 전용·DP 저레벨 전용 유저 — 업로드 진행.
@@ -1045,9 +1063,10 @@ export default function App() {
     if (IS_BROWSER_REMOTE) return dbg('skip: browser-remote');
     if (!profile.iidxId || !profile.djName) return dbg(`skip: profile 없음 (id=${profile.iidxId} dj=${profile.djName})`);
     if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return dbg(`skip: iidx 형식 불일치 (${profile.iidxId})`);
-    // rows 출처 ID 가드 — ID 전환 직후 옛 덤프로 만든 카드를 올리지 않게 (업로드 가드와 동일 정책).
-    if (rowsSourceIidxIdRef.current && rowsSourceIidxIdRef.current !== profile.iidxId)
-      return dbg(`skip: 출처ID 불일치 (rows=${rowsSourceIidxIdRef.current} != profile=${profile.iidxId})`);
+    // rows 출처 ID 가드 — 업로드 가드와 동일 정책. src 미확정(null/형식불일치)이거나 불일치면 push 금지.
+    //   (null && 비교로 우회되던 구멍 차단 — 옛 유저 TSV 로 만든 카드를 새 유저로 push 하지 않게.)
+    if (!rowsSourceIidxIdRef.current || !/^[A-Z]\d{12}$/.test(rowsSourceIidxIdRef.current) || rowsSourceIidxIdRef.current !== profile.iidxId)
+      return dbg(`skip: 출처ID 미확정/불일치 (rows=${rowsSourceIidxIdRef.current} != profile=${profile.iidxId})`);
     if (!dp12StarResult || !dp12Match) return dbg(`skip: dp12 미준비 (star=${!!dp12StarResult} match=${!!dp12Match})`);
     // tsv 값 변동 감지 — 모든 차트(rated DP + unclassified DP + SP)의 exScore 합 + lamp 합.
     //   exScore 든 lamp 든 한 곳이라도 바뀌면 sig 변경 → push. (미플레이→플레이, fail, 클리어 등 전부 포함.)

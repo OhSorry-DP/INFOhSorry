@@ -1,6 +1,6 @@
-// variants.ts — 변종(동일 곡명+diff 인데 AC 재수록 ≠ INF/구 채보) 9곡 표시 분기용 상수.
+// variants.ts — 변종(동일 곡명+diff 인데 AC 재수록 ≠ INF/구 채보) 10곡 표시 분기용 상수.
 //
-// 정본: ohSorryAdmin/variant-map.json (9곡 고정 목록이라 작은 상수로 번들).
+// 정본: ohSorryAdmin/variant-map.json (10곡 고정 목록이라 작은 상수로 번들).
 //
 // INFINITAS 는 변종의 INF/구 채보(★ 낮음)를 쓰는데 ohSorryRating ratings 는 현행 AC 채보(★11/12)만
 //   수록한다 → norm(title)|diff 조인 시 AC rating/zasa 가 유저의 INF 채보(★7~9)에 잘못 붙는다.
@@ -9,6 +9,7 @@
 import { norm } from './match';
 
 const VARIANT_TITLES = [
+  "L'amour et la liberté",
   'VJ ARMY', 'MAX 300', 'ADVANCE', 'PARANOIA survivor MAX', 'DEEP ROAR', 'madrugada',
   'THE SHINING POLARIS (kors k mix)', 'ミッドナイト堕天使', 'New Castle Legions',
 ];
