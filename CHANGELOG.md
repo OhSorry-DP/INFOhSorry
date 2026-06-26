@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.90 — 2026-06-26 추천 deps 공용화 + INF usernorm 적용 (구조개편 Phase 3-3/4, 미배포)
+- [recommendCore.ts](src/renderer/src/recommendCore.ts) `createRecCtx`: 자체 helper 6개(`buildRatingMap`/`buildEreterMap`/`buildZasaMap`/`buildZasaAvgByGameLv`/`buildPatternsTitleMap`/`buildTextageSeriesByNorm`)를 **삭제**하고 gist `recommend.js` 의 공용 `buildRecommendDeps`(웹 canonical) 호출로 교체. deps 산식이 웹과 통일(ratingMap estEc/estHc 필터, zasaAvgByGameLv = ratings+zasa 합산).
+- **weaknessPopMean 신규 로드·주입** — `loadRecLibs` 에 `weakness-popmean.json`(웹과 동일 gist) fetch 추가, `RecCoreLibs` 타입 + `createRecCtx` 가 `createContext` 에 주입. 그동안 INF 만 누락돼 raw vec 으로 돌던 ③④ 추천에 **usernorm 정규화(`normalizeWeaknessVec`) 적용** → 웹과 동일 산식.
+- **⚠️ INF 추천 결과 변동(의도)** — population/density 편향 제거 + usernorm shape 반영. 대표 측정: 고수 HC 곡집합 9/10·순위 재배열, 저별 EC/연습 큰 변동. 옛 raw vec → 웹과 동일한 usernorm 으로의 **의도된 개선**.
+- typecheck(node+web) 통과. ⚠️ gist `recommend.js`(`buildRecommendDeps`) 배포 선행 필수. **미배포**(빌드/배포 별도).
+
 ### v0.0.89 — 2026-06-25 원격모드 실시간 push 트리거 수정 (미플레이→플레이 누락)
 - **증상**: 원격모드(오소리웹 ?remote)에서 곡을 쳐도 카드 값이 안 바뀜. 특히 **미플레이곡을 플레이**(exScore 0→11 등)해도 갱신 안 됨. SSE 캡처 결과 `me:update` 0건(= INF 가 push 자체를 안 함) 확인.
 - **원인**: `src/renderer/src/App.tsx` 의 원격 setUser push 트리거(sig)가 `unclassifiedCharts`(rated 미등재 DP 차트)를 **개수만** 추적하고 exScore/lamp 변동은 안 봄. 미플레이→플레이는 개수 불변(이미 NP 행 존재)이라 sig 동일 → push 생략.

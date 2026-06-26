@@ -29,6 +29,7 @@ const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
 const FEATURE_SCORES_URL = `${GIST_RAW}/feature-scores-slim.json`;
 const TEXTAGE_META_URL = `${GIST_RAW}/textage-meta.json`;
 const SERIES_NAME_URL = `${SERIES_GIST}/series-name.json`;
+const WEAKNESS_POPMEAN_URL = `${GIST_RAW}/weakness-popmean.json`;  // ③④ 추천 usernorm baseline (웹과 동일, Phase 3-3)
 
 // ─── module global cache (Analysis / PlayData / WeaknessRecommend 와 공유) ───
 export async function loadGistModule(url: string, globalKey: string): Promise<unknown> {
@@ -132,85 +133,9 @@ function rowsToAllCharts(rows: SongRow[]): AnyLib[] {
   return out;
 }
 
-// ratingData → Map<norm(title)+'|'+diff, { zasaLevel, gameLevel, estEc, estHc, estExh, nEcCleared, nHcCleared, nExhCleared }>
-function buildRatingMap(ratingData: RatingData | null): Map<string, AnyLib> {
-  const m = new Map<string, AnyLib>();
-  if (!ratingData?.ratings) return m;
-  for (const r of ratingData.ratings) {
-    if (!r.title || !r.diff) continue;
-    m.set(norm(r.title) + '|' + r.diff, r);
-  }
-  return m;
-}
-
-// ereterData → Map<norm(title)+'|'+diff, { level, ec, hc, exh, ec_n, hc_n, exh_n }>
-function buildEreterMap(ereterData: EreterData | null): Map<string, AnyLib> {
-  const m = new Map<string, AnyLib>();
-  if (!ereterData?.charts) return m;
-  for (const c of ereterData.charts) {
-    if (!c.title || !c.diff) continue;
-    m.set(norm(c.title) + '|' + c.diff, c);
-  }
-  return m;
-}
-
-// zasaData → Map<norm(title)+'|'+diff, { level }>
-function buildZasaMap(zasaData: ZasaData | null): Map<string, AnyLib> {
-  const m = new Map<string, AnyLib>();
-  if (!zasaData?.charts) return m;
-  for (const z of zasaData.charts) {
-    if (!z.title || !z.diff) continue;
-    m.set(norm(z.title) + '|' + z.diff, z);
-  }
-  return m;
-}
-
-// zasaData 의 (gameLevel → 평균 zasa level) — recommend.js 의 low-level 추천 fallback 에 사용.
-function buildZasaAvgByGameLv(zasaData: ZasaData | null): Record<number, number> {
-  const out: Record<number, number> = {};
-  if (!zasaData?.charts) return out;
-  const bins: Record<number, { sum: number; n: number }> = {};
-  for (const z of zasaData.charts) {
-    const gl = (z as unknown as { gameLevel?: number }).gameLevel;
-    if (typeof gl !== 'number' || typeof z.level !== 'number') continue;
-    if (!bins[gl]) bins[gl] = { sum: 0, n: 0 };
-    bins[gl].sum += z.level;
-    bins[gl].n += 1;
-  }
-  for (const k of Object.keys(bins)) {
-    const b = bins[+k];
-    out[+k] = b.sum / b.n;
-  }
-  return out;
-}
-
-// patterns-all-slim.json 의 title → song id 인덱스.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function buildPatternsTitleMap(patternsMap: AnyLib, normFn: (s: string) => string): Record<string, string> {
-  const m: Record<string, string> = {};
-  for (const id of Object.keys(patternsMap)) {
-    const t = patternsMap[id]?.t;
-    if (!t) continue;
-    const k = normFn(t);
-    if (k && !m[k]) m[k] = id;
-  }
-  return m;
-}
-
-// textage-meta 의 (title → series_no) Map. recommend.js 의 #시리즈명 해시태그 용.
+// textage-meta 타입 (RecCoreLibs.textageMeta 용 — series_no 는 공용 buildRecommendDeps 가 #시리즈명 해시태그 인덱스에 사용).
 interface TextageMeta {
   songs: Record<string, { title?: string; series_no?: number }>;
-}
-function buildTextageSeriesByNorm(meta: TextageMeta | null, normFn: (s: string) => string): Map<string, number> {
-  const m = new Map<string, number>();
-  if (!meta?.songs) return m;
-  for (const id of Object.keys(meta.songs)) {
-    const e = meta.songs[id];
-    if (!e?.title || typeof e.series_no !== 'number') continue;
-    const k = normFn(e.title);
-    if (k && !m.has(k)) m.set(k, e.series_no);
-  }
-  return m;
 }
 
 // ─── lib 로드 + ctx 생성 ────────────────────────────────────────────
@@ -230,10 +155,12 @@ export interface RecCoreLibs {
   featureScores: any;
   textageMeta: TextageMeta;
   seriesNames: Record<string, string>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  weaknessPopMean: any;   // weakness-popmean.json — ③④ 추천 usernorm baseline (웹과 동일, Phase 3-3). null 이면 raw fallback.
 }
 
 export async function loadRecLibs(): Promise<RecCoreLibs> {
-  const [weakness, normLib, recommend, patterns, rateRef, featureScores, textageMeta, seriesNames] = await Promise.all([
+  const [weakness, normLib, recommend, patterns, rateRef, featureScores, textageMeta, seriesNames, weaknessPopMean] = await Promise.all([
     loadGistModule(CALC_WEAKNESS_URL, 'OhsorryWeakness'),
     loadGistModule(NORM_TITLE_URL, 'OhsorryNorm'),
     loadGistModule(RECOMMEND_URL, 'OhsorryRecommend'),
@@ -242,8 +169,9 @@ export async function loadRecLibs(): Promise<RecCoreLibs> {
     loadJson(FEATURE_SCORES_URL),
     loadJson<TextageMeta>(TEXTAGE_META_URL),
     loadJson<Record<string, string>>(SERIES_NAME_URL).catch(() => ({} as Record<string, string>)),
+    loadJson(WEAKNESS_POPMEAN_URL).catch(() => null),   // 없으면 null → recommend.js 가 raw vec fallback
   ]);
-  return { weakness, normLib, recommend, patterns, rateRef, featureScores, textageMeta, seriesNames };
+  return { weakness, normLib, recommend, patterns, rateRef, featureScores, textageMeta, seriesNames, weaknessPopMean };
 }
 
 // 레벨 구간 lazy 병합 — 추천/약점이 하위 레벨(8~10 / 1~7)을 다룰 때만 호출.
@@ -309,26 +237,27 @@ export function createRecCtx(input: RecContextInput): any {
     zasaMap: zasaData?.charts || null,
     rateRef: libs.rateRef,
   });
-  // 3. 인덱스 빌드
-  const patternsTitleMap = buildPatternsTitleMap(libs.patterns, normFn);
-  const ereterMap = buildEreterMap(ereterData);
-  const ratingMap = buildRatingMap(ratingData);
-  const zasaMap = buildZasaMap(zasaData);
-  const zasaAvgByGameLv = buildZasaAvgByGameLv(zasaData);
-  const textageSeriesByNorm = buildTextageSeriesByNorm(libs.textageMeta, normFn);
+  // 3. deps Map/index 6종 = 공용 빌더(recommend.buildRecommendDeps, 웹 canonical) — 구조개편 Phase 3-3.
+  //    INF helper(buildRatingMap 등) 1:1 복제 제거. 산식이 웹 canonical 로 통일됨(ratingMap estEc/estHc 필터,
+  //    zasaAvgByGameLv = ratings+zasa 합산). patternsTitleMap/ereterMap/zasaMap/textageSeriesByNorm 도 동일 단일화.
+  const deps = libs.recommend.buildRecommendDeps({
+    ratings: ratingData?.ratings, zasaCharts: zasaData?.charts, ereterCharts: ereterData?.charts,
+    patternsMap: libs.patterns, textageSongs: libs.textageMeta?.songs, normFn,
+  });
   // INF 수록 차트만 통과 — buildWeaknessRecs 가 patternsMap 전체(AC+INF)를 순회하므로 필수.
   //   input.isInfChart (songs.ac/legen + service-status notInINF 기반) 사용. 미전달 시 모든 차트 통과(로딩 전 fallback).
   const isInfChartInSeries = input.isInfChart || ((): boolean => true);
   // pdLayoutMap — buildWeaknessRecs 가 layoutLabel 기록할 외부 객체 (PlayData 의 배치 토글과 같은 패턴).
   const pdLayoutMap: Record<string, string> = {};
   const ctx = libs.recommend.createContext({
-    userVec, weaknessLib: libs.weakness,
-    patternsMap: libs.patterns, patternsTitleMap, normFn,
-    seriesNames: libs.seriesNames, textageSeriesByNorm,
-    allCharts, ereterMap, ratingMap, zasaMap, zasaAvgByGameLv,
+    ...deps, userVec, weaknessLib: libs.weakness,
+    patternsMap: libs.patterns, normFn,
+    seriesNames: libs.seriesNames,   // textageSeriesByNorm 은 deps 에서 옴
+    allCharts,
     featureScoresMap: libs.featureScores,
     isInfChartInSeries,
     pdLayoutMap,
+    weaknessPopMean: libs.weaknessPopMean,   // ★ Phase 3-3 drift③ 통일 — INF 도 usernorm 적용(웹과 동일, 추천 결과 변동 = 의도)
   });
   return ctx;
 }
