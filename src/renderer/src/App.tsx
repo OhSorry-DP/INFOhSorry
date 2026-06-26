@@ -1018,12 +1018,15 @@ export default function App() {
     if (initialUploadDoneRef.current) return;
     if (!profile.iidxId || !profile.djName) return;
     if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return;
-    if (!dp12StarResult) return;
-    if (!dp12Match) return;
+    // dp12(★/매칭) 게이트 제거 — SP 전용·DP 저레벨 전용 유저도 업로드. 단 TSV(rows) 인식 후에 1회:
+    //   rows 가 차야 spAllCharts/dpAllCharts 가 채워져 가진 scores 까지 함께 적재된다(users 만 빈 업로드 방지).
+    //   dp12(★) 는 안 기다림 — DP12 안 친 유저도 TSV 인식 즉시 저장. dp12 늦게 준비돼도 3분 auto timer 가 보강.
+    if (rows.length === 0) return;
     initialUploadDoneRef.current = true;
     const fn = (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial;
     if (fn) fn();
-  }, [profile, dp12StarResult, dp12Match]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, rows]);
 
   // 원격모드 본인 카드 — 실시간 push. TSV 변경으로 dp12(별값/매칭)가 재계산될 때마다 /api/me 를 갱신하고,
   //   main 이 SSE me:update 를 broadcast → PC2(오소리웹 ?remote)가 보고 있는 본인 카드를 조용히 다시 그림.

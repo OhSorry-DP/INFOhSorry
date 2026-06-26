@@ -2,6 +2,10 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.92 — 2026-06-26 SP 전용·DP 저레벨 유저 즉시 업로드 (TSV 인식 시)
+- v0.0.91 의 SP/DP 저장이 **초기 즉시 업로드 effect 의 dp12(★/DP12 매칭) 게이트**에 막혀, SP 만·DP 저레벨만 친 유저는 3분 auto timer 첫 트리거 전까지 저장이 안 되던 문제 수정.
+- [App.tsx](src/renderer/src/App.tsx) 초기 업로드 게이트를 dp12 → `rows.length`(TSV 인식)로 교체. **TSV 인식 즉시** `users` 등록 + 그 시점 가진 scores(SP10~12 / DP 전레벨) 1회 적재(빈 업로드 방지). dp12(★)는 안 기다림(늦게 준비돼도 3분 timer 가 보강). typecheck 통과.
+
 ### v0.0.91 — 2026-06-26 SP 전용·DP 저레벨 전용 유저도 저장 + DP 전 레벨 scores 적재 (미배포)
 - 기존엔 `src/renderer/src/App.tsx` 의 3분 주기 supabase 업로드가 `dp12StarResult`(★) 또는 `dp12Match`(DP12 매칭)가 없으면 **전체 skip** → SP 만 하거나 DP 를 11/12 미만 레벨만 치는 유저는 `users` row 조차 등록되지 않았음.
 - **업로드 게이트 완화**: `iidxId` + `djName`(+ ID 형식) 만 있으면 업로드하도록 `!s`/`!m` 두 게이트 제거. `s`(★)/`m`(dp12Match)가 null 이어도 진행 — `charts: m?.charts ?? []`, `starResult: s`(null 허용).
