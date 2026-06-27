@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.99 — 2026-06-27 원격모드 라이벌 비교 머지 키 textage_song_id 통일
+- 증상: 리모트모드에서 DP·SP 라이벌 비교의 스코어/램프 승패가 일부 곡에서 비거나 안 뜸(카드 진입 순서·`_remoteSelfId` 타이밍에 따라 비결정적).
+- 원인: 본인(리모트 `/api/me`) charts 는 `__songId`·`__textageSongId`가 **null** → 머지 키가 `title` 기반인데, 라이벌(supabase)은 `song_id` 기반 → 키 공간 불일치로 `chartKeyOf` 매칭 0 → 승패 silent skip.
+- 수정(`remoteUser.ts`): `toChartJson`/`spChartToJson`이 `getTextageByTitle`(title→textage_song_id) 매핑으로 **`__textageSongId`를 채움**. 라이벌도 `textage_song_id` 보유(DB 100% 커버) → 양쪽 textage 키로 매칭. `__songId`는 null 유지, 기존 필드 불변.
+- `App.tsx`: textage 매핑 1회 로드 후 sig 변경으로 `/api/me` 재push(머지 키 반영). `supabaseSync.getTextageByTitle` export.
+- 짝 변경(오소리웹): `merge.js`/`rival.js` `chartKeyOf` = textage_song_id→song_id→title 우선. 동명이곡(AC≠INF) 12쌍 전부 textage 상이 → variant 정확 구분(오매칭 없음).
+
 ### v0.0.98 — 2026-06-27 SP★ 게이지 보정 (computeSpStarGuarded)
 - `App.tsx` `spStarResult`: `computeUserSpCpi(unified)` → ohSorryRating **`computeSpStarGuarded`** 로 교체. `sp_star = max(unified85★, guardedGaugeAvg50)` — EXH/FC 약한 게이지 편향 유저의 unified85 저평가를 보정. `sp_cpi`(CPI 표기)는 **unified85 원좌표 그대로**.
 - 구 gist(guarded 미배포) 환경은 `computeUserSpCpi(unified)` fallback. `SpSkillLib`/`SpSkillResult` 타입에 `computeSpStarGuarded?`·`uniStar`/`applied` 등 옵셔널 필드 추가. SP★ 로그에 `unified85 ★X.X, gauge보정` 표기.
