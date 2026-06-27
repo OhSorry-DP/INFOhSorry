@@ -239,6 +239,9 @@ export interface NotInInfChart {
 
 // 원격 service status — gist 의 service-status.json (uploadEnabled / shelfEnabled toggle).
 // main 에서 fetch (Node) → IPC 로 renderer 에 전달.
+//
+// 스키마 정본: ohSorry/docs/service-status-schema.md (cross-repo 계약 — 본체/웹/INF 공유). 이 인터페이스는
+//   INF 가 소비하는 부분집합(웹 전용 notInAC·showEstimatedBadge·estimatedBadgeText 는 미포함 — INF 미사용).
 export interface ServiceStatus {
   uploadEnabled: boolean;
   shelfEnabled: boolean;

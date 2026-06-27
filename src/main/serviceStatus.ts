@@ -10,19 +10,13 @@
 //
 // 캐시: 없음. 매 호출마다 fresh fetch — github gist raw CDN 이라 rate limit 부담 무관.
 // renderer 에서 직접 fetch 하던 0.0.42 까지의 코드를 main 으로 옮김 (다른 gist fetch lib 들과 동일 패턴).
-import type { NotInInfChart } from '../shared/types';
+// ServiceStatus 타입은 shared/types.ts 정본을 단일 정의로 재노출 — 종전 로컬 중복 인터페이스 제거(schema alignment).
+//   스키마 정본 문서: ohSorry/docs/service-status-schema.md (cross-repo 계약). 런타임 변화 없음(타입은 빌드 시 erase).
+import type { ServiceStatus } from '../shared/types';
+export type { ServiceStatus };
 
 const SERVICE_STATUS_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw/service-status.json';
-
-export interface ServiceStatus {
-  uploadEnabled: boolean;
-  shelfEnabled: boolean;
-  message?: string;
-  updatedAt?: string;
-  // INFINITAS 미수록 차트 — 추천 / 서열표 표시 제외
-  notInINF?: NotInInfChart[];
-}
 
 export async function fetchServiceStatus(): Promise<ServiceStatus> {
   try {
