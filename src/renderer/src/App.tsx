@@ -26,13 +26,14 @@ import { loadRecLibs, createRecCtx, ensurePatternsLevel, loadGistModule, GIST_RA
 
 // SP 대표 실력값(発狂★相当) — ohSorryRating spSkillCpi 커널(gist) 입출력 타입.
 interface SpCpiRow { title: string; diff: string; ec: number; cl: number; hc: number; ex: number; fc: number }
-interface SpSkillResult { cpi: number | null; cpiInt: number | null; star: number | null; starRounded: number | null; sl: number | null; st: number | null; nPairs: number }
+interface SpSkillResult { cpi: number | null; cpiInt: number | null; star: number | null; starRounded: number | null; sl: number | null; st: number | null; nPairs: number;
+  // computeSpStarGuarded 추가 필드 — sp_star = max(unified85★, guardedGaugeAvg50). cpi/cpiInt 는 unified 원좌표.
+  uniStar?: number | null; uniStarRounded?: number | null; gaugeAvg?: number | null; applied?: boolean }
+type SpChartIn = { title: string; diff: string; gameLevel: number; lampNum: number };
 interface SpSkillLib {
-  computeUserSpCpi: (
-    charts: { title: string; diff: string; gameLevel: number; lampNum: number }[],
-    cpi: SpCpiRow[],
-    opts: { normFn: (s: string) => string; mode: string },
-  ) => SpSkillResult;
+  computeUserSpCpi: (charts: SpChartIn[], cpi: SpCpiRow[], opts: { normFn: (s: string) => string; mode: string }) => SpSkillResult;
+  // sp_star 게이지 보정 커널(신규). 구 gist 엔 없을 수 있어 옵셔널 — 호출부에서 fallback.
+  computeSpStarGuarded?: (charts: SpChartIn[], cpi: SpCpiRow[], opts: { normFn: (s: string) => string }) => SpSkillResult;
 }
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
@@ -881,20 +882,23 @@ export default function App() {
   }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput]);
 
   // 추천 baseStar = 표시 별값(ereterStar) 그대로 사용.
-  // SP 대표 실력값(発狂★相当) — sp12 클리어 × cpi.json 실력선(클리어율 85% 교차, 게이지 통합).
+  // SP 대표 실력값(発狂★相当) — sp12 클리어 × cpi.json.
+  //   sp_cpi = unified85 원좌표, sp_star = max(unified85★, guardedGaugeAvg50)(게이지 편향 보정).
   //   rows 변하면 자동 재계산(실시간). norm = cpi.json 키와 동일 정규화(OhsorryNorm, 로드됐으면) → 웹/ohSorry 와 같은 매칭.
-  //   표본부족(SP12 클리어 매칭 0) → null. DP★ 와 독립.
+  //   표본부족(SP12 클리어 매칭 0) → null. DP★ 와 독립. 구 gist(guarded 미배포)는 unified 로 fallback.
   const spStarResult = useMemo<SpSkillResult | null>(() => {
     if (!spSkillLib || !cpiData || sp12Charts.length === 0) return null;
     try {
       const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
       const own = sp12Charts.map((c) => ({ title: c.title, diff: slotToDiff(c.slot), gameLevel: 12, lampNum: lampNum(c.lamp) }));
-      const r = spSkillLib.computeUserSpCpi(own, cpiData, { normFn, mode: 'unified' });
+      const r = spSkillLib.computeSpStarGuarded
+        ? spSkillLib.computeSpStarGuarded(own, cpiData, { normFn })
+        : spSkillLib.computeUserSpCpi(own, cpiData, { normFn, mode: 'unified' });
       if (r.cpi == null) return null;
-      console.log(`[SP★] sp_cpi=${r.cpiInt} sp_star=${r.starRounded} (pairs ${r.nPairs})`);
+      console.log(`[SP★] sp_cpi=${r.cpiInt} sp_star=${r.starRounded}${r.uniStarRounded != null ? ` (unified85 ★${r.uniStarRounded}${r.applied ? ', gauge보정' : ''})` : ''} (pairs ${r.nPairs})`);
       return r;
     } catch (e) {
-      console.warn('[SP★] computeUserSpCpi 실패:', (e as Error).message);
+      console.warn('[SP★] computeSpStarGuarded 실패:', (e as Error).message);
       return null;
     }
   }, [spSkillLib, cpiData, sp12Charts]);
@@ -1145,9 +1149,9 @@ export default function App() {
     lastRemoteSigRef.current = sig;
     dbg('PUSH ✅ setUser 호출');
     void window.infohsorry.remote.setUser(
-      buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData),
+      buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult),
     );
-  }, [profile, dp12StarResult, dp12Match, spAllCharts, spTierData]);
+  }, [profile, dp12StarResult, dp12Match, spAllCharts, spTierData, spStarResult]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:

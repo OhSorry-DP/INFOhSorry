@@ -88,6 +88,7 @@ export function buildRemoteUser(
   unclassified: Array<Omit<RecInputChart, 'level'>>,
   spCharts?: SongChart[],
   spTier12?: SpTierData | null,
+  spStar?: { cpiInt: number | null; starRounded: number | null } | null,
 ): unknown {
   const allCharts: ChartLike[] = [...charts, ...unclassified];
   return {
@@ -96,6 +97,9 @@ export function buildRemoteUser(
     star_estimate: typeof starResult.star === 'number' ? starResult.star : null,
     native_star: typeof starResult.nativeStar === 'number' ? starResult.nativeStar : null,
     ereter_star: typeof starResult.star === 'number' ? starResult.star : null,
+    // SP 발광★ — 오소리웹 ?remote SP 모드 카드/서열표 헤더·목록 별값용(없으면 null).
+    sp_cpi: spStar && typeof spStar.cpiInt === 'number' ? spStar.cpiInt : null,
+    sp_star: spStar && typeof spStar.starRounded === 'number' ? spStar.starRounded : null,
     sp_rank: null,
     dp_rank: null,
     series: 'INF',
