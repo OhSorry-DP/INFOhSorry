@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.98 — 2026-06-27 SP★ 게이지 보정 (computeSpStarGuarded)
+- `App.tsx` `spStarResult`: `computeUserSpCpi(unified)` → ohSorryRating **`computeSpStarGuarded`** 로 교체. `sp_star = max(unified85★, guardedGaugeAvg50)` — EXH/FC 약한 게이지 편향 유저의 unified85 저평가를 보정. `sp_cpi`(CPI 표기)는 **unified85 원좌표 그대로**.
+- 구 gist(guarded 미배포) 환경은 `computeUserSpCpi(unified)` fallback. `SpSkillLib`/`SpSkillResult` 타입에 `computeSpStarGuarded?`·`uniStar`/`applied` 등 옵셔널 필드 추가. SP★ 로그에 `unified85 ★X.X, gauge보정` 표기.
+- ProfileCard·supabase 업로드(sp_cpi/sp_star) 경로 불변 — 산출값(sp_star)만 보정. 카드 표시는 보정된 sp_star 자동 반영.
+
 ### v0.0.97 — 2026-06-27 프로필 카드 SP/DP ★ 표기 정리
 - SP/DP 를 2컬럼으로 분리(사이 `/` 제거). `SP`/`DP` 라벨은 작게·non-bold(★ 숫자만 굵게).
 - **SP 밑 = CPI**(sp_cpi 정수), **DP 밑 = native**(기존 유지). 각 컬럼 클릭 시 재계산.
