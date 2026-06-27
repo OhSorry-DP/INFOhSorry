@@ -782,19 +782,26 @@ export default function App() {
 
   // 별값 lib 입력 — SongRow / DP_SLOTS → { title, diff, lampNum } 단순 형식.
   //   onlyOSRtoEreter.inferEreter 의 charts 인자로 그대로 사용 (lampNum 0/2 필터는 lib 내부 처리).
+  // 별값 입력 누적(monotonic) — 한 번 본 클리어(lamp)는 메모리 덤프가 순간 누락해도 빼지 않는다.
+  //   Reflux 덤프가 일부 채보 unlock/lamp 를 순간 0 으로 읽어 별값(전체곡 50% native)이 5.49~5.6 으로 흔들리던 wobble 제거.
+  //   key=title|diff, 값=세션 최대 lampNum. DB make_grid_data 도 lamp_best(채보별 최대 lamp) 라 산식 일치 → 같은 값(5.6)으로 수렴.
+  //   ⚠ 유저(iidx_id) 전환/세션 리셋 시 반드시 clear(아래 doReset) — 안 그러면 이전 유저 클리어가 섞여 별값 오염.
+  const osrAccumRef = useRef<Map<string, { title: string; diff: string; lampNum: number }>>(new Map());
   const osrChartsInput = useMemo(() => {
-    if (!rows || rows.length === 0) return [];
-    const out: { title: string; diff: string; lampNum: number }[] = [];
+    // 현재 rows 의 클리어를 누적 맵에 merge(max). 순간 누락은 무시되고 새 클리어/상위 lamp 만 반영 → 아래로 안 흔들림.
     for (const r of rows) {
       for (const slot of DP_SLOTS) {
         const cell = r.charts[slot];
         if (!cell || !cell.unlocked || !cell.lamp) continue;
         const diff = slotToDiff(slot);
         if (!diff) continue;
-        out.push({ title: r.title, diff, lampNum: lampNum(cell.lamp) });
+        const key = r.title + '|' + diff;
+        const ln = lampNum(cell.lamp);
+        const prev = osrAccumRef.current.get(key);
+        if (!prev || ln > prev.lampNum) osrAccumRef.current.set(key, { title: r.title, diff, lampNum: ln });
       }
     }
-    return out;
+    return Array.from(osrAccumRef.current.values());
   }, [rows]);
 
   // ── 별값(★) — v3.4.0 onlyOSRtoEreter.inferEreter (본체 calcOhsorryCore 와 동일) ──
@@ -891,6 +898,7 @@ export default function App() {
       lastLoadedMtime.current = 0;
       rowsSourceIidxIdRef.current = null;
       spawnTsvBaselineRef.current = null;   // baseline 리셋 — 정리 후 tracker.tsv truncate → 다음 새 덤프를 fresh 로 인정
+      osrAccumRef.current.clear();          // 별값 누적 리셋 — 유저 전환 시 이전 유저 클리어가 섞이지 않게
       initialUploadDoneRef.current = false;
       if (!IS_BROWSER_REMOTE && tsvPath) {
         void (async () => {

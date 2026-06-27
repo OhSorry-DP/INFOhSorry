@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.94 — 2026-06-27 별값(★) wobble 제거 — 세션 클리어 누적(monotonic)
+- **증상**: 같은 실력인데 별값이 5.49~5.6 으로 계속 흔들림(예 C200074777849). 원인 = Reflux 메모리 덤프가 일부 채보 unlock/lamp 를 순간 0 으로 읽어, 별값 입력(`osrChartsInput`)의 클리어 집합이 덤프마다 줄었다 늘었다 → onlyOSR 전체곡 50% native 가 출렁임. (lib·DB 산식은 정상 — supabase `make_grid_data` 재계산은 5.6 고정.)
+- **수정**: [App.tsx](src/renderer/src/App.tsx) `osrChartsInput` 을 **세션 누적 맵(monotonic max lampNum)** 으로 변경. key=title|diff, 값=세션 최대 lamp. 순간 누락은 무시(아래로 안 흔들림), 새 클리어/상위 lamp 만 즉시 반영(실시간 유지) → 별값 **5.6 수렴·고정**.
+- DB `make_grid_data` 도 lamp_best(채보별 최대 lamp)라 산식 일치 → 업로드 완료 시 DB 별값과 동일.
+- **유저 전환/끊김(doReset) 시 누적 clear** — 이전 유저 클리어 섞임 방지(v0.0.93 TSV 오염 차단과 같은 지점). typecheck 통과.
+
 ### v0.0.93 — 2026-06-27 재실행 시 이전 유저 TSV 업로드 오염 차단 + 변종 9→10 (빌드/배포 별도)
 - **[App.tsx](src/renderer/src/App.tsx) 재실행 오염 방지** — 앱을 끈 상태에서 다른 계정으로 전환 후 재실행하면, 디스크에 남은 **이전 유저 `tracker.tsv`** 가 spawn 시 읽혀 새 유저 ID 로 잘못 업로드되던 사고 차단.
   - **근본**: 업로드 가드가 `if (src && src !== id)` — `src`(rows 출처 ID)가 null 이면 `&&` 단락으로 **우회**됐음. 재실행 직후 메모리 ID 확정 전 읽힌 rows 는 src=null → 가드 통과 → 옛 데이터가 새 ID 로 업로드.
