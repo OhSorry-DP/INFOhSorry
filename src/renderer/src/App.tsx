@@ -39,7 +39,7 @@ import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
 import { useProfile } from './useProfile';
-import { uploadProfile, fetchUserPublic, getInfChartChecker, type UserPublicInfo } from './supabaseSync';
+import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
 
@@ -1112,6 +1112,10 @@ export default function App() {
   //   profile(useProfile) 은 매 렌더 새 객체라 effect 가 매 렌더 fire 하므로, 값 시그니처로 dedup(동일 idle 재기록 skip).
   const lastRemoteSigRef = useRef('');
   const lastSetUserLogRef = useRef('');   // [임시 진단] 같은 사유 연속 로그는 1회만
+  // title→textage_song_id 매핑 — 원격모드 라이벌 비교 머지 키(__textageSongId)용. 1회 로드(graceful).
+  //   로드 완료 시 sig 가 바뀌어 /api/me 가 다시 push 됨(textage 키 반영).
+  const [textageByTitle, setTextageByTitle] = useState<Map<string, string> | null>(null);
+  useEffect(() => { getTextageByTitle().then(setTextageByTitle).catch(() => { /* graceful — 키는 song_id/title fallback */ }); }, []);
   useEffect(() => {
     // [임시 진단] setUser(/api/me) 가 어느 단계에서 멈추는지 콘솔에 1줄. 원인 확정 후 제거.
     const dbg = (msg: string): void => {
@@ -1144,14 +1148,15 @@ export default function App() {
       part('u', dp12Match.unclassifiedCharts),
       part('s', spAllCharts),
       spTierData ? '1' : '0',
+      textageByTitle ? 't1' : 't0',   // textage 매핑 로드되면 sig 변경 → 재push(머지 키 반영)
     ].join('|');
     if (sig === lastRemoteSigRef.current) return dbg('skip: tsv 값 변동 없음(동일)');  // 값 동일 → push 안 함
     lastRemoteSigRef.current = sig;
     dbg('PUSH ✅ setUser 호출');
     void window.infohsorry.remote.setUser(
-      buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult),
+      buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined),
     );
-  }, [profile, dp12StarResult, dp12Match, spAllCharts, spTierData, spStarResult]);
+  }, [profile, dp12StarResult, dp12Match, spAllCharts, spTierData, spStarResult, textageByTitle]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:

@@ -52,7 +52,8 @@ export interface SongEntry {
 const TEXTAGE_META_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/textage-meta.json';
 let textageByTitle: Map<string, string> | null = null;
-async function getTextageByTitle(): Promise<Map<string, string>> {
+// title(raw)→textage_song_id 매핑(norm 키). score 업로드 + 원격 라이벌 비교 머지 키(remoteUser)에서 공유.
+export async function getTextageByTitle(): Promise<Map<string, string>> {
   if (textageByTitle) return textageByTitle;
   textageByTitle = new Map<string, string>();
   try {
