@@ -2,6 +2,9 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 2026-06-27 — src/shared/variants.ts 생성 산출물 전환 (정본=ohSorryRating)
+- `src/shared/variants.ts`: 변종(AC≠INF 다중 채보) 상수를 ohSorryRating 의 단일 정본(`variant-map.json`)에서 생성하는 산출물로 전환. export(`VARIANT_NORM_TITLES`/`isVariantTitle`)·`./match` import·런타임 값 불변(검증 완료) — 변경은 주석 배너 + `VARIANT_TITLES` 따옴표 스타일(한 줄당 1개)뿐. 향후 갱신은 ohSorryRating `npm run build:variants` 로만, 직접 수정 금지.
+
 ### v0.0.99 — 2026-06-27 원격모드 라이벌 비교 머지 키 textage_song_id 통일
 - 증상: 리모트모드에서 DP·SP 라이벌 비교의 스코어/램프 승패가 일부 곡에서 비거나 안 뜸(카드 진입 순서·`_remoteSelfId` 타이밍에 따라 비결정적).
 - 원인: 본인(리모트 `/api/me`) charts 는 `__songId`·`__textageSongId`가 **null** → 머지 키가 `title` 기반인데, 라이벌(supabase)은 `song_id` 기반 → 키 공간 불일치로 `chartKeyOf` 매칭 0 → 승패 silent skip.
