@@ -1008,8 +1008,8 @@ export default function App() {
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts });
-  uploadStateRef.current = { profile, dp12StarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts };
+  const uploadStateRef = useRef({ profile, dp12StarResult, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts });
+  uploadStateRef.current = { profile, dp12StarResult, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts };
   // Analysis 의 vec 재계산 + supabase upsert 트리거 — 동일 timer 가 star upload 후 증가시킴
   const [vecRecomputeKey, setVecRecomputeKey] = useState(0);
 
@@ -1017,7 +1017,7 @@ export default function App() {
     if (IS_BROWSER_REMOTE) return;
 
     const tryUpload = (trigger: 'auto' | 'manual' | 'initial'): void => {
-      const { profile: p, dp12StarResult: s, dp12Match: m, spAllCharts: spAll, dpAllCharts: dpAll, allTsvCharts: allTsv } = uploadStateRef.current;
+      const { profile: p, dp12StarResult: s, spStarResult: sp, dp12Match: m, spAllCharts: spAll, dpAllCharts: dpAll, allTsvCharts: allTsv } = uploadStateRef.current;
       const tag = `[supabase:${trigger}]`;
       if (!p.iidxId || !p.djName) {
         console.log(`${tag} skip: 프로필 미로드`, { iidxId: p.iidxId, djName: p.djName });
@@ -1039,7 +1039,8 @@ export default function App() {
       // ★ 추정(s) / dp12Match(m) 가 없어도 — SP 전용·DP 저레벨 전용 유저 — 업로드 진행.
       //   iidxId + djName 만 있으면(위 가드 통과) users row 등록 + 가진 scores(SP10~12 / DP11~12) 적재.
       //   star 는 null 로 전송 (uploadProfile 에서 p_star=null 처리).
-      console.log(`${tag} 업로드 시작 → iidxId:`, p.iidxId, 'star:', s ? s.star.toFixed(2) : 'null(미산출)');
+      console.log(`${tag} 업로드 시작 → iidxId:`, p.iidxId, 'DP★:', s ? s.star.toFixed(2) : 'null(미산출)',
+        'SP:', sp && sp.cpiInt != null ? `sp_cpi=${sp.cpiInt} sp_star=${sp.starRounded}` : 'null(표본부족→보존)');
       // (원격모드 본인 카드 setUser 는 아래 별도 effect 가 dp12 재계산 즉시 실시간 push — 3분 supabase 업로드와 분리.)
       void uploadProfile({
         appVersion: APP_VERSION,
@@ -1048,6 +1049,8 @@ export default function App() {
         charts: m?.charts ?? [],
         // 서열표 '미분류' 곡 — charts_json 에만 합쳐 올림 (lamp 통계는 m.charts 만 집계)
         unclassifiedCharts: m?.unclassifiedCharts ?? [],
+        spCpi: sp?.cpiInt ?? null,    // SP 대표 실력값 — null(표본부족)이면 RPC COALESCE 가 기존값 보존
+        spStar: sp?.starRounded ?? null,
         spCharts: spAll,   // SP 차트 — 업로더가 gameLevel 10~12 만 play_style:0 으로 적재
         dpAllCharts: dpAll,   // DP 전 레벨 플레이 채보 — play_style:1 전 레벨 적재 (lv11/12 는 dedup 으로 병합)
         allTsvCharts: allTsv,   // TSV 전곡 — songs 마스터 곡 등록(플레이 무관)용

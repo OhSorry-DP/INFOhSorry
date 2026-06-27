@@ -261,6 +261,9 @@ export interface UploadInput {
   allTsvCharts?: SongChart[];
   // 선택: ereter 매핑 있으면 함께 (대개 INF ID 는 ereter 에 없어 null)
   ereterStar?: number | null;
+  // SP 대표 실력값 — sp_cpi(CPI 실력선 정수) / sp_star(発狂★相当). null(표본부족/미산출)이면 RPC COALESCE 가 기존 DB값 유지.
+  spCpi?: number | null;
+  spStar?: number | null;
 }
 
 interface ScoreRow {
@@ -275,7 +278,7 @@ interface ScoreRow {
 }
 
 export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; error?: string }> {
-  const { appVersion, profile, starResult, charts, unclassifiedCharts, ereterStar } = input;
+  const { appVersion, profile, starResult, charts, unclassifiedCharts, ereterStar, spCpi, spStar } = input;
 
   // 원격 service status — uploadEnabled === false 면 upload skip
   const status = await window.infohsorry.serviceStatus.get();
@@ -289,7 +292,11 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const iidxIdNorm = rawId.replace(/-/g, '');
 
   // 1. users upsert (RPC upsert_user) — INF 는 sp_rank/dp_rank 없음, ereter_star 만 옵션
+  //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
+  const spCpiVal = (typeof spCpi === 'number' && isFinite(spCpi)) ? Math.round(spCpi) : null;
+  const spStarVal = (typeof spStar === 'number' && isFinite(spStar)) ? Number(spStar.toFixed(1)) : null;
   try {
+    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'}`);
     const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user`, {
       method: 'POST',
       headers: HEADERS,
@@ -303,12 +310,15 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         // INFOhSorry 메모리 리딩에서 단위가 안 잡혀도 supabase 저장값을 fetchUserPublic 으로 받아 ProfileCard 에 표시.
         p_sp_rank: null,
         p_dp_rank: null,
+        p_sp_cpi: spCpiVal,    // SP 대표 실력값(CPI). null → COALESCE 보존
+        p_sp_star: spStarVal,  // 発狂★相当. null → COALESCE 보존
       }),
     });
     if (!userRes.ok) {
       const errText = await userRes.text().catch(() => '');
       return { ok: false, error: `users HTTP ${userRes.status} ${errText}` };
     }
+    console.log(`[supabase] users upsert OK ${iidxIdNorm} — SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'}`);
   } catch (e) {
     return { ok: false, error: `users error: ${(e as Error).message}` };
   }

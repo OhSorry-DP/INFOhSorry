@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.96 — 2026-06-27 SP 대표 실력값(sp_cpi/sp_star) supabase 업로드
+- 3분 주기 users 업로드(`uploadProfile` → `upsert_user`)에 `p_sp_cpi`/`p_sp_star` 추가. 값 = `spStarResult`(sp12×cpi 실력선, v0.0.95). INF 유저의 SP 별값이 DB에도 적재됨.
+- **안전 정책**: SP★ 산출 실패/표본 부족 → `spStarResult=null` → `p_sp_cpi`/`p_sp_star`=null 전송 → RPC COALESCE 가 **기존 DB값 보존**(절대 0/덮어쓰기 안 함). `isFinite` 가드 + `sp_cpi` 정수 반올림 / `sp_star` 소수1자리.
+- **로그**: 업로드 전(`users upsert 시도 … SP sp_cpi=… sp_star=…`)·후(`users upsert OK … SP …`) + App `업로드 시작 … SP sp_cpi=… sp_star=…`(표본부족이면 `null(보존)`)으로 SP 값 가시화.
+
 ### v0.0.95 — 2026-06-27 프로필 카드 SP/DP ★ 병행 표시 (SP 発狂★相当)
 - ProfileCard 별값 영역을 **SP ★ / DP ★ 병행** 표시로 확장. DP=기존 ereter ★(그대로 유지), SP=신규 **発狂★相当**(cpi 실력선 환산). 스케일이 달라 `SP ★8.22 / DP ★5.56` 처럼 라벨로 구분.
 - SP★ 산출: `sp12Charts`(본인 SP12 클리어) × `cpi.json`(채보별 램프 CPI) → ohSorryRating `spSkillCpi.computeUserSpCpi(mode:'unified')` 실력선(클리어율 85% 교차, 게이지 통합) → `cpiToHakkyoStar`. 커널은 gist `cpiStar.js`/`spSkillCpi.js` fetch+eval(window 등록), cpi.json 도 gist. norm 은 `OhsorryNorm.norm`(웹/ohSorry 와 동일 매칭).
