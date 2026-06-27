@@ -2578,11 +2578,18 @@ body {
 }
 .profile-card-star {
   flex-shrink: 0;
-  text-align: center;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  justify-content: flex-end;
   padding: 0 8px;
-  min-width: 80px;
   /* info(=DJ NAME+단위) 와 radar 가 왼쪽에 붙고, star 만 오른쪽 끝으로. */
   margin-left: auto;
+}
+/* SP / DP 각 컬럼 (★값 + 하단 보조표기). */
+.profile-card-star-col {
+  text-align: center;
+  min-width: 64px;
 }
 .profile-card-star-value {
   font-size: 24px;
@@ -2590,6 +2597,14 @@ body {
   color: var(--text-primary);
   line-height: 1.1;
   font-variant-numeric: tabular-nums;
+}
+/* SP / DP 라벨 — 작게·non-bold (★ 숫자만 굵게). */
+.profile-card-star-label {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  margin-right: 3px;
+  vertical-align: middle;
 }
 .profile-card-star-note {
   font-size: 10px;

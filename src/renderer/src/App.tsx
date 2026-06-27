@@ -1687,6 +1687,7 @@ export default function App() {
             starResult={dp12StarResult}
             osrStar={dp12StarResult?.nativeStar ?? null}
             spStar={spStarResult?.star ?? null}
+            spCpi={spStarResult?.cpiInt ?? null}
             dpRadar={userPublic.dpRadar}
             spRank={userPublic.spRank}
             dpRank={userPublic.dpRank}

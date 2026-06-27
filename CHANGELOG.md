@@ -2,6 +2,10 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.97 — 2026-06-27 프로필 카드 SP/DP ★ 표기 정리
+- SP/DP 를 2컬럼으로 분리(사이 `/` 제거). `SP`/`DP` 라벨은 작게·non-bold(★ 숫자만 굵게).
+- **SP 밑 = CPI**(sp_cpi 정수), **DP 밑 = native**(기존 유지). 각 컬럼 클릭 시 재계산.
+
 ### v0.0.96 — 2026-06-27 SP 대표 실력값(sp_cpi/sp_star) supabase 업로드
 - 3분 주기 users 업로드(`uploadProfile` → `upsert_user`)에 `p_sp_cpi`/`p_sp_star` 추가. 값 = `spStarResult`(sp12×cpi 실력선, v0.0.95). INF 유저의 SP 별값이 DB에도 적재됨.
 - **안전 정책**: SP★ 산출 실패/표본 부족 → `spStarResult=null` → `p_sp_cpi`/`p_sp_star`=null 전송 → RPC COALESCE 가 **기존 DB값 보존**(절대 0/덮어쓰기 안 함). `isFinite` 가드 + `sp_cpi` 정수 반올림 / `sp_star` 소수1자리.

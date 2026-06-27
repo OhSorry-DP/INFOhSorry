@@ -1,7 +1,7 @@
 // ProfileCard — DP12 RECOMMEND 상단에 표시되는 사용자 프로필 카드.
 // ohSorry 의 e-amusement 프로필 카드 스타일 따라함 (DJ NAME / IIDX ID / ★).
 // 프로필 데이터는 INFINITAS 메모리에서 직접 읽음 (useProfile).
-import { useState } from 'react';
+import { useState, type CSSProperties } from 'react';
 import type { ProfileInfo } from './useProfile';
 import type { StarResult } from '../../shared/types';
 import type { DpRadarRow } from './supabaseSync';
@@ -16,6 +16,8 @@ interface ProfileCardProps {
   osrStar?: number | null;
   // SP 대표 실력값(発狂★相当 = cpiToHakkyoStar(sp_cpi)). DP★ 와 다른 스케일(발광 환산)이라 라벨로 구분 병행 표시. null 이면 SP 미표시.
   spStar?: number | null;
+  // SP 실력선 CPI 정수(sp_cpi) — SP ★ 아래 보조 표기. null 이면 미표시.
+  spCpi?: number | null;
   // supabase user_radars (play_style=1) row. null 이면 레이더 영역 자체 숨김.
   dpRadar?: DpRadarRow | null;
   // supabase users.sp_rank / dp_rank (int). null 이면 해당 단위 표시 숨김.
@@ -80,6 +82,7 @@ export function ProfileCard({
   starResult,
   osrStar,
   spStar,
+  spCpi,
   dpRadar,
   spRank,
   dpRank,
@@ -95,6 +98,14 @@ export function ProfileCard({
   };
   const spRankStr = rankIntToKanji(spRank);
   const dpRankStr = rankIntToKanji(dpRank);
+  // ★ 컬럼 클릭 시 재계산(tsv 재로드). SP/DP 컬럼 공통.
+  const starInteractive: { onClick?: () => void; title?: string; style?: CSSProperties } = onStarClick
+    ? {
+        onClick: handleStarClick,
+        title: starCooling ? '재계산 쿨다운 중 (30초)' : '클릭 시 재계산 (DB upload 없이)',
+        style: { cursor: starCooling ? 'wait' : 'pointer', opacity: starCooling ? 0.5 : 1 },
+      }
+    : {};
 
   // 메모리 read 가 한 번도 성공 X (게임 로그인 전 등) → 카드 자체 숨김
   if (!djName && !iidxId && !starResult && spStar == null) return null;
@@ -137,30 +148,32 @@ export function ProfileCard({
       )}
       {(starResult || spStar != null) && (
         <div className="profile-card-star">
-          {/* SP/DP 병행 — DP=기존 ★(ereter 스케일), SP=発狂★相当(cpi 환산). 스케일이 달라 라벨로 구분.
-              클릭 재계산은 DP(tsv 재로드) 기준 — SP★ 도 같은 rows 재계산으로 함께 갱신됨. */}
-          <div
-            className="profile-card-star-value"
-            onClick={onStarClick ? handleStarClick : undefined}
-            title={onStarClick ? (starCooling ? '재계산 쿨다운 중 (30초)' : '클릭 시 재계산 (DB upload 없이)') : undefined}
-            style={onStarClick ? { cursor: starCooling ? 'wait' : 'pointer', opacity: starCooling ? 0.5 : 1 } : undefined}
-          >
-            {spStar != null && (
-              <span className="profile-card-star-sp" title="SP 発狂★相当 (cpi 실력선 환산)">SP ★{spStar.toFixed(2)}</span>
-            )}
-            {spStar != null && starResult && <span style={{ opacity: 0.4, margin: '0 6px' }}>/</span>}
-            {starResult && (
-              <span className="profile-card-star-dp" title="DP ★ (ereter 스케일)">DP ★{starResult.star.toFixed(2)}</span>
-            )}
-          </div>
-          {starResult && (osrNote ? (
-            <div className="profile-card-star-note" title="native (onlyOSR 전체곡 50%) 추정값">
-              native: ★{osrNote.value.toFixed(2)}{' '}
-              <span style={{ opacity: 0.7 }}>({osrNote.diffStr})</span>
+          {/* SP/DP 각 컬럼: ★값 + 하단(SP=CPI / DP=native). 라벨(SP/DP)은 작게·non-bold. 클릭 = tsv 재계산. */}
+          {spStar != null && (
+            <div className="profile-card-star-col" {...starInteractive}>
+              <div className="profile-card-star-value" title="SP 発狂★相当 (cpi 실력선 환산)">
+                <span className="profile-card-star-label">SP</span>★{spStar.toFixed(2)}
+              </div>
+              {spCpi != null && (
+                <div className="profile-card-star-note" title="SP 실력선 CPI (sp_cpi)">CPI {spCpi}</div>
+              )}
             </div>
-          ) : (
-            <div className="profile-card-star-note">DP Recommend</div>
-          ))}
+          )}
+          {starResult && (
+            <div className="profile-card-star-col" {...starInteractive}>
+              <div className="profile-card-star-value" title="DP ★ (ereter 스케일)">
+                <span className="profile-card-star-label">DP</span>★{starResult.star.toFixed(2)}
+              </div>
+              {osrNote ? (
+                <div className="profile-card-star-note" title="native (onlyOSR 전체곡 50%) 추정값">
+                  native: ★{osrNote.value.toFixed(2)}{' '}
+                  <span style={{ opacity: 0.7 }}>({osrNote.diffStr})</span>
+                </div>
+              ) : (
+                <div className="profile-card-star-note">DP Recommend</div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
