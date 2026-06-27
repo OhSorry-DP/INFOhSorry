@@ -23,6 +23,17 @@ import Analysis from './Analysis';
 import Recent from './Recent';
 import PlayData from './PlayData';
 import { loadRecLibs, createRecCtx, ensurePatternsLevel, loadGistModule, GIST_RAW, type RecCoreLibs } from './recommendCore';
+
+// SP 대표 실력값(発狂★相当) — ohSorryRating spSkillCpi 커널(gist) 입출력 타입.
+interface SpCpiRow { title: string; diff: string; ec: number; cl: number; hc: number; ex: number; fc: number }
+interface SpSkillResult { cpi: number | null; cpiInt: number | null; star: number | null; starRounded: number | null; sl: number | null; st: number | null; nPairs: number }
+interface SpSkillLib {
+  computeUserSpCpi: (
+    charts: { title: string; diff: string; gameLevel: number; lampNum: number }[],
+    cpi: SpCpiRow[],
+    opts: { normFn: (s: string) => string; mode: string },
+  ) => SpSkillResult;
+}
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { ProfileCard } from './ProfileCard';
@@ -186,6 +197,11 @@ export default function App() {
   // ohSorryRating — ereter 미등록 lv11/lv12 차트 추정값 (추천 풀 fallback)
   // 우선순위: ereter > rating. ereter 매칭 곡은 절대 rating 으로 덮지 않음.
   const [ratingData, setRatingData] = useState<RatingData | null>(null);
+
+  // SP 대표 실력값 — cpi.json(채보별 램프 CPI) + spSkillCpi 커널(cpiStar 의존). 실시간 sp 별값 산출용.
+  const [cpiData, setCpiData] = useState<SpCpiRow[] | null>(null);
+  const [spSkillLib, setSpSkillLib] = useState<SpSkillLib | null>(null);
+
   // service-status.json 의 notInINF — INFINITAS 미수록 차트 제외 목록
   const [notInINF, setNotInINF] = useState<NotInInfChart[]>([]);
 
@@ -836,6 +852,16 @@ export default function App() {
       } catch (e) {
         console.warn('[★] 별값 lib 로드 실패:', (e as Error).message);
       }
+      // SP 대표 실력값 — cpiStar → spSkillCpi(window.cpiStar 의존) 순 로드 + cpi.json. 실패해도 DP★ 무관.
+      try {
+        await loadGistModule(`${GIST_RAW}/cpiStar.js`, 'cpiStar');
+        const spLib = (await loadGistModule(`${GIST_RAW}/spSkillCpi.js`, 'spSkillCpi')) as SpSkillLib | undefined;
+        if (spLib && typeof spLib.computeUserSpCpi === 'function') setSpSkillLib(spLib);
+        const cpiRes = await fetch(`${GIST_RAW}/cpi.json?t=${Date.now()}`);
+        if (cpiRes.ok) setCpiData((await cpiRes.json()) as SpCpiRow[]);
+      } catch (e) {
+        console.warn('[SP★] cpiStar/spSkillCpi/cpi 로드 실패 (SP 별값 N/A):', (e as Error).message);
+      }
     })();
   }, []);
 
@@ -855,6 +881,24 @@ export default function App() {
   }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput]);
 
   // 추천 baseStar = 표시 별값(ereterStar) 그대로 사용.
+  // SP 대표 실력값(発狂★相当) — sp12 클리어 × cpi.json 실력선(클리어율 85% 교차, 게이지 통합).
+  //   rows 변하면 자동 재계산(실시간). norm = cpi.json 키와 동일 정규화(OhsorryNorm, 로드됐으면) → 웹/ohSorry 와 같은 매칭.
+  //   표본부족(SP12 클리어 매칭 0) → null. DP★ 와 독립.
+  const spStarResult = useMemo<SpSkillResult | null>(() => {
+    if (!spSkillLib || !cpiData || sp12Charts.length === 0) return null;
+    try {
+      const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
+      const own = sp12Charts.map((c) => ({ title: c.title, diff: slotToDiff(c.slot), gameLevel: 12, lampNum: lampNum(c.lamp) }));
+      const r = spSkillLib.computeUserSpCpi(own, cpiData, { normFn, mode: 'unified' });
+      if (r.cpi == null) return null;
+      console.log(`[SP★] sp_cpi=${r.cpiInt} sp_star=${r.starRounded} (pairs ${r.nPairs})`);
+      return r;
+    } catch (e) {
+      console.warn('[SP★] computeUserSpCpi 실패:', (e as Error).message);
+      return null;
+    }
+  }, [spSkillLib, cpiData, sp12Charts]);
+
   const ohsorryRecBase = useMemo(() => dp12StarResult?.star ?? null, [dp12StarResult]);
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
@@ -1639,6 +1683,7 @@ export default function App() {
             profile={profile}
             starResult={dp12StarResult}
             osrStar={dp12StarResult?.nativeStar ?? null}
+            spStar={spStarResult?.star ?? null}
             dpRadar={userPublic.dpRadar}
             spRank={userPublic.spRank}
             dpRank={userPublic.dpRank}

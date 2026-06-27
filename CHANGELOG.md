@@ -2,7 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### v0.0.94 — 2026-06-27 별값(★) wobble 제거 — 세션 클리어 누적(monotonic)
+### v0.0.95 — 2026-06-27 프로필 카드 SP/DP ★ 병행 표시 (SP 発狂★相当)
+- ProfileCard 별값 영역을 **SP ★ / DP ★ 병행** 표시로 확장. DP=기존 ereter ★(그대로 유지), SP=신규 **発狂★相当**(cpi 실력선 환산). 스케일이 달라 `SP ★8.22 / DP ★5.56` 처럼 라벨로 구분.
+- SP★ 산출: `sp12Charts`(본인 SP12 클리어) × `cpi.json`(채보별 램프 CPI) → ohSorryRating `spSkillCpi.computeUserSpCpi(mode:'unified')` 실력선(클리어율 85% 교차, 게이지 통합) → `cpiToHakkyoStar`. 커널은 gist `cpiStar.js`/`spSkillCpi.js` fetch+eval(window 등록), cpi.json 도 gist. norm 은 `OhsorryNorm.norm`(웹/ohSorry 와 동일 매칭).
+- **실시간**: rows(TSV) 변하면 `spStarResult` useMemo 자동 재계산 → 카드 즉시 갱신(DP★ 와 동일 흐름). 표본부족(SP12 매칭 0)이면 SP★ 미표시.
+- 범위: **INF 카드 표시만**. supabase 업로드(sp_cpi/sp_star)·웹 카드 표시는 이번 변경 제외.
 - **증상**: 같은 실력인데 별값이 5.49~5.6 으로 계속 흔들림(예 C200074777849). 원인 = Reflux 메모리 덤프가 일부 채보 unlock/lamp 를 순간 0 으로 읽어, 별값 입력(`osrChartsInput`)의 클리어 집합이 덤프마다 줄었다 늘었다 → onlyOSR 전체곡 50% native 가 출렁임. (lib·DB 산식은 정상 — supabase `make_grid_data` 재계산은 5.6 고정.)
 - **수정**: [App.tsx](src/renderer/src/App.tsx) `osrChartsInput` 을 **세션 누적 맵(monotonic max lampNum)** 으로 변경. key=title|diff, 값=세션 최대 lamp. 순간 누락은 무시(아래로 안 흔들림), 새 클리어/상위 lamp 만 즉시 반영(실시간 유지) → 별값 **5.6 수렴·고정**.
 - DB `make_grid_data` 도 lamp_best(채보별 최대 lamp)라 산식 일치 → 업로드 완료 시 DB 별값과 동일.
