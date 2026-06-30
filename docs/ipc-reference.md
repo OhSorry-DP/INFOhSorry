@@ -11,7 +11,8 @@
 - **renderer 등록**: 부팅 시 모든 채널을 `ipcMain.handle(channel, (_evt, ...args) => fn(...args))`(`src/main/index.ts:499-501`). 단, `portable:download`/`portable:run` 은 `event.sender` 필요로 별도 등록(`src/main/index.ts:504-509`).
 - **preload 노출**: `src/preload/index.ts` 가 `contextBridge.exposeInMainWorld('infohsorry', api)`(`src/preload/index.ts:207`). 각 API 는 `ipcRenderer.invoke(channel, ...args)` 한 줄.
 - **LAN bridge**: `POST /api/ipc {channel, args}` 가 같은 `ipcHandlers` 호출(`src/main/http-server.ts:104-116`). 브라우저 polyfill(`src/renderer/src/api.ts:134-242`)이 `window.infohsorry` 를 동일 형태로 재구성.
-- **main→renderer push 채널**(invoke 아님, `webContents.send`): `reflux:state`, `window:maximized`, `portable:progress`. SSE `/api/events` 가 `reflux:state` 를 PC2 에 전달.
+- **main→renderer push 채널**(invoke 아님, `webContents.send`): `reflux:state`, `window:maximized`, `portable:progress`, `upload:final-request`(종료 시 마지막 업로드 요청). SSE `/api/events` 가 `reflux:state`·`me:update` 를 PC2 에 전달.
+- **renderer→main send 채널**(`ipcRenderer.send`, invoke 아님): `upload:final-done`(마지막 업로드 ack). main 이 `ipcMain.once` 로 수신.
 
 > 채널 응답 컨벤션: 대부분 `{ ok: boolean, ... }` 또는 `{ ok: false, error }`. 일부(상태 조회/단순 값)는 raw 값 반환.
 
@@ -115,7 +116,27 @@
 
 ---
 
-## 7. 브라우저 원격(PC2)에서의 차이 (`src/renderer/src/api.ts`)
+## 7. 원격모드 / 종료 업로드 / LAN 접속정보
+
+원격모드(LAN 로컬보드) 본인 카드 push, 앱·INFINITAS 종료 시 마지막 업로드 왕복, 폰 QR 용 접속정보 채널입니다. 흐름은 [data-flow.md](data-flow.md) 3·5절.
+
+| 채널 | 방향 | 핸들러 역할 | preload API |
+|------|------|-------------|-------------|
+| `remote:setUser` | invoke | renderer 가 계산한 오소리웹 user 객체(별값+charts_json)를 `remoteUser` 에 저장 + `notifyMeUpdate()`(SSE `me:update`). `GET /api/me` 가 노출. `{ok}` | `remote.setUser(user)` |
+| `server:info` | invoke | `serverConnectInfo()`(=http-server `connectInfo()`) → `ConnectInfo` 또는 null(http-server 미시작=dev). | `server.info()` |
+| `upload:final-request` | push (main→renderer) | 앱 창 close / before-quit / INFINITAS 종료 감지 시 main 이 "마지막 업로드 1회" 요청 | `upload.onFinalRequest(cb)` |
+| `upload:final-done` | send (renderer→main) | renderer 가 마지막 업로드 완료 후 ack. main `requestFinalUpload` 가 `ipcMain.once` 로 수신(또는 6초 timeout) | `upload.finalDone()` |
+
+`ConnectInfo`(`src/main/http-server.ts:29-37`): `{ ip: string|null, port: number(=3000), port80: boolean, localName: string(=ohsorry.local), url: string|null(IP 기반 권장), nameUrl: string(이름 기반), qr: string|null(url 의 QR data URL — main qrcode 생성) }`.
+
+정의: `remote:setUser` `src/main/index.ts:512-516`, `server:info` `52`, `requestFinalUpload`(push 발신 + done 수신) `534-553`, 종료 호출부 `570-582`/`612-628`/`700-722`. preload `src/preload/index.ts:206-227`.
+
+- `server:info` 의 `qr` 은 렌더러가 `qrcode` 를 import 하지 않으려고(타입 누수 회피) main 에서 생성해 data URL 로 전달. 헤더 📱 버튼 → `QrConnect` 모달이 소비([architecture.md](architecture.md) 6절).
+- `upload.onFinalRequest`/`finalDone`·`server.info` 는 PC2(브라우저 원격) 브리지에선 no-op/의미 없음(`src/renderer/src/api.ts`).
+
+---
+
+## 8. 브라우저 원격(PC2)에서의 차이 (`src/renderer/src/api.ts`)
 
 PC2 polyfill 이 host 와 다르게 처리하는 것:
 
@@ -131,7 +152,7 @@ PC2 polyfill 이 host 와 다르게 처리하는 것:
 
 ---
 
-## 8. 주요 공유 타입 참조 (`src/shared/types.ts`)
+## 9. 주요 공유 타입 참조 (`src/shared/types.ts`)
 
 IPC 응답에 쓰이는 타입 정의 위치:
 - `SongRow` / `ChartCell` / `ChartSlot`(`src/shared/types.ts:10-28`)

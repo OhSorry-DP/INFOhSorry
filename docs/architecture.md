@@ -15,7 +15,8 @@
 │   - ipcHandlers map (단일 객체)  ──ipcMain.handle 등록                  │
 │   - BrowserWindow 생성 (frameless)                                      │
 │   - RefluxManager 인스턴스 1개 (메모리 리딩 백엔드)                     │
-│   - production 시 startHttpServer (LAN 원격 :3000)                      │
+│   - production 시 startHttpServer (LAN :3000 + best-effort :80          │
+│                                    + ohsorry.local mDNS + QR)           │
 │   reflux.ts / memory.ts / ereter.ts / zasa.ts / rating.ts /            │
 │   spTier.ts / serviceStatus.ts / offsetsRemote.ts / tsv.ts /           │
 │   updateCheck.ts / portableUpdate.ts / http-server.ts                  │
@@ -105,9 +106,13 @@
 4. **production 빌드에서만** `startHttpServer(...)`(`src/main/index.ts:573-580`). dev 는 Vite 가 서버를 띄우므로 skip(`ELECTRON_RENDERER_URL` 존재로 판정).
 5. ereter 캐시가 stale 이면 백그라운드 자동 갱신(`src/main/index.ts:586-596`).
 
-종료 처리:
-- `window-all-closed` → darwin 외 `app.quit()` (`src/main/index.ts:599-601`).
-- `before-quit` → Reflux 가 떠 있으면 `e.preventDefault()` 후 `refluxManager.stop()`(자식 프로세스 정리) 하고 `app.exit(0)` (`src/main/index.ts:603-613`).
+또한 `startInfinitasWatch()`(`src/main/index.ts:659`)로 bm2dx.exe tasklist 30초 폴링을 시작 — INFINITAS 종료 감지 시 마지막 업로드(아래).
+
+종료 처리(모두 "마지막 업로드 1회" 를 거침, [data-flow.md](data-flow.md) 3절):
+- 창 닫기(X) → `mainWindow.on('close')` 가 `e.preventDefault()` 로 파괴를 미루고 `requestFinalUpload()`(렌더러 생존 시점) 후 `destroy()` (`src/main/index.ts:612-628`).
+- `window-all-closed` → darwin 외 `app.quit()` (`src/main/index.ts:695-697`).
+- `before-quit` → `e.preventDefault()` 후 `requestFinalUpload()`(렌더러 살아있으면) + Reflux 떠 있으면 `refluxManager.stop()`(자식 프로세스 정리) 하고 `app.exit(0)` (`src/main/index.ts:700-722`).
+- INFINITAS(bm2dx.exe) 종료 감지 시 → `requestFinalUpload()`(앱은 유지, `src/main/index.ts:570-582`).
 
 ### renderer 측 (`App.tsx` mount effect 들)
 
@@ -125,10 +130,11 @@
 | 별값 lib | gist `onlyOSR`/`OSR135`/`OhsorryNorm`/`onlyOSRtoEreter` 로드 | `App.tsx:724-746` |
 | recommend lib | `loadRecLibs()` | `App.tsx:981-992` |
 | INF 차트 판정기 | `getInfChartChecker()` (Supabase songs) | `App.tsx:996-1007` |
-| tsv 실시간 reload | `refluxState.lastTsvMtime` 변경 감지 → debounce 400ms → `loadTsv` (host 전용) | `App.tsx:354-372` |
-| Supabase 업로드 timer | 3분 주기 별값 upload → vec 재계산 (읽기 없음, host 전용) | `App.tsx:875-943` |
+| tsv 실시간 reload | `refluxState.lastTsvMtime` 변경 감지 → debounce 400ms → `loadTsv` (host 전용) | `App.tsx` |
+| Supabase 업로드 스케줄 | INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 15분 주기 (읽기 없음, host 전용) | `App.tsx:1025-1126` |
+| 마지막 업로드 수신 | `upload.onFinalRequest` — 앱/INFINITAS 종료 시 main 요청 받아 1회 업로드 후 `finalDone` ack | `App.tsx:1082-1088` |
 
-> tsv 읽기 정책: 마운트 즉시 readTsv 하지 않습니다. Reflux spawn 완료 시점에 1회 + 이후 **`tracker.tsv` 변경마다 실시간 reload**(debounce 400ms). 부팅 직후 잠깐 빈 화면 → spawn(10~30초) 후 채워짐(`App.tsx:198-206` 주석). Supabase 업로드는 별도 3분 timer. 데이터 흐름 상세는 [data-flow.md](data-flow.md).
+> tsv 읽기 정책: 마운트 즉시 readTsv 하지 않습니다. Reflux spawn 완료 시점에 1회 + 이후 **`tracker.tsv` 변경마다 실시간 reload**(debounce 400ms). 부팅 직후 잠깐 빈 화면 → spawn(10~30초) 후 채워짐. Supabase 업로드는 별도 스케줄(감지 후 3분 → 15분 주기 + 종료 시 1회, v0.0.100). 데이터 흐름 상세는 [data-flow.md](data-flow.md).
 
 ---
 
@@ -163,3 +169,23 @@
 | `ProfileCard`/`NotesRadar` | `useProfile`(메모리) + Supabase `user_radars`/`users` |
 
 상세는 [data-flow.md](data-flow.md) 와 [memory-reading.md](memory-reading.md).
+
+---
+
+## 6. LAN 연결 — `ohsorry.local` + 앱 내 QR (v0.0.101)
+
+폰/다른 PC 를 같은 네트워크의 INF 서버로 붙일 때 IP·포트를 외우지 않게 한 편의 기능입니다. 서버 자체(RPC bridge/SSE/오소리웹 서빙)는 [data-flow.md](data-flow.md) 5절, 통신은 동일.
+
+### 포트 80 best-effort + mDNS
+
+`startHttpServer`(`src/main/http-server.ts:251-430`)는 기본 `:3000`(`0.0.0.0`) listen 외에:
+- **`:80` 도 별도 `http.createServer` 로 바인드 시도**(`src/main/http-server.ts:377-381`). 성공하면 포트 없이 `http://ohsorry.local` / `http://<IP>` 접속 가능. 이미 80 사용 중(EADDRINUSE 등)이면 `error` 핸들러가 경고만 찍고 무시 → `:3000` 으로 fallback. 둘 다 같은 `requestListener` 공유.
+- **`ohsorry.local` mDNS 광고**(`multicast-dns`, `src/main/http-server.ts:383-400`) — A 쿼리에 대표 LAN IP 로 응답. `stop()` 이 mDNS·양 서버 정리.
+
+### 앱 내 QR — main 에서 생성
+
+헤더 **📱 버튼**(호스트 전용) → `QrConnect` 모달(`src/renderer/src/QrConnect.tsx`). 모달은 `window.infohsorry.server.info()`(IPC `server:info`)로 `ConnectInfo` 를 받아 QR + 주소(`url`)/이름(`nameUrl`) 표시. http-server 미시작(dev)이면 `null` → "LAN 서버 실행 중 아님" 안내.
+
+- **QR 은 main(node) 에서 `qrcode` 로 생성**해 data URL 로 전달(`connectInfo()`, `src/main/http-server.ts:404-423`, url 별 캐시). 렌더러에서 `qrcode` 를 직접 import 하지 않는 이유: `@types/qrcode` 가 web 컴파일에 node 타입(`setTimeout` 등)을 끌어와 타이머 타입이 깨짐 → main 전용으로 격리.
+- QR 내용은 **IP 기반 URL**(가장 확실). `ohsorry.local` 은 타이핑/병기용(mDNS 미동작 환경 대비).
+- deps: `multicast-dns`, `qrcode` — 둘 다 main 전용(`externalizeDepsPlugin` 으로 번들 제외, 2절).

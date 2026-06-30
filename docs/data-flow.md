@@ -17,7 +17,7 @@
    gist 코어(renderer fetch+eval) ──> recommendCore / 별값 lib ──> 추천/별값/분석
                                                                     │
                                             ┌───────────────────────┤
-                                            ▼ (3분 주기, host 전용)  ▼
+                                  ▼ (감지+3분 → 15분 주기 + 종료시, host 전용) ▼
                                      Supabase scores            Supabase user_ohsorry_radars
                                      + users (upsert_user)      (upsert_user_feature_score)
 ```
@@ -111,21 +111,30 @@ TSV(`rowsToAllCharts`, `src/renderer/src/recommendCore.ts:109-133`) + ratingData
 
 ohSorry 와 같은 Supabase 프로젝트 `cvxpeecxiawddmrzbdvn`(Tokyo) 공유. `iidx_id text PK` 라 namespace 호환. 모든 fetch 는 anon JWT key + REST/RPC(`SUPABASE_URL`/`SUPABASE_KEY`, `src/renderer/src/supabaseSync.ts:22-30`).
 
-### 읽기/업로드 분리 — 실시간 reload + 3분 업로드
+### 읽기/업로드 분리 — 실시간 reload + 주기/종료 업로드
 
-**TSV 읽기는 실시간, Supabase 업로드는 3분 주기**로 분리돼 있습니다(2026-06 변경).
+**TSV 읽기는 실시간, Supabase 업로드는 주기적**으로 분리돼 있습니다. 업로드 주기는 v0.0.100 에서 egress/DB 부하 절감을 위해 **"INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 15분 주기 + 앱/INFINITAS 종료 시 마지막 1회"** 로 바뀌었습니다(이전엔 즉시 + 3분 interval).
 
-**① 실시간 reload (`App.tsx:354-372`)** — Reflux 의 `watchTsv` 가 `tracker.tsv` mtime 변경을 감지하면 `setState({stage:'ready', lastTsvMtime})`(`reflux.ts:599`) → `onState`(`App.tsx:209`) → renderer `refluxState.lastTsvMtime` 갱신. 이를 dep 으로 한 effect 가 **debounce 400ms** 후 `loadTsv(tsvPath)` 호출 → rows 갱신 → `dp12StarResult` 자동 재계산. host 전용(`IS_BROWSER_REMOTE` skip). debounce 는 메모리 덤프 연속 갱신 시 폭주 방지.
+**① 실시간 reload (`App.tsx`)** — Reflux 의 `watchTsv` 가 `tracker.tsv` mtime 변경을 감지하면 `setState({stage:'ready', lastTsvMtime})`(`reflux.ts:599`) → `onState` → renderer `refluxState.lastTsvMtime` 갱신. 이를 dep 으로 한 effect 가 **debounce 400ms** 후 `loadTsv(tsvPath)` 호출 → rows 갱신 → `dp12StarResult` 자동 재계산. host 전용(`IS_BROWSER_REMOTE` skip). debounce 는 메모리 덤프 연속 갱신 시 폭주 방지. **이 실시간 reload 는 업로드 타이머와 완전히 무관** — 주기를 15분으로 늘려도 화면 반영은 플레이 즉시(아래 ③·④도 동일).
 
-**② 3분 주기 업로드 (`App.tsx:866-943`)** — `STAR_REFRESH_INTERVAL_MS = 3분`(`App.tsx:94`). host 전용. timer 는 **읽기를 하지 않고** 그 시점 최신 rows 기준으로 업로드만:
+**② 업로드 스케줄 (`App.tsx`)** — 상수 `INITIAL_UPLOAD_DELAY_MS = 3분` / `STAR_REFRESH_INTERVAL_MS = 15분`(`App.tsx:109-110`). host 전용. 두 effect 로 구성:
+- **무장 effect (`App.tsx:1105-1126`)** — `profile.iidxId`(+djName, 형식 통과) **그리고** `rows.length > 0`(=INF/데이터 감지)이 처음 모두 충족될 때 1회 무장: `setTimeout(INITIAL_UPLOAD_DELAY_MS)` → 첫 업로드 → 그 안에서 `setInterval(STAR_REFRESH_INTERVAL_MS)` 로 15분 주기 시작. rows 가 차야 `spAllCharts`/`dpAllCharts` 까지 채워져 가진 scores 가 함께 적재됨(users 만 빈 업로드 방지). dp12(★)는 안 기다림 — DP12 안 친 유저도 인식되고 늦으면 다음 틱이 보강. 타이머 핸들은 `schedTimersRef`(initial/interval) 로 추적해 ID 전환 재무장/언마운트 시 정리.
+- **업로드 effect (`App.tsx:1025-1098`)** — `tryUpload(trigger)` 정의 + 노출. 스케줄러가 호출하는 `runAuto`(=`tryUpload('auto')` + 200ms 후 vec 재계산 트리거)를 `window.__tryUploadAuto` 로 노출하고, 무장 effect 가 이를 setTimeout/setInterval 에서 호출.
 1. `tryUpload('auto')` — 별값 + scores upload.
-2. 200ms 후 `setVecRecomputeKey(k=>k+1)` — Analysis 의 패턴 vec 재계산 + `user_ohsorry_radars` upsert 트리거(`App.tsx:924-929`).
+2. 200ms 후 `setVecRecomputeKey(k=>k+1)` — Analysis 의 패턴 vec 재계산 + `user_ohsorry_radars` upsert 트리거.
 
-> v0.0.41~0.0.75 는 mtime 이벤트 reload 를 끄고 3분 timer 가 `loadTsv`+업로드를 함께 했었음(race 우려). 옛 ID 잘못 업로드 방어는 `loadTsv` 의 `rowsSourceIidxIdRef` 태깅 + `tryUpload` 가드가 담당하므로, 읽기만 실시간으로 되살림.
+**③ 종료 시 마지막 업로드 (v0.0.100)** — 앱/게임 종료 시 마지막 변경을 놓치지 않게 main 이 renderer 에 "마지막 업로드 1회" 를 요청합니다. main `requestFinalUpload(timeoutMs=6000)`(`src/main/index.ts:534-553`)가 `webContents.send('upload:final-request')` → renderer `upload.onFinalRequest`(`App.tsx:1082-1088`)가 `tryUpload('final')` 후 `upload.finalDone()` 로 ack → main 이 `upload:final-done` 수신(또는 timeout)까지 await. 호출 경로 3개:
+- **창 닫기(X)** — `mainWindow.on('close')`(`src/main/index.ts:612-628`)가 `e.preventDefault()` 로 파괴를 미루고(렌더러 생존 시점) `requestFinalUpload()` 후 `destroy()`.
+- **before-quit** — OS 종료/메뉴 등 직접 quit 경로(`src/main/index.ts:700-722`). 렌더러가 살아있을 때만 동작(이미 닫힌 X버튼 경로는 close 핸들러가 처리 → 여기선 no-op).
+- **INFINITAS(bm2dx.exe) 종료 감지** — `startInfinitasWatch`(`src/main/index.ts:570-582`)가 **tasklist 30초 폴링**(`isInfinitasAlive`, `tasklist.exe /FI "IMAGENAME eq bm2dx.exe"`). 떠 있다 사라지면 `requestFinalUpload()`(앱은 계속 유지). tasklist 실패 시엔 직전 상태 유지 → 거짓 "종료" 전환 방지. PC2(브라우저 원격) 브리지는 `upload.*`/`server.*` no-op.
 
-수동 호출: 콘솔 `window.updateSupabase()`(`App.tsx:919-920`). 초기 1회는 데이터 준비되는 즉시(`App.tsx:948-958`).
+> v0.0.41~0.0.75 는 mtime 이벤트 reload 를 끄고 timer 가 `loadTsv`+업로드를 함께 했었음(race 우려). 옛 ID 잘못 업로드 방어는 `loadTsv` 의 `rowsSourceIidxIdRef` 태깅 + `tryUpload` 가드가 담당하므로, 읽기만 실시간으로 되살림.
 
-업로드 가드(`tryUpload`, `App.tsx:878-916`): `iidxId`/`djName` 있고 `^[A-Z]\d{12}$` 형식이고, rows 출처 ID 가 현재 ID 와 일치하고, star/match 가 준비됐을 때만.
+> **④ 리모트 실시간 푸시는 이 타이머와 무관(불변)** — 원격모드 본인 카드(`me:update` SSE)·TSV reload·프로필 메모리 폴링은 별도 effect 라 업로드 주기 변경(3분→15분)의 영향을 전혀 받지 않습니다. TSV 값이 하나라도 바뀌면 `remote.setUser` → main `notifyMeUpdate()` 로 PC2 카드를 플레이 즉시 다시 그립니다(`App.tsx:1128~` 주석). 즉 **화면 반영은 실시간, DB 부하만 주기적/종료시**.
+
+수동 호출: 콘솔 `window.updateSupabase()`(=`tryUpload('manual')`, `App.tsx:1078`).
+
+업로드 가드(`tryUpload`, `App.tsx:1028-1070`): `iidxId`/`djName` 있고 `^[A-Z]\d{12}$` 형식이고, rows 출처 ID 가 현재 ID 와 일치할 때만. star/match 가 null 이어도(SP 전용·DP 저레벨 전용 유저) 진행 — `users` row 등록 + 가진 scores 적재(`star`/`sp_*`=null 은 RPC COALESCE 가 기존값 보존).
 
 ### uploadProfile (`src/renderer/src/supabaseSync.ts:246-400`)
 
@@ -176,19 +185,30 @@ DBR 토글(`dbrOnly`): ON 이면 `played_version=-10`(배틀) 날짜만, DBR 난
 
 ## 5. LAN 원격 제어 (`src/main/http-server.ts` + `src/renderer/src/api.ts`)
 
-같은 네트워크의 다른 PC(PC2) 의 Chrome 으로 `http://<PC1-IP>:3000` 접속하면 같은 화면 + 모든 기능. PC2 는 단순 원격 클라이언트, 실제 동작은 PC1 에서.
+같은 네트워크의 다른 PC(PC2)·폰 의 브라우저로 접속하면 같은 화면 + 모든 기능. PC2 는 단순 원격 클라이언트, 실제 동작은 PC1 에서. 접속 주소는 v0.0.101 에서 편해졌습니다(아래 LAN 연결).
 
-### 서버 (`startHttpServer`, `src/main/http-server.ts:179-246`)
+### 서버 (`startHttpServer`, `src/main/http-server.ts:251-430`)
 
-production 빌드에서만 시작(`src/main/index.ts:573`). 포트 3000, `0.0.0.0` 바인드. 라우팅:
-- `POST /api/ipc` — `{channel, args}` → `ipcHandlers[channel](...args)` → `{result}` 또는 `{error}`(`handleIpc`, `src/main/http-server.ts:76-121`). **ipcMain 과 같은 핸들러 맵 공유**([architecture.md](architecture.md) 3절).
+production 빌드에서만 시작(`src/main/index.ts:667-676`). 포트 3000, `0.0.0.0` 바인드. 라우팅:
+- `POST /api/ipc` — `{channel, args}` → `ipcHandlers[channel](...args)` → `{result}` 또는 `{error}`(`handleIpc`). **ipcMain 과 같은 핸들러 맵 공유**([architecture.md](architecture.md) 3절).
 - `GET /api/events` — SSE(text/event-stream). reflux state 실시간 push(아래).
-- `GET /*` — `out/renderer/` 정적 파일(SPA fallback → index.html, `src/main/http-server.ts:213-234`).
-- CORS: `access-control-allow-origin: *` + OPTIONS preflight 처리(`src/main/http-server.ts:191-199`).
+- `GET /api/me` — renderer 가 push 한 원격모드 본인 카드(`remote.setUser`). 오소리웹 `?remote` 분기가 supabase 대신 읽음.
+- `GET /` — `?remote` 없으면 `/?remote` 로 302(IP 만 쳐도 원격 카드). `GET /osr,/osr/*` 레거시는 루트 등가물로 302.
+- `GET /*` — 오소리웹 루트 마운트(`serveOsr`: vercel 정본 네트워크 우선 + 로컬 캐시 fallback). `/index.html`·`/assets/*` 만 INF 자체 renderer(`out/renderer/`).
+- CORS: `access-control-allow-origin: *` + OPTIONS preflight 처리.
 
-### SSE broadcast (`setupSseBroadcast`, `src/main/http-server.ts:125-177`)
+### LAN 연결 — 포트 80 + mDNS `ohsorry.local` + 앱 내 QR (v0.0.101)
 
-`refluxManager.on('state', ...)` → 접속한 PC2 들에 `event: reflux:state` broadcast(`src/main/http-server.ts:141-143`). 연결 즉시 현재 state 1회 push(초기 sync, `src/main/http-server.ts:166-168`). 15초마다 `: ping` keep-alive(idle proxy/NAT 끊김 방지, `src/main/http-server.ts:146-154`). client 끊기면 close 핸들러가 set 에서 제거.
+폰/다른 PC 가 IP·포트를 외울 필요 없게 접속을 단순화했습니다(상세 [architecture.md](architecture.md) 6절):
+- **best-effort `:80` listen** — `:3000` 외에 `:80` 도 별도 `http.createServer` 로 바인드 시도. 성공하면(`port80Ok=true`) 포트 없이 `http://ohsorry.local` / `http://<IP>` 접속 가능. 이미 80 사용 중이면(EADDRINUSE 등) 경고만 찍고 무시 → `:3000` 으로 fallback(`src/main/http-server.ts:377-381`).
+- **mDNS 광고** — `multicast-dns` 로 `ohsorry.local` A 레코드를 대표 LAN IP 로 응답(`src/main/http-server.ts:383-400`). 같은 네트워크에서 이름으로 접속.
+- **접속정보 + QR** — `connectInfo()`(`src/main/http-server.ts:404-423`)가 `ConnectInfo{ ip, port, port80, localName, url, nameUrl, qr }` 반환. `url`=IP 기반(가장 확실), `nameUrl`=`ohsorry.local`(80 OK 면 포트 생략). `qr`= `url` 의 QR data URL — **main(node) 의 `qrcode` 로 생성**(렌더러가 qrcode 를 import 하면 `@types/qrcode` 가 web 컴파일에 node 타입을 끌어와 타이머 타입이 깨져서 회피). `stop()` 이 mDNS/양 서버 정리.
+- **헤더 📱 버튼 → QrConnect 모달**(`src/renderer/src/QrConnect.tsx`) — `server.info()`(=`connectInfo`)를 받아 QR + 주소/이름을 표시. http-server 미시작(dev)이면 `null` → "LAN 서버 실행 중 아님" 안내. IPC 는 [ipc-reference.md](ipc-reference.md) `server:info`.
+- deps: `multicast-dns`, `qrcode`(둘 다 main 전용).
+
+### SSE broadcast (`setupSseBroadcast`, `src/main/http-server.ts:193-249`)
+
+`refluxManager.on('state', ...)` → 접속한 PC2 들에 `event: reflux:state` broadcast. 연결 즉시 현재 state 1회 push(초기 sync). 15초마다 `: ping` keep-alive(idle proxy/NAT 끊김 방지). client 끊기면 close 핸들러가 set 에서 제거. 추가로 `notifyMeUpdate()`(renderer 의 `remote.setUser` 가 트리거)가 `event: me:update` 를 broadcast → PC2 가 보고 있는 본인 카드를 조용히 다시 fetch/렌더(원격모드 실시간). 이 me:update 는 Supabase 업로드 타이머와 무관(위 §3 ④).
 
 ### 클라이언트 polyfill (`src/renderer/src/api.ts`)
 
