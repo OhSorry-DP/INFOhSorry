@@ -149,6 +149,10 @@ declare global {
       remote: {
         setUser: (user: unknown) => Promise<{ ok: boolean }>;
       };
+      upload: {
+        onFinalRequest: (cb: () => void) => () => void;
+        finalDone: () => void;
+      };
     };
   }
 }

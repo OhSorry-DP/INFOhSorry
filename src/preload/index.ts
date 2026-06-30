@@ -208,6 +208,18 @@ const api = {
   remote: {
     setUser: (user: unknown): Promise<{ ok: boolean }> => ipcRenderer.invoke('remote:setUser', user),
   },
+
+  // 업로드 — main(앱 종료/INFINITAS 종료 감지)이 "마지막 업로드" 를 요청하면 renderer 가 받아 1회 업로드 후 done 신호.
+  upload: {
+    onFinalRequest: (cb: () => void): (() => void) => {
+      const listener = (): void => cb();
+      ipcRenderer.on('upload:final-request', listener);
+      return (): void => {
+        ipcRenderer.off('upload:final-request', listener);
+      };
+    },
+    finalDone: (): void => ipcRenderer.send('upload:final-done'),
+  },
 };
 
 contextBridge.exposeInMainWorld('infohsorry', api);

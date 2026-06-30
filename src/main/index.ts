@@ -1,6 +1,10 @@
 import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron';
 import { join } from 'path';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { readTsv } from './tsv';
+
+const execAsync = promisify(exec);
 import {
   findInfinitas,
   closeHandle,
@@ -521,6 +525,58 @@ ipcMain.handle('portable:run', async (_e, filePath: string) => {
   return runPortable(filePath);
 });
 
+// 앱(창 닫힘)/INFINITAS 종료 시 renderer 에 "마지막 업로드 1회" 를 요청하고 완료(또는 timeout)까지 대기.
+//   renderer 의 upload.onFinalRequest 가 받아 업로드 후 upload:final-done 으로 ack.
+function requestFinalUpload(timeoutMs = 6000): Promise<void> {
+  return new Promise((resolve) => {
+    const win = mainWindow;
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return resolve();
+    let done = false;
+    const finish = (): void => {
+      if (done) return;
+      done = true;
+      ipcMain.removeListener('upload:final-done', finish);
+      resolve();
+    };
+    ipcMain.once('upload:final-done', finish);
+    try {
+      win.webContents.send('upload:final-request');
+    } catch {
+      return finish();
+    }
+    setTimeout(finish, timeoutMs);
+  });
+}
+
+// INFINITAS(bm2dx.exe) 종료 감지 — 떠 있다가 사라지면 마지막 업로드 1회(앱은 계속 유지).
+//   (직접적 INF 생명주기 신호가 없어 tasklist 폴링. 놓쳐도 다음 정기 틱이 보강하므로 실패는 alive 로 간주.)
+let infinitasWasAlive = false;
+let infinitasWatchTimer: ReturnType<typeof setInterval> | null = null;
+async function isInfinitasAlive(): Promise<boolean> {
+  if (process.platform !== 'win32') return false;
+  try {
+    const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
+    const tasklistExe = `${winDir}\\System32\\tasklist.exe`;
+    const { stdout } = await execAsync(`"${tasklistExe}" /FI "IMAGENAME eq bm2dx.exe" /NH`);
+    return stdout.toLowerCase().includes('bm2dx.exe');
+  } catch {
+    return infinitasWasAlive; // tasklist 실패 시 상태 유지 — 거짓 "종료" 전환 방지
+  }
+}
+function startInfinitasWatch(): void {
+  if (process.platform !== 'win32' || infinitasWatchTimer) return;
+  infinitasWatchTimer = setInterval(() => {
+    void (async () => {
+      const alive = await isInfinitasAlive();
+      if (infinitasWasAlive && !alive) {
+        console.log('[infinitas] 종료 감지 — 마지막 업로드 요청');
+        void requestFinalUpload();
+      }
+      infinitasWasAlive = alive;
+    })();
+  }, 30 * 1000);
+}
+
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -546,6 +602,26 @@ function createWindow(): void {
   };
   mainWindow.on('maximize', emitMaxState);
   mainWindow.on('unmaximize', emitMaxState);
+
+  // 앱 종료(창 닫기) — 창이 파괴되기 전(renderer 생존) 에 마지막 업로드 1회 후 실제 닫기.
+  let closeHandled = false;
+  mainWindow.on('close', (e) => {
+    if (closeHandled) return; // 두 번째 close 는 그대로 진행
+    e.preventDefault();
+    closeHandled = true;
+    void (async () => {
+      try {
+        await requestFinalUpload();
+      } catch {
+        /* ignore */
+      }
+      if (infinitasWatchTimer) {
+        clearInterval(infinitasWatchTimer);
+        infinitasWatchTimer = null;
+      }
+      mainWindow?.destroy();
+    })();
+  });
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
@@ -576,6 +652,7 @@ function createWindow(): void {
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   createWindow();
+  startInfinitasWatch(); // INFINITAS 종료 감지 → 마지막 업로드
 
   // 자기 실행 파일이 portable 패턴이면 같은 폴더 내 옛 portable 정리 (자기 패턴만, 안전)
   const cl = cleanupOldPortables();
@@ -614,14 +691,27 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+let quitFinalizing = false;
 app.on('before-quit', async (e) => {
+  if (quitFinalizing) return;
+  e.preventDefault();
+  quitFinalizing = true;
+  if (infinitasWatchTimer) {
+    clearInterval(infinitasWatchTimer);
+    infinitasWatchTimer = null;
+  }
+  // 직접 app.quit(OS 종료/메뉴 등) 경로의 마지막 업로드 — renderer 가 살아있을 때만 동작(이미 닫힌 X버튼 경로는 close 핸들러가 처리 → 여기선 no-op).
+  try {
+    await requestFinalUpload();
+  } catch {
+    /* ignore */
+  }
   if (refluxManager.getState().spawned) {
-    e.preventDefault();
     try {
       await refluxManager.stop();
     } catch {
       /* ignore */
     }
-    app.exit(0);
   }
+  app.exit(0);
 });

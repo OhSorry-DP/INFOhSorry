@@ -100,12 +100,13 @@ function recRowToCandidate(r: any, stage: CardStage): RecCandidate {
 // 이전엔 하드코드 (0.0.12) 라 v0.0.13~v0.0.15 풀 때 supabase 업로드 버전이 옛 값으로 남음.
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
-// 실력값 추정 + Supabase 업로드 주기 — 1분에 한 번.
-// 이전엔 Reflux 의 tracker.tsv mtime 변경 (이벤트 기반) 으로만 추정 trigger 했는데,
-// 계정 전환 후 Reflux 가 한참 dump 안 하면 stale 한 채로 머묾 → 분리해서 strict 1분 주기.
-// 1분마다: tracker.tsv 강제 재읽기 → rows 업데이트 → dp12StarResult 자동 재계산 → upload.
+// 실력값 추정 + Supabase 업로드 주기.
+// INF(데이터) 감지 후 첫 업로드는 INITIAL_UPLOAD_DELAY_MS(3분) 뒤 1회, 이후 STAR_REFRESH_INTERVAL_MS(15분) 주기.
+//   추가로 앱 종료 / INFINITAS 종료 감지 시 main 이 마지막 업로드를 1회 요청(upload.onFinalRequest).
+//   ※ 리모트 실시간 푸시(me:update SSE) / TSV reload 는 이 타이머와 무관(별도 effect) — 주기 변경에 영향 없음.
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
-const STAR_REFRESH_INTERVAL_MS = 3 * 60 * 1000;
+const STAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 정기 업로드 — 15분
+const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비) 후 첫 업로드까지 대기 — 3분
 
 type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
 
@@ -153,6 +154,8 @@ export default function App() {
   // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
   // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
   const initialUploadDoneRef = useRef(false);
+  // 업로드 스케줄 타이머 핸들 — 초기 3분 setTimeout + 이후 15분 setInterval. ID 전환 재무장/언마운트 시 정리.
+  const schedTimersRef = useRef<{ initial: number | null; interval: number | null }>({ initial: null, interval: null });
   // 현재 rows(TSV 점수) 가 어느 IIDX ID 의 덤프에서 온 것인지 — TSV read 성공 시 그 시점 live ID 로 태깅.
   //   업로드 직전 현재 ID 와 비교해, ID 가 바뀐 뒤 옛 rows 가 새 ID 로 잘못 올라가는 것을 차단(이중 안전장치).
   const rowsSourceIidxIdRef = useRef<string | null>(null);
@@ -223,7 +226,7 @@ export default function App() {
   // tsv 읽기 정책 (0.0.41 변경):
   //   - 마운트 시 readTsv 호출 안 함 — 옛 stale tsv 가 race condition 으로 보이던 문제 해소.
   //   - 대신 Reflux spawn 완료 (spawned: false → true) 시점에 readTsv 1회 자동 호출.
-  //   - 그 후 tracker.tsv 변경 시 실시간 reload effect 가 즉시 갱신 (Supabase 업로드는 3분 timer).
+  //   - 그 후 tracker.tsv 변경 시 실시간 reload effect 가 즉시 갱신 (Supabase 업로드는 주기 timer).
   //
   // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 이후 tsv 변경마다 실시간 갱신.
   // (옛 동작: 마운트 즉시 옛 tsv 표시 → race condition 으로 stale 데이터 영구 노출 가능했음)
@@ -379,7 +382,7 @@ export default function App() {
   }
 
   // tracker.tsv 실시간 재읽기 — Reflux 가 mtime 변경을 감지하면(watchTsv → onState) 즉시 reload.
-  //   "읽기는 실시간, Supabase 업로드는 3분" 분리 정책. 업로드/vec 는 아래 3분 timer 가 담당.
+  //   "읽기는 실시간, Supabase 업로드는 주기적" 분리 정책. 업로드/vec 는 아래 스케줄 timer(초기 3분→15분) 가 담당.
   //   debounce 400ms — 메모리 덤프가 짧은 간격으로 연속 갱신될 때 loadTsv 폭주 방지.
   //   (0.0.41~0.0.75 에선 race 우려로 이 이벤트 reload 를 끄고 timer 로만 읽었으나, 실시간성 위해 부활.
   //    옛 ID 잘못 업로드 사고는 loadTsv 의 rowsSourceIidxIdRef 태깅 + 업로드 가드가 별도로 막음.)
@@ -1007,7 +1010,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, [profile.iidxId]);
 
-  // 실력값 추정 + Supabase 업로드 — 3분 주기 (STAR_REFRESH_INTERVAL_MS).
+  // 실력값 추정 + Supabase 업로드 — tryUpload 정의 + 노출(스케줄러/콘솔/종료요청). 주기 자체는 아래 스케줄 effect.
   // tsv 재읽기는 위 실시간 reload effect(refluxState.lastTsvMtime 감지)가 담당 →
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
@@ -1020,7 +1023,7 @@ export default function App() {
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
 
-    const tryUpload = (trigger: 'auto' | 'manual' | 'initial'): void => {
+    const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<void> => {
       const { profile: p, dp12StarResult: s, spStarResult: sp, dp12Match: m, spAllCharts: spAll, dpAllCharts: dpAll, allTsvCharts: allTsv } = uploadStateRef.current;
       const tag = `[supabase:${trigger}]`;
       if (!p.iidxId || !p.djName) {
@@ -1045,8 +1048,8 @@ export default function App() {
       //   star 는 null 로 전송 (uploadProfile 에서 p_star=null 처리).
       console.log(`${tag} 업로드 시작 → iidxId:`, p.iidxId, 'DP★:', s ? s.star.toFixed(2) : 'null(미산출)',
         'SP:', sp && sp.cpiInt != null ? `sp_cpi=${sp.cpiInt} sp_star=${sp.starRounded}` : 'null(표본부족→보존)');
-      // (원격모드 본인 카드 setUser 는 아래 별도 effect 가 dp12 재계산 즉시 실시간 push — 3분 supabase 업로드와 분리.)
-      void uploadProfile({
+      // (원격모드 본인 카드 setUser 는 아래 별도 effect 가 dp12 재계산 즉시 실시간 push — supabase 업로드 주기와 분리.)
+      await uploadProfile({
         appVersion: APP_VERSION,
         profile: p,
         starResult: s,  // null 가능 (SP 전용·DP 저레벨 전용) → users.star = null
@@ -1064,50 +1067,65 @@ export default function App() {
       });
     };
 
-    // 콘솔 수동 호출 — updateSupabase()
-    (window as unknown as { updateSupabase: () => void }).updateSupabase = (): void =>
-      tryUpload('manual');
-
-    // 3분마다: Supabase star upload → 200ms 뒤 vec 재계산 + upsert.
-    //   tsv 재읽기는 위 실시간 reload effect(refluxState.lastTsvMtime 감지)가 담당 — 읽기/업로드 분리.
-    const interval = window.setInterval(() => {
-      tryUpload('auto');
+    // auto 업로드 + 200ms 뒤 vec 재계산 — 스케줄러(초기 3분 → 이후 15분) / 콘솔이 호출.
+    const runAuto = (): void => {
+      void tryUpload('auto');
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
-    }, STAR_REFRESH_INTERVAL_MS);
-    console.log(`[supabase] 실력값 추정 + 업로드 + pattern vec 활성화 — ${STAR_REFRESH_INTERVAL_MS / 1000}초 간격, 수동: updateSupabase()`);
+    };
+    // 노출 — 콘솔 수동(updateSupabase) + 스케줄러(__tryUploadAuto, 아래 스케줄 effect 가 호출).
+    (window as unknown as { updateSupabase: () => void }).updateSupabase = (): void => void tryUpload('manual');
+    (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto = runAuto;
 
-    // 노출 — 새 useEffect 에서 초기 업로드 트리거할 수 있도록
-    (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial = (): void =>
-      tryUpload('initial');
+    // 앱/INFINITAS 종료 시 main 이 요청하는 "마지막 업로드" — 완료까지 await 후 main 에 done ack.
+    const offFinal = window.infohsorry.upload.onFinalRequest(() => {
+      void (async () => {
+        await tryUpload('final');
+        setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
+        window.infohsorry.upload.finalDone();
+      })();
+    });
+    console.log(`[supabase] 업로드 활성화 — INF 감지 후 ${INITIAL_UPLOAD_DELAY_MS / 1000}초 뒤 첫 업로드, 이후 ${STAR_REFRESH_INTERVAL_MS / 1000}초 주기. 수동: updateSupabase()`);
 
     return (): void => {
-      window.clearInterval(interval);
+      offFinal();
+      if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
+      if (schedTimersRef.current.interval != null) window.clearInterval(schedTimersRef.current.interval);
       delete (window as unknown as { updateSupabase?: () => void }).updateSupabase;
-      delete (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial;
+      delete (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto;
     };
   }, []);
 
-  // 초기 한 번만 — profile / star / match 모두 준비됨 감지하면 즉시 supabase 업로드
-  // (auto 3분 interval 첫 트리거를 기다리지 않고 데이터 로딩 끝나는 즉시 한 번)
-  // (initialUploadDoneRef 선언은 위쪽 — 옛 ID transition cleanup useEffect 가 먼저 참조.)
+  // 업로드 스케줄 — profile + TSV(rows) 최초 준비(=INF/데이터 감지) 시 1회 무장:
+  //   3분(INITIAL_UPLOAD_DELAY_MS) 뒤 첫 업로드 → 이후 15분(STAR_REFRESH_INTERVAL_MS) 주기.
+  // (initialUploadDoneRef 는 옛 ID transition cleanup 이 false 로 리셋 → 유저 전환 시 3분 딜레이로 재무장.)
+  //   rows 가 차야 spAllCharts/dpAllCharts 까지 채워져 가진 scores 가 함께 적재됨(users 만 빈 업로드 방지).
+  //   dp12(★) 는 안 기다림 — DP12 안 친 유저도 인식되며, 늦게 준비돼도 다음 주기 틱이 보강.
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
     if (initialUploadDoneRef.current) return;
     if (!profile.iidxId || !profile.djName) return;
     if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return;
-    // dp12(★/매칭) 게이트 제거 — SP 전용·DP 저레벨 전용 유저도 업로드. 단 TSV(rows) 인식 후에 1회:
-    //   rows 가 차야 spAllCharts/dpAllCharts 가 채워져 가진 scores 까지 함께 적재된다(users 만 빈 업로드 방지).
-    //   dp12(★) 는 안 기다림 — DP12 안 친 유저도 TSV 인식 즉시 저장. dp12 늦게 준비돼도 3분 auto timer 가 보강.
     if (rows.length === 0) return;
     initialUploadDoneRef.current = true;
-    const fn = (window as unknown as { __tryUploadInitial?: () => void }).__tryUploadInitial;
-    if (fn) fn();
+    // 이전 유저 스케줄(있으면) 정리 후 재무장
+    if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
+    if (schedTimersRef.current.interval != null) window.clearInterval(schedTimersRef.current.interval);
+    schedTimersRef.current.interval = null;
+    const runAuto = (): void => {
+      const fn = (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto;
+      if (fn) fn();
+    };
+    console.log(`[supabase] INF/데이터 감지 — ${INITIAL_UPLOAD_DELAY_MS / 1000}초 뒤 첫 업로드, 이후 ${STAR_REFRESH_INTERVAL_MS / 1000}초 주기`);
+    schedTimersRef.current.initial = window.setTimeout(() => {
+      runAuto();
+      schedTimersRef.current.interval = window.setInterval(runAuto, STAR_REFRESH_INTERVAL_MS);
+    }, INITIAL_UPLOAD_DELAY_MS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, rows]);
 
   // 원격모드 본인 카드 — 실시간 push. TSV 변경으로 dp12(별값/매칭)가 재계산될 때마다 /api/me 를 갱신하고,
   //   main 이 SSE me:update 를 broadcast → PC2(오소리웹 ?remote)가 보고 있는 본인 카드를 조용히 다시 그림.
-  //   supabase 업로드(3분 주기, 위 effect)와 분리 — 화면 반영은 플레이 즉시, DB 부하는 그대로 3분.
+  //   supabase 업로드(주기 timer, 위 effect)와 분리 — 화면 반영은 플레이 즉시, DB 부하는 주기적(15분).
   // 트리거 = "tsv 값 변동 감지" — 모든 차트의 exScore/lamp 가 하나라도 바뀌면 push (미플레이→플레이/fail/클리어 전부).
   //   profile(useProfile) 은 매 렌더 새 객체라 effect 가 매 렌더 fire 하므로, 값 시그니처로 dedup(동일 idle 재기록 skip).
   const lastRemoteSigRef = useRef('');

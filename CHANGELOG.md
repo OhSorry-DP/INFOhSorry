@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.100 — 2026-06-30 Supabase 업로드 주기 변경 (3분→15분 + 종료 시 업로드)
+- 업로드 주기 재구성 — egress/DB 부하 절감: **즉시 초기업로드 → 3분 지연 후 첫 업로드**, 이후 **3분→15분** 주기. ([src/renderer/src/App.tsx](src/renderer/src/App.tsx) `INITIAL_UPLOAD_DELAY_MS`(3분) + `STAR_REFRESH_INTERVAL_MS`(15분), profile+TSV rows 준비 시 1회 무장, 유저 전환 시 3분 딜레이로 재무장.)
+- **종료 시 마지막 업로드** 추가:
+  - **앱 종료** — 창 close(렌더러 생존 시점) + before-quit 양쪽에서 마지막 업로드 후 종료. ([src/main/index.ts](src/main/index.ts) `requestFinalUpload` IPC 왕복+timeout, 창 `close` 핸들러, before-quit 보강.)
+  - **INFINITAS(bm2dx.exe) 종료 감지** — main tasklist 30초 폴링, 떠있다 사라지면 즉시 마지막 업로드(앱은 유지).
+  - IPC: [src/preload](src/preload/index.ts) `upload.onFinalRequest`/`finalDone` 추가, PC2(브라우저 원격) 브리지는 no-op.
+- **리모트 실시간 푸시/폴링 불변** — `me:update` SSE·TSV reload·프로필 메모리 폴링은 업로드 타이머와 무관(별도 effect) → 주기 변경 영향 없음.
+
 ### 2026-06-27 — src/shared/variants.ts 생성 산출물 전환 (정본=ohSorryRating)
 - `src/shared/variants.ts`: 변종(AC≠INF 다중 채보) 상수를 ohSorryRating 의 단일 정본(`variant-map.json`)에서 생성하는 산출물로 전환. export(`VARIANT_NORM_TITLES`/`isVariantTitle`)·`./match` import·런타임 값 불변(검증 완료) — 변경은 주석 배너 + `VARIANT_TITLES` 따옴표 스타일(한 줄당 1개)뿐. 향후 갱신은 ohSorryRating `npm run build:variants` 로만, 직접 수정 금지.
 

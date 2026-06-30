@@ -244,6 +244,11 @@ if (!IS_HOST) {
       setUser: (user: unknown) =>
         callIpc('remote:setUser', user) as Promise<{ ok: boolean }>,
     },
+    // PC2(브라우저 원격)는 업로드 안 함 — main 의 final-request 도 받지 않으므로 no-op.
+    upload: {
+      onFinalRequest: () => (): void => {},
+      finalDone: (): void => {},
+    },
   };
   (window as unknown as { infohsorry: Window['infohsorry'] }).infohsorry = bridge;
   console.log('[api] browser 환경 — HTTP bridge 활성');
