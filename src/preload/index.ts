@@ -220,6 +220,11 @@ const api = {
     },
     finalDone: (): void => ipcRenderer.send('upload:final-done'),
   },
+
+  // LAN 접속정보 — 폰 QR/주소 표시용. http-server 미시작(dev)이면 null.
+  server: {
+    info: (): Promise<unknown> => ipcRenderer.invoke('server:info'),
+  },
 };
 
 contextBridge.exposeInMainWorld('infohsorry', api);

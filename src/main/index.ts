@@ -42,10 +42,14 @@ const refluxManager = new RefluxManager();
 let remoteUser: unknown = null;
 // SSE me:update broadcaster — startHttpServer 가 채움. setUser 시 PC2 에 갱신 알림용.
 let notifyMeUpdate: (() => void) | null = null;
+// LAN 접속정보(QR/안내) — startHttpServer 가 채움. http-server 미시작(dev)이면 null.
+let serverConnectInfo: (() => unknown) | null = null;
 
 // 모든 IPC handler 를 단일 map 에. ipcMain.handle + HTTP /api/ipc 둘 다 같은 함수.
 // 시그니처: (...args) → Promise<any> | any. event 파라미터는 ipcMain.handle wrapper 에서 제거.
 export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
+  // LAN 접속정보(폰 QR/주소) — http-server 안 떠 있으면(dev) null.
+  'server:info': async () => (serverConnectInfo ? serverConnectInfo() : null),
   // Reflux
   'reflux:start': async () => {
     try {
@@ -665,6 +669,7 @@ app.whenReady().then(() => {
     try {
       const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'));
       notifyMeUpdate = http.notifyMeUpdate;
+      serverConnectInfo = http.connectInfo;
     } catch (e) {
       console.warn('[http] 서버 시작 실패:', (e as Error).message);
     }

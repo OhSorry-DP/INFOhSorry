@@ -153,6 +153,17 @@ declare global {
         onFinalRequest: (cb: () => void) => () => void;
         finalDone: () => void;
       };
+      server: {
+        info: () => Promise<{
+          ip: string | null;
+          port: number;
+          port80: boolean;
+          localName: string;
+          url: string | null;
+          nameUrl: string;
+          qr: string | null;
+        } | null>;
+      };
     };
   }
 }

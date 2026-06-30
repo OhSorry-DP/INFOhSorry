@@ -249,6 +249,9 @@ if (!IS_HOST) {
       onFinalRequest: () => (): void => {},
       finalDone: (): void => {},
     },
+    server: {
+      info: () => callIpc('server:info') as ReturnType<Window['infohsorry']['server']['info']>,
+    },
   };
   (window as unknown as { infohsorry: Window['infohsorry'] }).infohsorry = bridge;
   console.log('[api] browser 환경 — HTTP bridge 활성');

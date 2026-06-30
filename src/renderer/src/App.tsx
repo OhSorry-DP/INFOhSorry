@@ -37,6 +37,7 @@ interface SpSkillLib {
 }
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
+import { QrConnect } from './QrConnect';
 import { ProfileCard } from './ProfileCard';
 import { useProfile } from './useProfile';
 import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
@@ -150,7 +151,7 @@ export default function App() {
   //   "데이터 불러오기" 클릭 / health-check 자동 재시작 시 stage='starting' / 'hooking' 거치는 동안
   //   useProfile 이 iidxId 를 null 로 잠깐 reset 함 → 5초 안에 ready 가 되어 다시 잡히면 cancel.
   //   INFINITAS 진짜 종료 시는 null 이 계속 유지되어 5초 후 cleanup 발동.
-  const stuckNullTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const stuckNullTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
   // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
   const initialUploadDoneRef = useRef(false);
@@ -166,6 +167,7 @@ export default function App() {
   // 매 렌더마다 갱신되는 현재 live IIDX ID — profile 선언(아래쪽) 보다 위에 정의된 loadTsv / 초기 read 에서 참조용.
   const liveIidxIdRef = useRef<string | null>(null);
   const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);   // 폰 연결 QR 모달
   // 개발 모드 — 호스트 (Electron) 에서만 콘솔에 startdev() 노출. PC2 (브라우저 원격) 에선 비활성.
   // 활성 시 Reflux 토글 / 프로필 스캐너 / StarPanel 등 디버그 요소 표시.
   const [devMode, setDevMode] = useState(false);
@@ -387,7 +389,7 @@ export default function App() {
   //   (0.0.41~0.0.75 에선 race 우려로 이 이벤트 reload 를 끄고 timer 로만 읽었으나, 실시간성 위해 부활.
   //    옛 ID 잘못 업로드 사고는 loadTsv 의 rowsSourceIidxIdRef 태깅 + 업로드 가드가 별도로 막음.)
   const liveReloadRef = useRef({ loadTsv: (_p: string): Promise<void> => Promise.resolve(), tsvPath });
-  const reloadDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reloadDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;                  // 원격(PC2)은 호스트가 읽어 push — 중복 방지
     const mtime = refluxState.lastTsvMtime;
@@ -1559,6 +1561,17 @@ export default function App() {
                 </button>
               );
             })()}
+            {!IS_BROWSER_REMOTE && (
+              <button
+                type="button"
+                className="ms-toggle"
+                onClick={() => setQrOpen(true)}
+                title="폰/다른 PC 로 연결 (QR)"
+                aria-label="폰으로 연결"
+              >
+                📱
+              </button>
+            )}
             <ThemeToggle />
           </div>
         </div>
@@ -1566,6 +1579,7 @@ export default function App() {
       </header>
 
       {memoryScannerOpen && <MemoryScanner onClose={() => setMemoryScannerOpen(false)} />}
+      {qrOpen && <QrConnect onClose={() => setQrOpen(false)} />}
 
       <div className="app-body">
       {updateInfo && updateInfo.hasUpdate && updateInfo.latestVersion && (

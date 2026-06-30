@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.101 — 2026-06-30 LAN 연결 편의 (ohsorry.local + 앱 내 QR)
+- **포트 80 + mDNS** — http-server 가 `:3000` 외 best-effort `:80` 도 listen + `ohsorry.local` 을 LAN IP 로 mDNS 광고. 같은 네트워크에서 `http://ohsorry.local`(포트 없이) 접속 가능(80 사용 중이면 `:3000` fallback). ([src/main/http-server.ts](src/main/http-server.ts) `multicast-dns`, `ConnectInfo`)
+- **앱 내 QR** — 헤더 `📱` 버튼(호스트) → 폰/다른 PC 연결 QR + 주소(`http://<LAN-IP>` / `ohsorry.local`) 모달. QR 은 main(node)에서 생성해 렌더러로 전달(렌더러가 qrcode 를 import 하면 @types/qrcode 가 web 컴파일에 node 타입을 끌어와 타이머 타입 깨짐 → 회피). ([src/renderer/src/QrConnect.tsx](src/renderer/src/QrConnect.tsx), `server:info` IPC)
+- deps: `multicast-dns`, `qrcode`(둘 다 main 전용).
+
 ### v0.0.100 — 2026-06-30 Supabase 업로드 주기 변경 (3분→15분 + 종료 시 업로드)
 - 업로드 주기 재구성 — egress/DB 부하 절감: **즉시 초기업로드 → 3분 지연 후 첫 업로드**, 이후 **3분→15분** 주기. ([src/renderer/src/App.tsx](src/renderer/src/App.tsx) `INITIAL_UPLOAD_DELAY_MS`(3분) + `STAR_REFRESH_INTERVAL_MS`(15분), profile+TSV rows 준비 시 1회 무장, 유저 전환 시 3분 딜레이로 재무장.)
 - **종료 시 마지막 업로드** 추가:

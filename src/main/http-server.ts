@@ -17,10 +17,24 @@ import http from 'http';
 import { promises as fsp } from 'fs';
 import { extname, join, dirname } from 'path';
 import { networkInterfaces } from 'os';
+import makeMdns from 'multicast-dns';
+import QRCode from 'qrcode';
 import { RefluxManager } from './reflux';
 import type { RefluxState } from '../shared/types';
 
 const PORT = 3000;
+const LOCAL_NAME = 'ohsorry.local';   // mDNS 광고 이름 — 포트80 OK 면 http://ohsorry.local 로 접속
+
+// 폰/PC2 접속 정보 — 헤더 QR/안내용.
+export interface ConnectInfo {
+  ip: string | null;       // 대표 LAN IPv4
+  port: number;            // 3000 (항상)
+  port80: boolean;         // 80 listen 성공 여부(포트 없이 접속 가능)
+  localName: string;       // ohsorry.local
+  url: string | null;      // 스캔/접속 권장 URL (IP 기반 — 가장 확실)
+  nameUrl: string;         // 이름 기반 URL (ohsorry.local[:port])
+  qr: string | null;       // url 의 QR (data:image/png base64) — main 에서 생성(렌더러 qrcode import 회피)
+}
 // 원격모드 오소리웹 서빙 — vercel 배포본을 받아 로컬 캐시(A: 오프라인) + 캐시 비우면 재fetch(B: 최신화).
 const OSR_ORIGIN = 'https://ohsorry.iidx.in';  // 정본 도메인 (vercel.app 은 여기로 308 redirect)
 
@@ -240,10 +254,10 @@ export function startHttpServer(
   ipcHandlers: IpcHandlers,
   getRemoteUser?: () => unknown,
   osrCacheDir?: string,
-): { server: http.Server; notifyMeUpdate: () => void } {
+): { server: http.Server; notifyMeUpdate: () => void; connectInfo: () => Promise<ConnectInfo>; stop: () => void } {
   const sse = setupSseBroadcast(refluxManager);
 
-  const server = http.createServer(async (req, res) => {
+  const requestListener = async (req: http.IncomingMessage, res: http.ServerResponse): Promise<void> => {
     try {
       const rawUrl = req.url || '/';
       const urlPath = rawUrl.split('?')[0];
@@ -351,11 +365,66 @@ export function startHttpServer(
       res.writeHead(500);
       res.end((e as Error).message);
     }
-  });
+  };
+
+  const server = http.createServer(requestListener);
   server.listen(PORT, '0.0.0.0', () => {
     const ips = lanAddresses();
     console.log(`[http] LAN 원격 제어 서버 :${PORT}`);
     for (const ip of ips) console.log(`         http://${ip}:${PORT}`);
   });
-  return { server, notifyMeUpdate: sse.notifyMeUpdate };
+
+  // best-effort :80 — 포트 없이 http://ohsorry.local 접속용. 이미 사용 중이면(EADDRINUSE 등) 무시하고 :3000 만.
+  let port80Ok = false;
+  const server80 = http.createServer(requestListener);
+  server80.on('error', (e) => console.warn('[http] :80 바인드 실패(무시, :3000 사용):', (e as Error).message));
+  server80.listen(80, '0.0.0.0', () => { port80Ok = true; console.log(`[http] :80 listen — http://${LOCAL_NAME}`); });
+
+  // mDNS — ohsorry.local 을 대표 LAN IP 로 광고(폰/PC2 가 IP 없이 이름으로 접속).
+  const primaryIp = lanAddresses()[0] || null;
+  let mdnsInst: ReturnType<typeof makeMdns> | null = null;
+  if (primaryIp) {
+    try {
+      mdnsInst = makeMdns();
+      mdnsInst.on('query', (q) => {
+        for (const question of q.questions || []) {
+          if (question.name === LOCAL_NAME && question.type === 'A') {
+            mdnsInst?.respond({ answers: [{ name: LOCAL_NAME, type: 'A', ttl: 120, data: primaryIp }] });
+          }
+        }
+      });
+      console.log(`[mdns] ${LOCAL_NAME} → ${primaryIp} 광고`);
+    } catch (e) {
+      console.warn('[mdns] 광고 실패(무시):', (e as Error).message);
+    }
+  }
+
+  // QR 은 main(node)에서 생성 — 렌더러가 qrcode 를 import 하면 @types/qrcode 가 web 컴파일에 node 타입을 끌어옴(타이머 타입 깨짐). url 별 캐시.
+  let qrCache: { url: string; data: string } | null = null;
+  const connectInfo = async (): Promise<ConnectInfo> => {
+    const url = primaryIp ? `http://${primaryIp}${port80Ok ? '' : ':' + PORT}` : null;
+    let qr: string | null = null;
+    if (url) {
+      if (qrCache && qrCache.url === url) qr = qrCache.data;
+      else {
+        try { qr = await QRCode.toDataURL(url, { width: 240, margin: 1 }); qrCache = { url, data: qr }; }
+        catch { qr = null; }
+      }
+    }
+    return {
+      ip: primaryIp,
+      port: PORT,
+      port80: port80Ok,
+      localName: LOCAL_NAME,
+      url,
+      nameUrl: port80Ok ? `http://${LOCAL_NAME}` : `http://${LOCAL_NAME}:${PORT}`,
+      qr,
+    };
+  };
+  const stop = (): void => {
+    try { mdnsInst?.destroy(); } catch { /* ignore */ }
+    try { server80.close(); } catch { /* ignore */ }
+    try { server.close(); } catch { /* ignore */ }
+  };
+  return { server, notifyMeUpdate: sse.notifyMeUpdate, connectInfo, stop };
 }
