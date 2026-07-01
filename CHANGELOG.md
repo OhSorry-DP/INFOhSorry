@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.102 — 2026-07-01 계정 전환 감지 버그 수정 (게임 재시작 시 별값이 옛 계정/0 으로 남던 문제)
+- **버그**: INF오소리를 켜둔 채 게임(INFINITAS)에서 계정을 바꿔 재실행하면 별값이 이전 계정 값 그대로거나 0/빈값으로 남았음. 별값은 전적으로 `rows`(tracker.tsv 파싱 점수)로 계산되는데, 계정 전환 감지 → tsv 비우기 가드([App.tsx](src/renderer/src/App.tsx) `doReset`)가 안 돌던 게 원인.
+- **원인**: 전환 감지가 **직전 tick(`prev`)** 기준이라, 게임 재시작 중 useProfile 이 iidxId 를 잠깐 null 로 리셋([useProfile.ts:156](src/renderer/src/useProfile.ts)) → 시퀀스가 `A→null→B` 가 되면 B 도착 시 `prev=null` 이라 `A→B` 전환을 놓침. null 이 5초 미만이면 옛 계정 rows 잔존(옛 별값), 5초 이상이면 null-타이머가 rows 를 비워 0/빈값 — "0인지 옛값인지" 갈리던 이유.
+- **수정**: 전환 감지를 `prev` 가 아닌 **마지막 유효 ID(`lastValidIidxIdRef`)** 대비로 변경 → null 공백을 건너뛰고 `직전 유효 ID ≠ 새 유효 ID` 로 판정. 계정을 바꿔 재실행하면 새 계정 ID 감지 즉시 tsv 비우기 + rows/별값 누적 리셋 후 새 덤프로 재계산. ([App.tsx](src/renderer/src/App.tsx) 가드 (1) 분기)
+
 ### v0.0.101 — 2026-06-30 LAN 연결 편의 (ohsorry.local + 앱 내 QR)
 - **포트 80 + mDNS** — http-server 가 `:3000` 외 best-effort `:80` 도 listen + `ohsorry.local` 을 LAN IP 로 mDNS 광고. 같은 네트워크에서 `http://ohsorry.local`(포트 없이) 접속 가능(80 사용 중이면 `:3000` fallback). ([src/main/http-server.ts](src/main/http-server.ts) `multicast-dns`, `ConnectInfo`)
 - **앱 내 QR** — 헤더 `📱` 버튼(호스트) → 폰/다른 PC 연결 QR + 주소(`http://<LAN-IP>` / `ohsorry.local`) 모달. QR 은 main(node)에서 생성해 렌더러로 전달(렌더러가 qrcode 를 import 하면 @types/qrcode 가 web 컴파일에 node 타입을 끌어와 타이머 타입 깨짐 → 회피). ([src/renderer/src/QrConnect.tsx](src/renderer/src/QrConnect.tsx), `server:info` IPC)

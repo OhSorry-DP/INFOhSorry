@@ -152,6 +152,11 @@ export default function App() {
   //   useProfile 이 iidxId 를 null 로 잠깐 reset 함 → 5초 안에 ready 가 되어 다시 잡히면 cancel.
   //   INFINITAS 진짜 종료 시는 null 이 계속 유지되어 5초 후 cleanup 발동.
   const stuckNullTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  // 마지막으로 잡힌 "유효" IIDX ID — 계정 전환을 직전 tick(prev)이 아니라 이 값 대비로 감지.
+  //   게임 재시작 시 useProfile 이 iidxId 를 잠깐 null 로 리셋 → 시퀀스가 A→null→B 가 되는데,
+  //   prev(직전 tick)만 보면 B 도착 시 prev=null 이라 A→B 전환을 놓침(옛 계정 rows·별값 잔존).
+  //   null 공백을 건너뛰고 "직전 유효 ID ≠ 새 유효 ID" 로 판정하기 위한 앵커.
+  const lastValidIidxIdRef = useRef<string | null>(null);
   // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
   // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
   const initialUploadDoneRef = useRef(false);
@@ -969,12 +974,18 @@ export default function App() {
       }
     };
 
-    // (1) A → B 직접 전환 — INF오소리는 켜둔 채 게임만 끄고 다른 계정으로 다시 켠 경우.
-    //     prev/now 둘 다 유효 13자 ID 인데 서로 다르면 명백한 전환 → null 5초 debounce 없이 즉시 정리.
-    //     (이게 빠지면 옛 rows + 새 ID 조합으로 잘못 업로드됨)
-    if (refluxHooked && now && prev && VALID.test(now) && VALID.test(prev) && now !== prev) {
-      doReset(`IIDX ID 전환 감지 (${prev} → ${now})`);
-      return;
+    // (1) 계정 전환 — INF오소리는 켜둔 채 게임만 끄고 다른 계정으로 다시 켠 경우.
+    //     ★ 직전 tick(prev)이 아니라 "마지막 유효 ID"(lastValid) 대비로 비교 —
+    //        게임 재시작 시 A→null→B 로 null 이 끼면 prev=null 이라 A→B 를 놓치던 버그 수정.
+    //        새 유효 ID 가 직전 유효 ID 와 다르면 명백한 전환 → null 공백/5초 debounce 무관하게 즉시 정리.
+    //        (이게 빠지면 옛 계정 rows·별값이 그대로 남거나, null 이 5초 넘으면 0/빈값으로 남음)
+    if (refluxHooked && now && VALID.test(now)) {
+      const lastValid = lastValidIidxIdRef.current;
+      lastValidIidxIdRef.current = now;
+      if (lastValid && VALID.test(lastValid) && lastValid !== now) {
+        doReset(`IIDX ID 전환 감지 (${lastValid} → ${now})`);
+        return;
+      }
     }
 
     // ID 가 다시 잡힘 → pending null debounce 취소
