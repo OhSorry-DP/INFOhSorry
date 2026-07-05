@@ -13,6 +13,12 @@
 
 import type { SongRow, ChartSlot, RatingData, ZasaData, EreterData } from '../../shared/types';
 import { norm } from '../../shared/match';
+import { isVariantTitle } from '../../shared/variants';
+
+// variant(AC≠INF 동일 title+diff 다중채보) INF 플레이 표식 — recommend.js userChartByKey 의
+//   variantInfIds Set 에 이 값 하나만 넣어 매칭(textage_song_id 가 없는 TSV 모델이라 sentinel 사용).
+const VARIANT_INF_SENTINEL = '@inf';
+const VARIANT_INF_SENTINEL_SET = new Set([VARIANT_INF_SENTINEL]);
 
 // ─── gist URL ────────────────────────────────────────────────────────
 export const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
@@ -228,6 +234,22 @@ export function createRecCtx(input: RecContextInput): any {
   const allCharts = isInf
     ? allChartsRaw.filter((c) => isInf(String(c.title || ''), SLOT_TO_CN[c.slot as string]))
     : allChartsRaw;
+  // 1b. 변종(AC≠INF) 표식 — dp12Match 와 동일 원칙(in-game level 비교, textage_song_id 없는 TSV 모델이라
+  //   ratingData.ratings 의 gameLevel 을 AC 기준으로 사용). 레벨이 다르면 INF 채보 플레이 → sentinel 부착.
+  //   ratingData 없거나 비변종/레벨 일치(AC 또는 동레벨 예외 3곡)면 미부착 = 기존 동작 그대로.
+  if (ratingData) {
+    const acLevelByKey = new Map<string, number>();
+    for (const rt of ratingData.ratings) {
+      if (typeof rt.gameLevel === 'number') acLevelByKey.set(norm(rt.title) + '|' + rt.diff, rt.gameLevel);
+    }
+    for (const c of allCharts) {
+      if (!c.title || !c.diff || !isVariantTitle(c.title)) continue;
+      const acLevel = acLevelByKey.get(norm(c.title) + '|' + c.diff);
+      if (acLevel != null && typeof c.gameLevel === 'number' && c.gameLevel !== acLevel) {
+        c.textageId = VARIANT_INF_SENTINEL;
+      }
+    }
+  }
   // 2. userVec — calcWeakness.calcUserWeakness 호출
   const userVec = libs.weakness.calcUserWeakness({
     allCharts,
@@ -253,6 +275,7 @@ export function createRecCtx(input: RecContextInput): any {
     ...deps, userVec, weaknessLib: libs.weakness,
     patternsMap: libs.patterns, normFn,
     seriesNames: libs.seriesNames,   // textageSeriesByNorm 은 deps 에서 옴
+    variantInfIds: VARIANT_INF_SENTINEL_SET,   // 유저 본인 AC/INF 변종 플레이 키 분리 (userChartByKey)
     allCharts,
     featureScoresMap: libs.featureScores,
     isInfChartInSeries,

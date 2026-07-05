@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.103 — 2026-07-05 연습곡 추천 유저 본인 채보 key variant 분리 (E1 후속)
+- 변종(AC≠INF 동일 title+diff 다중채보) 곡에서 유저 본인의 AC/INF 두 플레이가 recommend.js `userChartByKey`(title+diff 단독 키) 한 슬롯에서 서로 덮어쓰던 문제를 이 앱에서도 활성화. INFOhSorry 는 TSV(Reflux) 기반이라 textage_song_id 가 없어, ohSorryWeb(textage_song_id Set)과 다른 방식 사용 — [src/renderer/src/recommendCore.ts](src/renderer/src/recommendCore.ts): `ratingData.ratings` 의 AC 기준 gameLevel 과 TSV 실측 gameLevel 을 비교(`dp12Match` 와 동일 원칙)해서 다르면(=INF 채보) sentinel 표식 부착 → recommend.js 의 `variantInfIds` dep 에 연결.
+- 같은 레벨 변종 3곡(VJ ARMY/madrugada/New Castle Legions)은 gameLevel 비교로 구분 불가 — `dp12Match` 의 기존 한계와 동일(의도된 완화, 신규 회귀 아님).
+- 검증: `npm run typecheck` 통과.
+
 ### v0.0.102 — 2026-07-01 계정 전환 감지 버그 수정 (게임 재시작 시 별값이 옛 계정/0 으로 남던 문제)
 - **버그**: INF오소리를 켜둔 채 게임(INFINITAS)에서 계정을 바꿔 재실행하면 별값이 이전 계정 값 그대로거나 0/빈값으로 남았음. 별값은 전적으로 `rows`(tracker.tsv 파싱 점수)로 계산되는데, 계정 전환 감지 → tsv 비우기 가드([App.tsx](src/renderer/src/App.tsx) `doReset`)가 안 돌던 게 원인.
 - **원인**: 전환 감지가 **직전 tick(`prev`)** 기준이라, 게임 재시작 중 useProfile 이 iidxId 를 잠깐 null 로 리셋([useProfile.ts:156](src/renderer/src/useProfile.ts)) → 시퀀스가 `A→null→B` 가 되면 B 도착 시 `prev=null` 이라 `A→B` 전환을 놓침. null 이 5초 미만이면 옛 계정 rows 잔존(옛 별값), 5초 이상이면 null-타이머가 rows 를 비워 0/빈값 — "0인지 옛값인지" 갈리던 이유.
