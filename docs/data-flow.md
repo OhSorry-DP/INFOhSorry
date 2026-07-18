@@ -169,17 +169,17 @@ DBR 토글(`dbrOnly`): ON 이면 `played_version=-10`(배틀) 날짜만, DBR 난
 
 ---
 
-## 4. IIDX ID 전환 가드 (`App.tsx:771-848`)
+## 4. IIDX ID 전환 가드 (`App.tsx:936-1008`)
 
 옛 ID 의 TSV 가 메모리에 남아 **새 ID 로 잘못 업로드되는 사고**를 막는 이중 안전장치입니다.
 
 두 가지 transition 을 감지:
-1. **A→B 직접 전환**: prev/now 둘 다 유효 13자인데 다르면 → 즉시 정리(`doReset`, `App.tsx:826-829`).
-2. **truthy→null**: 게임 종료/INFINITAS 죽음 → null 이 **5초 지속**될 때만(debounce, `App.tsx:844-847`). "데이터 불러오기" 재시작 중 잠깐 null 되는 false-positive 회피.
+1. **A→B 계정 전환**: 새 유효 ID(`now`)가 **마지막 유효 ID**(`lastValidIidxIdRef`)와 다르면 → 즉시 정리(`doReset`, `App.tsx:982-988`). 직전 tick(`prev`)이 아니라 **마지막 유효 ID** 대비라, 게임 재시작 중 `A→null→B` 로 null 이 껴도(`prev=null`) A→B 전환을 놓치지 않음 — null 공백을 건너뛰고 `직전 유효 ID ≠ 새 유효 ID` 로 판정(v0.0.102, 이전엔 prev-tick 기준이라 놓쳐 옛 계정 별값/0 잔존).
+2. **truthy→null**: 게임 종료/INFINITAS 죽음 → null 이 **5초 지속**될 때만(debounce, `App.tsx:999-1007`). "데이터 불러오기" 재시작 중 잠깐 null 되는 false-positive 회피.
 
-`doReset`(`App.tsx:796-821`): rows/tsvMtime/lastLoadedMtime/rowsSourceIidxIdRef/initialUploadDoneRef reset + `clearTsv(tsvPath)` IPC(내용 비우기). 가드 조건(`everHadValidIidxIdRef`): 세션 중 한 번이라도 Reflux 후킹 + 유효 ID 형식 잡힌 적 있어야 함.
+`doReset`(`App.tsx:948-975`): rows/tsvMtime/lastLoadedMtime/rowsSourceIidxIdRef/initialUploadDoneRef reset + `clearTsv(tsvPath)` IPC(내용 비우기). 가드 조건(`everHadValidIidxIdRef`): 세션 중 한 번이라도 Reflux 후킹 + 유효 ID 형식 잡힌 적 있어야 함.
 
-이중 안전장치: TSV read 시점의 live ID 를 `rowsSourceIidxIdRef` 에 태깅(`App.tsx:218`/`365`)하고, 업로드 직전 *출처 ID ≠ 현재 ID* 면 업로드 skip(`App.tsx:891-895`). 비동기 업로드 도중 ID 가 바뀌는 경쟁까지 차단.
+이중 안전장치: TSV read 시점의 live ID 를 `rowsSourceIidxIdRef` 에 태깅(`App.tsx:425`)하고, 업로드 직전 *출처 ID ≠ 현재 ID* 면 업로드 skip(`App.tsx:1162-1163`). 비동기 업로드 도중 ID 가 바뀌는 경쟁까지 차단.
 
 ---
 

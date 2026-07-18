@@ -25,7 +25,7 @@
 
 ## 빠른 참조
 
-- **버전**: `0.0.75` (`package.json`)
+- **버전**: `0.0.103` (`package.json`)
 - **스택**: Electron 28 + React 18 + TypeScript 5.4, 빌드 `electron-vite 3`, 패키징 `electron-builder`(NSIS + portable)
 - **소스 트리**:
   - `src/main/` — Electron 메인 프로세스(Node 백엔드): IPC 핸들러, Reflux 관리, 메모리 스캔, 외부 데이터 fetch, LAN 서버
@@ -33,4 +33,4 @@
   - `src/renderer/src/` — React UI(5개 탭) + Supabase 동기화 + gist 코어 통합
   - `src/shared/` — main/renderer 공유 타입(`types.ts`), 곡명 정규화(`match.ts`), 추천 보조(`recommend.ts`), 메모리 offset 상수(`profileOffsets.ts`)
 
-> 본문 코드 인용은 모두 `파일경로:라인` 형식입니다(예: `src/main/index.ts:38`). 라인 번호는 작성 시점(v0.0.75) 기준이며 이후 변경될 수 있으니 함수명/심볼로 교차 확인하세요.
+> 본문 코드 인용은 모두 `파일경로:라인` 형식입니다(예: `src/main/index.ts:38`). 라인 번호는 작성 시점(v0.0.103) 기준이며 이후 변경될 수 있으니 함수명/심볼로 교차 확인하세요.

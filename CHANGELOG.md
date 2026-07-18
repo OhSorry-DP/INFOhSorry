@@ -2,7 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### v0.0.103 — 2026-07-05 연습곡 추천 유저 본인 채보 key variant 분리 (E1 후속)
+### 2026-07-17 — docs 최신화 (계정 전환 가드 서술 + 버전 참조)
+- `docs/data-flow.md` §4 IIDX ID 전환 가드 — v0.0.102 수정 반영. "prev/now 둘 다 유효 13자인데 다르면" (직전 tick 기준) 서술을 **마지막 유효 ID(`lastValidIidxIdRef`) 대비**로 갱신(`A→null→B` 로 null 이 껴도 A→B 전환을 놓치지 않음). 섹션 내 App.tsx 라인 참조도 현행(936-1008/982-988/999-1007/948-975/425/1162-1163)으로 정정.
+- `docs/README.md` 빠른 참조 버전 `0.0.75` → `0.0.103`(라인 번호 기준 캐비앗 포함).
+- `README.md` ohSorry 모델 버전 참조 정정: 추천/별값 모델 `v3.3.5`·크레딧 `v3.2.10`(폐기된 옛 코어 스킴·현행 부재) → **`v3.3.6`(core v0.0.409)** 로 통일. INF 추천 로직은 고정 스냅샷이 아니라 본체 `recommend.js` 를 100% 추종하므로 "호환" 표기를 "본체 추종"으로 조정.
+- 코드 변경 없음(문서만).
 - 변종(AC≠INF 동일 title+diff 다중채보) 곡에서 유저 본인의 AC/INF 두 플레이가 recommend.js `userChartByKey`(title+diff 단독 키) 한 슬롯에서 서로 덮어쓰던 문제를 이 앱에서도 활성화. INFOhSorry 는 TSV(Reflux) 기반이라 textage_song_id 가 없어, ohSorryWeb(textage_song_id Set)과 다른 방식 사용 — [src/renderer/src/recommendCore.ts](src/renderer/src/recommendCore.ts): `ratingData.ratings` 의 AC 기준 gameLevel 과 TSV 실측 gameLevel 을 비교(`dp12Match` 와 동일 원칙)해서 다르면(=INF 채보) sentinel 표식 부착 → recommend.js 의 `variantInfIds` dep 에 연결.
 - 같은 레벨 변종 3곡(VJ ARMY/madrugada/New Castle Legions)은 gameLevel 비교로 구분 불가 — `dp12Match` 의 기존 한계와 동일(의도된 완화, 신규 회귀 아님).
 - 검증: `npm run typecheck` 통과.
