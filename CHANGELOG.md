@@ -2,6 +2,20 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.104 — 2026-08-05 Reflux 를 자체 fork 로 전환 (2026-08-05 INFINITAS 패치로 곡 데이터 전멸 복구)
+- **증상**: 2026-08-05 패치 후 곡/점수가 통째로 안 들어옴. 콘솔에 `skip: 출처ID 미확정/불일치 (rows=null …)` 반복, `[dp12Match] 풀=0곡 … tsv 미반영=1604, tsv-only=0`. DJ NAME/IIDX ID 는 정상이라 원인이 헷갈렸는데, **프로필은 자체 메모리 리딩, 곡/점수는 Reflux** 로 경로가 갈려서 한쪽만 죽은 것.
+- **원인**: offset 이 아니라 **곡 엔트리 구조 변경**. Reflux 는 `Applying new offsets…` 에서 멈춘 게 아니라 `Utils.DataLoaded()`(마지막 곡 `totalNotes[3] >= 10` 판정) 가 영영 false 라 5초 루프를 돌고 있었음. 게임 쪽 변경:
+  - 엔트리 크기 `0x630` → `0x730`
+  - title/genre/artist 인코딩 **Shift-JIS → UTF-16LE**, title·artist 버퍼는 256 bytes 로 확대(genre 는 128 유지), `idPosition` 1200 → 1456
+  - LED ticker(title2) 만 64 bytes Shift-JIS 그대로
+- **songList 주소 함정**: Reflux `OffsetSearcher` 는 `"5.1.1."` 의 **ASCII** 바이트로 찾는데, title1 이 UTF-16LE 가 되면서 그 패턴이 title2 에 걸림 → 보고값이 실제 엔트리 시작보다 **`0x100` 뒤**. 올바른 값은 `0x1431D4870`(보고값 `0x1431D4970` − `0x100`).
+- **대응 — upstream 을 못 기다림**: olji/Reflux 는 1.16.6(2026-05-04) 이 마지막이고 master `offsets.txt` 는 아직 `2026042200`. 자체 fork([OhSorry-DP/Reflux](https://github.com/OhSorry-DP/Reflux)) 1.17.0 을 만들어 `Utils.cs` 파싱을 고침. 검증: 곡 1879개 파싱, 일본어 제목 385개 포함 디코딩 오류 0.
+- **앱 연결** ([src/main/reflux.ts](src/main/reflux.ts)):
+  - `RELEASES_API` 를 fork 로 전환. asset 이름은 upstream 과 동일한 `Reflux.exe` 유지(`install()` 이 이름으로 찾음). 지원 파일(customtypes/encodingfixes) 은 계속 upstream master(`RAW_BASE`) 에서 받음.
+  - **`ensureInstalled()` 신설** — 기존엔 `existsSync(exePath())` 만 봐서, 이미 olji 판을 받아둔 사용자에게 fork 가 **영원히 전달되지 않았음**. `.reflux-release` 에 release tag 를 기록하고 비교 → 다르면(또는 tag 파일이 없는 옛 설치본이면) 재설치. 재설치 전 `killAllRefluxProcesses()` 로 exe 잠금 해제. release 조회 실패(오프라인/rate limit) 시엔 기존 exe 로 기동.
+  - `BUNDLED_OFFSETS` `2026060300` → `2026080500`(보정된 songList 포함). gist 없이도 새 offset 이 적용됨.
+- 검증: `npm run typecheck:node` 통과.
+
 ### 2026-07-17 — docs 최신화 (계정 전환 가드 서술 + 버전 참조)
 - `docs/data-flow.md` §4 IIDX ID 전환 가드 — v0.0.102 수정 반영. "prev/now 둘 다 유효 13자인데 다르면" (직전 tick 기준) 서술을 **마지막 유효 ID(`lastValidIidxIdRef`) 대비**로 갱신(`A→null→B` 로 null 이 껴도 A→B 전환을 놓치지 않음). 섹션 내 App.tsx 라인 참조도 현행(936-1008/982-988/999-1007/948-975/425/1162-1163)으로 정정.
 - `docs/README.md` 빠른 참조 버전 `0.0.75` → `0.0.103`(라인 번호 기준 캐비앗 포함).

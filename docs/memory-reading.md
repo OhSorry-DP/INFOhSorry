@@ -200,3 +200,107 @@ URL: `gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw
 - **곡/점수(Reflux 경로)**: olji master 가 새 offset 을 올리기 전까지 라이브 트래킹이 깨질 수 있음. 대응 = 번들 `BUNDLED_OFFSETS` 갱신 또는 gist `offsets.json` 갱신(둘 다 `ensureOffsetsFile` 가 자동 반영). 패치마다 `src/main/reflux.ts:62-72` 의 `BUNDLED_OFFSETS` + `BUNDLED_OFFSETS_VERSION` 을 갱신(주석 `src/main/reflux.ts:59-61`).
 - **프로필(직접 리딩 경로)**: `profileOffsets.ts` 상수가 깨짐 → gist `offsets.json` 의 profile 갱신 또는 MemoryScanner 재스캔.
 - **확인 필요(메모리 노트)**: 라이브 트래킹 재패치(djName/iidxId 수동 갱신 외 전체) 는 별도 보류 작업으로 추적 중(`project_infohsorry_offset_repatch`). 코드 상으로는 자동 복구 메커니즘이 갖춰져 있으나, 새 패치의 실제 offset 값 발굴은 수동 단계가 필요합니다.
+
+---
+
+## 5-A. (계획, 미구현) 게임 빌드별 offset 분기
+
+> **현재 코드는 아래 내용을 구현하고 있지 않습니다.** §5 가 현행, 이 절이 확정된 설계입니다.
+
+### 왜 필요한가
+
+현행 `version` 은 gist 의 **자기 신고 라벨**일 뿐이고, 앱은 **실행 중인 `bm2dx.exe` 가 어느 빌드인지 물어본 적이 없습니다**. 그래서 gist 에 최신 offset 을 올리면 구버전 클라이언트를 쓰는 유저도 그 값을 받아가며, 반대로 구버전용 값을 되돌릴 수단도 없습니다.
+
+### 5-A.1 클라이언트 지문 (`src/main/gameBuild.ts`, 신규)
+
+| 항목 | 획득 방법 | 프로세스 필요 |
+|---|---|---|
+| `timeDateStamp` | exe 앞 0x40 읽기 → `e_lfanew`(0x3C, 4byte LE) → PE헤더+8 의 4byte LE | ❌ |
+| `fileSize` | `fs.stat` | ❌ |
+| `imageSize` | `findInfinitas().modBaseSize` (이미 수집 중) | ✅ |
+
+**타이밍이 지문 선택의 이유입니다.** `ensureOffsetsFile` 은 `startAll` 시점 — 게임이 아직 안 켜졌을 수 있습니다. `imageSize` 만으로는 이 경로에서 지문이 없으므로, 파일만 있으면 되는 PE `timeDateStamp` 가 1차 키입니다.
+
+exe 경로는 `MODULEENTRY32W.szExePath` 에서 얻어 `config.json` 에 캐시합니다. (구조체 필드는 `src/main/memory.ts:54` 에 **이미 선언돼 있으나 `findMainModule` 이 읽지 않습니다** — 여기서 반환하도록 확장.) 한 번이라도 게임을 켠 뒤부터는 미실행 상태에서도 지문을 얻으므로, 설치 경로 레지스트리 탐색은 불필요합니다.
+
+### 5-A.2 gist 스키마 v2 — top-level 유지 (하위호환)
+
+이미 배포된 클라이언트가 현장에 있으므로 **기존 top-level 필드를 그대로 두고 `builds` 배열을 추가**합니다. 구버전 앱은 top-level 만 보고 계속 동작합니다.
+
+> **최상위를 배열로 바꾸면 안 됩니다.** `getRemoteOffsets`(`src/main/offsetsRemote.ts:34`)가 `typeof j.version === 'string'` 을 검사하고 실패 시 파일 전체를 거부합니다. 배열에는 `.version` 이 없어 **배포된 모든 구버전 앱의 원격 갱신이 죽습니다.** top-level `version`/`reflux`/`profile` 3개는 `builds[0]` 의 미러로 항상 함께 갱신할 것.
+
+```json
+{
+  "schema": 2,
+  "version": "P2D:J:B:A:2026060300",
+  "reflux": { "songList": "0x1431CD850" },
+  "profile": { "djName": {} },
+
+  "builds": [
+    {
+      "version": "P2D:J:B:A:2026060300",
+      "note": "2026-06-03 패치. 빌드 타임스탬프 2026-05-29.",
+      "fp": { "timeDateStamp": "0x6A18EB3D", "sizeOfImage": "0x475D000", "fileSize": 16063624 },
+      "reflux": {},
+      "profile": {}
+    }
+  ]
+}
+```
+
+`builds[0]` 이 최신입니다(별도 `latest` 필드 없음 — 중복 관리 회피). 새 패치는 배열 맨 위에 추가.
+
+`fp` 는 **부분 매칭**: 선언된 필드만 비교하므로 `timeDateStamp` 만 채워도 동작하고 나머지는 제보를 받아 보강할 수 있습니다. 단 **`fp` 가 없거나 비어 있으면 그 항목은 매칭 후보에서 제외**합니다 — 빈 조건이 공허하게 참이 되어 아무 빌드에나 매칭되는 사고 방지.
+
+지문 추출은 게임 미실행 상태에서도 됩니다(gist `_comment_fp_howto` 에 PowerShell 한 줄 수록). 실측 검증 결과 로컬의 두 빌드에서 세 값이 모두 달랐고, `timeDateStamp` 가 실제 빌드 날짜와 일치해 reproducible-build 해시가 아닌 진짜 타임스탬프임을 확인했습니다:
+
+| | 2026-06-03 패치 | 직전 빌드 |
+|---|---|---|
+| `timeDateStamp` | `0x6A18EB3D` (2026-05-29) | `0x69E18D95` (2026-04-17) |
+| `sizeOfImage` | `0x475D000` | `0x475A000` |
+| `fileSize` | 16063624 | 16051336 |
+
+### 5-A.3 선택 로직 (`resolveBuild`)
+
+```
+1. 지문 획득 (프로세스 → 캐시된 exe 경로 → 실패)
+2. builds 중 fp 전부 일치      → 그 build          [matched]
+3. 지문은 얻었으나 일치 없음   → latest + 경고 배너 [unknown]
+4. 지문 자체를 못 얻음         → latest            [blind, 현행과 동일]
+5. gist 실패                   → 번들 상수          [fallback]
+```
+
+**미매칭(3) 정책 = 낙관 진행 + 경고 배너.** 새 패치가 나와도 앱이 죽지 않고, 실제로 offset 이 안 바뀐 패치에서는 그대로 동작합니다. 대신 "미확인 게임 버전 — offset 이 틀릴 수 있음" 을 UI 에 노출합니다.
+
+### 5-A.4 ⚠️ reflux 경로의 비교 축 전환
+
+**구현 시 가장 조심할 지점.** 현행 `ensureOffsetsFile` 은 `bestVer > diskVer`, 즉 "더 최신이면 덮어쓴다"(`src/main/reflux.ts:472`) 인데 버전별 선택과 충돌합니다:
+
+> 지문이 `2026042200` 로 매칭됐는데 디스크 offsets.txt 가 `2026060300` 이면 → `bestVer > diskVer` 가 false → 덮어쓰지 않고 **틀린 offset 을 계속 사용**.
+
+| 상태 | 비교 축 | olji master 참여 |
+|---|---|---|
+| `matched` | `diskVer ≠ buildVer` 면 덮어씀 (**다운그레이드 허용**) | ❌ 배제 |
+| `blind` / `unknown` / `fallback` | 현행 `max(디스크, 번들, gist, olji)` 유지 | ✅ |
+
+`matched` 에서 olji 를 배제하는 이유: olji `offsets.txt` 에는 지문이 없어 어느 클라이언트용인지 알 수 없습니다. 확신 있는 정보와 없는 정보를 `max` 로 섞으면 지문 매칭이 무의미해집니다.
+
+### 5-A.5 프로필 저장 슬롯 무효화
+
+`effective()`(`src/renderer/src/useProfile.ts:79-90`) 의 최우선인 **사용자 저장값에 버전 정보가 없습니다** — MemoryScanner 로 한 번 저장하면 게임이 패치돼도 옛 offset 을 영원히 씁니다(현행에도 있는 잠재 버그).
+
+저장 슬롯에 `buildKey` 를 함께 기록하고, 현재 매칭된 build 와 다르면 무시 + 재스캔 안내로 전환합니다. `buildKey` 없는 레거시 슬롯은 신뢰합니다(기존 사용자 회귀 방지).
+
+### 5-A.6 변경 파일
+
+| 파일 | 변경 |
+|---|---|
+| `src/main/gameBuild.ts` | **신규** — PE 헤더 파싱, exe 경로 캐시, 지문 반환 |
+| `src/main/memory.ts` | `findMainModule` 이 `szExePath` 도 반환 |
+| `src/main/offsetsRemote.ts` | v2 파싱 + `resolveBuild()` + v1 하위호환 |
+| `src/main/reflux.ts` | `ensureOffsetsFile` 비교 축 분기(5-A.4) |
+| `src/main/index.ts` | `offsets:getProfile` 를 build 기준으로, `offsets:getBuild` 신설 |
+| `src/renderer/src/useProfile.ts` | 저장 슬롯 `buildKey` 검증(5-A.5) |
+| gist `offsets.json` | v2 구조로 확장 |
+
+`PROFILE_OFFSETS` / `BUNDLED_OFFSETS` 상수는 최종 fallback 으로 유지합니다.

@@ -1,4 +1,5 @@
-// Reflux (olji/Reflux) 의 .exe 를 자동 다운로드 + spawn + tracker.tsv watch 까지 관리하는 매니저
+// Reflux (OhSorry-DP/Reflux — olji/Reflux 의 fork) 의 .exe 를 자동 다운로드 + spawn + tracker.tsv
+// watch 까지 관리하는 매니저
 //
 // 흐름:
 //   1. ensureInstalled()  — userData/Reflux/Reflux.exe 가 없으면 GitHub release 에서 다운로드
@@ -23,7 +24,12 @@ import { getRemoteOffsets } from './offsetsRemote';
 
 const execAsync = promisify(exec);
 
-const RELEASES_API = 'https://api.github.com/repos/olji/Reflux/releases/latest';
+// 우리 fork 의 release 를 받는다. upstream(olji/Reflux) 은 1.16.6(2026-05-04) 이후 갱신이 없어
+// INFINITAS 패치로 곡 파싱이 깨져도 대응이 오지 않는다. fork 에 고쳐 올리면 앱 재배포 없이
+// 사용자가 받아갈 수 있다 (asset 이름은 upstream 과 동일하게 'Reflux.exe' 유지 — install() 참고).
+//   2026-08-05 패치 대응 = fork 1.17.0 (곡 엔트리 0x630→0x730, title/genre/artist UTF-16LE 전환).
+//   지원 파일(customtypes/encodingfixes) 은 여전히 upstream master 에서 받는다(RAW_BASE).
+const RELEASES_API = 'https://api.github.com/repos/OhSorry-DP/Reflux/releases/latest';
 
 // userData 안의 Reflux 작업 디렉토리 (예: %APPDATA%/infohsorry/Reflux)
 function workDir(): string {
@@ -31,6 +37,11 @@ function workDir(): string {
 }
 function exePath(): string {
   return join(workDir(), 'Reflux.exe');
+}
+// 설치된 Reflux 의 release tag 기록 — fork 버전 갱신 감지용.
+//   이 파일이 없는데 exe 만 있으면 = upstream(olji) 시절에 받은 옛 exe → 재설치 대상.
+function installedTagPath(): string {
+  return join(workDir(), '.reflux-release');
 }
 function configPath(): string {
   return join(workDir(), 'config.ini');
@@ -59,17 +70,20 @@ const REFLUX_PREFERRED_BASE = 0x140000_0000n;
 // 번들 offsets.txt — 게임 패치로 메모리 offset 이 이동하면 olji/Reflux master 가 갱신될 때까지
 // 라이브 트래킹이 깨진다. olji 가 따라잡기 전까지 우리가 최신 값을 앱에 번들해 자동 복구.
 //   ※ 새 INFINITAS 패치로 offset 이 또 바뀌면 이 블록 + 버전(끝 YYYYMMDDxx) 을 갱신할 것.
-const BUNDLED_OFFSETS = `P2D:J:B:A:2026060300
-songList = 0x1431CD850
-unlockdata = 0x1429019C0
-playSettings = 0x1425D2154
-playData = 0x1425D2404
-currentsong = 0x14287F370
-judgeData = 0x14287F18C
-datamap = 0x1435B3B28
+//   ※ songList 는 OffsetSearcher 가 보고하는 값보다 0x100 앞이다. 2026-08-05 패치로 곡 제목이
+//     UTF-16LE 가 되면서, "5.1.1." 의 ASCII 패턴이 title1 이 아니라 title2(LED ticker)에 걸린다.
+//     Reflux fork 1.17.0 은 보정된 base 를 기대하므로 여기도 보정값을 넣는다.
+const BUNDLED_OFFSETS = `P2D:J:B:A:2026080500
+songList = 0x1431D4870
+unlockdata = 0x1429089E0
+playSettings = 0x1425D9154
+playData = 0x1425D9404
+currentsong = 0x142886370
+judgeData = 0x14288618C
+datamap = 0x1435BAB88
 `;
 // 첫 줄 헤더 `P2D:J:B:A:YYYYMMDDxx` 끝 10자리 숫자 = 버전. 클수록 최신.
-const BUNDLED_OFFSETS_VERSION = 2026060300;
+const BUNDLED_OFFSETS_VERSION = 2026080500;
 function offsetsVersionNum(content: string): number {
   const first = content.split(/\r?\n/)[0]?.trim() || '';
   const m = first.match(/(\d{10})\s*$/);
@@ -292,11 +306,7 @@ export class RefluxManager extends EventEmitter {
   // 한 번에 다 진행: 설치 (필요 시) → config 생성 → 기존 Reflux 종료 + 세션 정리 → spawn → tsv watch + health check
   async startAll(): Promise<void> {
     try {
-      if (!existsSync(exePath())) {
-        await this.install();
-      } else {
-        this.setState({ installed: true });
-      }
+      await this.ensureInstalled();
       await this.ensureConfig();
       const offsetsChanged = await this.ensureOffsets();
       // offsets 가 갱신됐는데 Reflux 가 이미 떠 있으면(child 살아있음 → spawnReflux 가 skip),
@@ -376,12 +386,53 @@ export class RefluxManager extends EventEmitter {
     }
   }
 
+  // 설치 상태 점검 — 없으면 설치, 있으면 fork release tag 를 비교해 갱신.
+  //   exe 존재만 보던 옛 로직은 upstream→fork 전환을 전달하지 못했다(이미 받아둔 사용자는 영원히 구버전).
+  //   .reflux-release 가 없는 exe = olji 시절 설치본 → 재설치 대상.
+  //   release 조회 실패(오프라인/rate limit) 시엔 기존 exe 를 그대로 쓴다 — 갱신보다 기동이 우선.
+  private async ensureInstalled(): Promise<void> {
+    const hasExe = existsSync(exePath());
+    let localTag: string | null = null;
+    if (hasExe && existsSync(installedTagPath())) {
+      try {
+        localTag = (await fsp.readFile(installedTagPath(), 'utf-8')).trim() || null;
+      } catch {
+        /* 못 읽으면 재설치 */
+      }
+    }
+
+    let release: Release;
+    try {
+      release = await fetchJson<Release>(RELEASES_API);
+    } catch (e) {
+      if (hasExe) {
+        console.warn('[reflux] release 조회 실패 — 기존 설치본 사용:', (e as Error).message);
+        this.setState({ installed: true });
+        return;
+      }
+      throw e;
+    }
+
+    if (hasExe && localTag === release.tag_name) {
+      this.setState({ installed: true });
+      return;
+    }
+
+    if (hasExe) {
+      this.addLine(`(Reflux 갱신: ${localTag ?? 'upstream 구버전'} → ${release.tag_name})`);
+      // 실행 중이면 exe 가 잠겨 교체가 실패한다 — 먼저 정리.
+      await this.killAllRefluxProcesses();
+      this.child = null;
+    }
+    await this.install(release);
+  }
+
   // GitHub release 에서 Reflux.exe 다운로드
-  private async install(): Promise<void> {
+  private async install(pre?: Release): Promise<void> {
     this.setState({ stage: 'downloading', download: { bytes: 0, total: 0 } });
     await fsp.mkdir(workDir(), { recursive: true });
 
-    const release = await fetchJson<Release>(RELEASES_API);
+    const release = pre ?? (await fetchJson<Release>(RELEASES_API));
     const exeAsset = release.assets.find((a) => a.name.toLowerCase() === 'reflux.exe');
     if (!exeAsset) throw new Error('Reflux.exe asset not found in latest release');
 
@@ -390,6 +441,7 @@ export class RefluxManager extends EventEmitter {
       this.setState({ download: { bytes, total: total || exeAsset.size } });
     });
     await fsp.rename(tmp, exePath());
+    await fsp.writeFile(installedTagPath(), release.tag_name, 'utf-8');
     this.setState({ installed: true, download: undefined });
   }
 
