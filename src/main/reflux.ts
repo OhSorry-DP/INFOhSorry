@@ -20,7 +20,7 @@ import { request as httpsRequest } from 'https';
 import { EventEmitter } from 'events';
 import { promisify } from 'util';
 import type { RefluxState } from '../shared/types';
-import { getRemoteOffsets } from './offsetsRemote';
+import { getRemoteOffsets, resolveBuild } from './offsetsRemote';
 
 const execAsync = promisify(exec);
 
@@ -492,6 +492,33 @@ export class RefluxManager extends EventEmitter {
         /* 못 읽으면 0 으로 간주 → 번들로 덮어씀 */
       }
     }
+    // (0) 게임 datecode 로 빌드 매칭 — 성공하면 "가장 최신" 이 아니라 "일치하는" offset 을 쓴다.
+    //   구버전 클라이언트를 쓰는 유저에게 최신 offset 을 밀어넣으면 안 되므로 다운그레이드도 허용
+    //   (아래 max 비교는 diskVer 가 더 크면 안 덮어써서, 매칭된 구버전으로 되돌릴 수 없다).
+    //   olji master 는 어느 빌드용인지 알 수 없으니 이 경로에서는 후보에서 뺀다 —
+    //   확신 있는 정보(datecode 일치)와 없는 정보를 max 로 섞으면 매칭이 무의미해진다.
+    try {
+      const resolved = await resolveBuild();
+      if (resolved?.confidence === 'matched' && resolved.build.reflux) {
+        const wantVer = offsetsVersionNum(resolved.build.version);
+        if (wantVer && wantVer !== diskVer) {
+          await fsp.writeFile(
+            dest,
+            refluxObjToTxt(resolved.build.version, resolved.build.reflux),
+            'utf-8',
+          );
+          this.addLine(`(offsets.txt 빌드 매칭 ${resolved.gameDatecode}: ${diskVer || '없음'} → ${wantVer})`);
+          return true;
+        }
+        return false; // 이미 그 빌드용이 깔려 있음
+      }
+      if (resolved?.confidence === 'latest') {
+        this.addLine(`(⚠ 게임 빌드 ${resolved.gameDatecode} 는 미확인 — 최신 offset 으로 진행, 곡 데이터가 안 맞을 수 있음)`);
+      }
+    } catch {
+      /* 매칭 실패 — 아래 기존 max 비교로 진행 */
+    }
+
     // 후보 = 번들(항상 가용). olji master / 우리 gist 가 더 최신이면 그쪽 우선.
     let best = BUNDLED_OFFSETS;
     let bestVer = BUNDLED_OFFSETS_VERSION;

@@ -57,7 +57,12 @@ declare global {
         status: () => Promise<RatingCacheStatus>;
       };
       offsets: {
-        getProfile: () => Promise<Record<string, { offset: string; encoding: string; maxBytes: number }> | null>;
+        // 게임 datecode 로 고른 build 의 profile offset. 값이 null 인 필드 = 이 빌드에서 주소 미상.
+        getProfile: () => Promise<{
+          profile: Record<string, { offset: string; encoding: string; maxBytes: number } | null> | null;
+          buildVersion: string | null;
+          confidence: 'matched' | 'latest' | 'blind' | 'legacy' | null;
+        } | null>;
       };
       portable: {
         download: (url: string, fileName: string) => Promise<string>;

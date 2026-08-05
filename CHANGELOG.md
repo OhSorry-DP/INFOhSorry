@@ -2,6 +2,17 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.105 — 2026-08-05 게임 빌드별 offset 분기 (게임이 알려주는 datecode 로 매칭)
+- **배경**: 지금까지 gist `offsets.json` 의 `version` 은 자기 신고 라벨일 뿐이라, 앱이 **실행 중인 게임이 어느 빌드인지 물어본 적이 없었음**. 그래서 gist 에 최신 offset 을 올리면 아직 구버전 클라이언트를 쓰는 유저도 그 값을 받아갔고, 되돌릴 수단도 없었음.
+- **방식 — 게임에게 직접 묻는다** ([src/main/gameBuild.ts](src/main/gameBuild.ts) 신설): 게임이 자기 버전 문자열(`P2D:J:B:A:YYYYMMDDxx`)을 메모리에 들고 있으므로 그대로 읽음. bm2dx.exe 주 모듈 범위를 4MB 청크로 훑어 `"P2D:J:B:A:"` 를 찾고 즉시 중단(Reflux `Program.cs` 와 같은 방법). **offset 하드코딩이 없어 패치에 안 깨지는 것**이 핵심. 게임 미실행 대비로 마지막 값을 캐시(offsets.txt 는 게임 기동 전 `startAll` 에서 준비되므로 필요).
+  - PE 타임스탬프/파일크기 지문 방식도 검토했으나 폐기 — 빌드를 간접 추론하는 것이라 빌드마다 지문을 미리 수집해 둬야 함. datecode 는 수집이 불필요.
+- **gist 스키마 v2** — `builds[]` 배열 추가(`builds[0]` = 최신). 매칭 키는 `version` 끝 10자리. **최상위 `version`/`reflux`/`profile` 은 구버전 앱 호환 미러로 유지** — 최상위를 배열로 바꾸면 `typeof j.version === 'string'` 검사에 걸려 배포된 구버전 앱의 원격 갱신이 전부 죽음.
+- **선택 로직** ([offsetsRemote.ts](src/main/offsetsRemote.ts) `resolveBuild`): 일치 → `matched` / 불일치 → `builds[0]` + 경고(`latest`) / datecode 못 읽음 → `builds[0]`(`blind`) / v1 gist → 최상위(`legacy`).
+- **⚠ reflux 비교 축 전환** ([reflux.ts](src/main/reflux.ts) `ensureOffsetsFile`): 기존 `bestVer > diskVer`("최신이면 덮어씀") 로는 **구버전으로 되돌릴 수 없어** 빌드 매칭이 무력화됨. `matched` 일 때는 `diskVer ≠ buildVer` 면 덮어쓰고(다운그레이드 허용), olji master 는 후보에서 제외(어느 빌드용인지 알 수 없는 정보를 max 로 섞으면 매칭이 무의미).
+- **profile `null` 정책** — gist 의 profile 필드가 `null` 이면 "이 빌드에서 주소 미상" 으로 보고 **읽기를 건너뜀**. 키 자체가 없는 것(정보 없음 → 코드 상수 fallback)과 구분. 옛 빌드 주소로 엉뚱한 메모리를 읽어 쓰레기를 표시하는 것 방지. (현재 `spRank`/`dpRank` 가 이 상태 — 2026-08-05 빌드에서 아직 못 찾음)
+- 미구현: 사용자 저장 스캔 슬롯(localStorage)의 빌드 검증. IPC 가 `buildVersion` 을 이미 넘기므로 저장 슬롯에 기록·비교만 추가하면 됨(docs §5-A.5).
+- 검증: `npm run typecheck` 통과.
+
 ### v0.0.104 — 2026-08-05 Reflux 를 자체 fork 로 전환 (2026-08-05 INFINITAS 패치로 곡 데이터 전멸 복구)
 - **증상**: 2026-08-05 패치 후 곡/점수가 통째로 안 들어옴. 콘솔에 `skip: 출처ID 미확정/불일치 (rows=null …)` 반복, `[dp12Match] 풀=0곡 … tsv 미반영=1604, tsv-only=0`. DJ NAME/IIDX ID 는 정상이라 원인이 헷갈렸는데, **프로필은 자체 메모리 리딩, 곡/점수는 Reflux** 로 경로가 갈려서 한쪽만 죽은 것.
 - **원인**: offset 이 아니라 **곡 엔트리 구조 변경**. Reflux 는 `Applying new offsets…` 에서 멈춘 게 아니라 `Utils.DataLoaded()`(마지막 곡 `totalNotes[3] >= 10` 판정) 가 영영 false 라 5초 루프를 돌고 있었음. 게임 쪽 변경:
