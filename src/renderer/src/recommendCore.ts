@@ -14,6 +14,7 @@
 import type { SongRow, ChartSlot, RatingData, ZasaData, EreterData } from '../../shared/types';
 import { norm } from '../../shared/match';
 import { isVariantTitle } from '../../shared/variants';
+import { loadGistModule, loadJson, SLOT_TO_DIFF_KEY } from './gistLib';
 
 // variant(AC≠INF 동일 title+diff 다중채보) INF 플레이 표식 — recommend.js userChartByKey 의
 //   variantInfIds Set 에 이 값 하나만 넣어 매칭(textage_song_id 가 없는 TSV 모델이라 sentinel 사용).
@@ -38,21 +39,8 @@ const SERIES_NAME_URL = `${SERIES_GIST}/series-name.json`;
 const WEAKNESS_POPMEAN_URL = `${GIST_RAW}/weakness-popmean.json`;  // ③④ 추천 usernorm baseline (웹과 동일, Phase 3-3)
 
 // ─── module global cache (Analysis / PlayData / WeaknessRecommend 와 공유) ───
-export async function loadGistModule(url: string, globalKey: string): Promise<unknown> {
-  const w = window as unknown as Record<string, unknown>;
-  if (w[globalKey]) return w[globalKey];
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`${globalKey} fetch HTTP ${res.status}`);
-  const text = await res.text();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  new Function(text)();
-  return w[globalKey];
-}
-async function loadJson<T>(url: string): Promise<T> {
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`JSON fetch HTTP ${res.status}`);
-  return res.json();
-}
+// 로더 본체는 gistLib. App.tsx 가 여기서 loadGistModule 을 import 하므로 그대로 re-export 한다.
+export { loadGistModule } from './gistLib';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyLib = any;
@@ -100,9 +88,6 @@ export interface RecRow {
 }
 
 // ─── deps 빌드 ────────────────────────────────────────────────────────
-const SLOT_TO_DIFF_KEY: Record<string, string> = {
-  DPN: 'NORMAL', DPH: 'HYPER', DPA: 'ANOTHER', DPL: 'LEGGENDARIA',
-};
 const LAMP_ABBR_TO_NUM: Record<string, number> = {
   NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7,
 };

@@ -11,8 +11,10 @@
 //   rows (TSV) + ratingData (ohSorryRating) + zasaData (zasa-data) + baseStar (본인 ★).
 //   baseStar 없으면 모든 차트 후보 (오소리코어 default).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { SongRow, RatingData, ZasaData, ChartSlot } from '../../shared/types';
+import type { SongRow, RatingData, ZasaData } from '../../shared/types';
 import { copyToClipboard } from './ChartTable';
+import { LAMP_NUM_TO_ABBR } from './lampStyle';
+import { loadGistModule, loadJson, rowsToWeaknessCharts } from './gistLib';
 
 // ─── gist URL (Analysis / PlayData 와 동일) ────────────────────────────
 const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
@@ -34,60 +36,8 @@ const CHART_TO_DIFF: Record<string, string> = {
 const DIFF_COLOR: Record<string, string> = {
   NORMAL: '#74c0fc', HYPER: '#efef51', ANOTHER: '#fba8c1', LEGGENDARIA: '#ce8ef9',
 };
-// lampNum → 약어 (.ct-lamp-XX 클래스 키).
-const LAMP_NUM_TO_ABBR: Record<number, string> = {
-  0: 'NP', 1: 'F', 2: 'AC', 3: 'EC', 4: 'NC', 5: 'HC', 6: 'EX', 7: 'FC',
-};
-
-async function loadGistModule(url: string, globalKey: string): Promise<unknown> {
-  const w = window as unknown as Record<string, unknown>;
-  if (w[globalKey]) return w[globalKey];
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`${globalKey} fetch HTTP ${res.status}`);
-  const text = await res.text();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  new Function(text)();
-  return w[globalKey];
-}
-async function loadJson<T>(url: string): Promise<T> {
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`JSON fetch HTTP ${res.status}`);
-  return res.json();
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnyLib = any;
-
-// SongRow → calcWeakness charts (DP slot 만, noteCount > 0 인 차트).
-const SLOT_TO_DIFF_KEY: Record<string, string> = {
-  DPN: 'NORMAL', DPH: 'HYPER', DPA: 'ANOTHER', DPL: 'LEGGENDARIA',
-};
-const LAMP_TO_NUM: Record<string, number> = {
-  NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7,
-};
-function rowsToWeaknessCharts(rows: SongRow[]): {
-  title: string; diff: string; exScore: number; noteCount: number;
-  scorePercent: number; lampNum: number;
-}[] {
-  const out: { title: string; diff: string; exScore: number; noteCount: number; scorePercent: number; lampNum: number }[] = [];
-  for (const r of rows) {
-    for (const slot of ['DPN', 'DPH', 'DPA', 'DPL'] as ChartSlot[]) {
-      const c = r.charts[slot];
-      if (!c) continue;
-      const diff = SLOT_TO_DIFF_KEY[slot];
-      if (!diff) continue;
-      if (!c.noteCount || c.noteCount <= 0) continue;
-      out.push({
-        title: r.title, diff,
-        exScore: c.exScore || 0,
-        noteCount: c.noteCount,
-        scorePercent: ((c.exScore || 0) / (c.noteCount * 2)) * 100,
-        lampNum: LAMP_TO_NUM[c.lamp] ?? 0,
-      });
-    }
-  }
-  return out;
-}
 
 // analyzeFeature 결과 — calcWeakness 가 반환하는 형식.
 interface RecChart {

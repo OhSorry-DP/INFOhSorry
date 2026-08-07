@@ -24,6 +24,7 @@ import {
 } from './supabaseSync';
 import { lampStyle } from './lampStyle';
 import { copyToClipboard } from './ChartTable';
+import { loadGistModule, loadJson, rowsToWeaknessCharts } from './gistLib';
 
 // DJ Level letter 색 — ChartTable 의 LETTER_COLOR 와 동일 (inline style 적용).
 //   CSS [data-letter] 셀렉터도 같이 동작 (다크 테마 override) — ChartTable 와 같은 디자인 시스템 reuse.
@@ -490,22 +491,6 @@ const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
 const PATTERNS_URL = `${GIST_RAW}/patterns-dp-1112.json`;
 const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
 
-async function loadGistModule(url: string, globalKey: string): Promise<unknown> {
-  const w = window as unknown as Record<string, unknown>;
-  if (w[globalKey]) return w[globalKey];
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`${globalKey} fetch HTTP ${res.status}`);
-  const text = await res.text();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  new Function(text)();
-  return w[globalKey];
-}
-async function loadJson<T>(url: string): Promise<T> {
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`JSON fetch HTTP ${res.status}`);
-  return res.json();
-}
-
 // calcWeakness lib 타입 — Analysis.tsx 와 동일하게 any.
 //   Analysis 에 정의된 인터페이스가 export 안 됐고 calcWeakness 내부도 거대해서 외부 타입 안 매김.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -517,41 +502,9 @@ type PatternsMap = any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type UserVec = any;
 
-// SongChart → calcWeakness chart 형식 (Analysis 와 동일).
-const SLOT_TO_DIFF_KEY: Record<string, string> = {
-  DPN: 'NORMAL', DPH: 'HYPER', DPA: 'ANOTHER', DPL: 'LEGGENDARIA',
-};
-const LAMP_TO_NUM: Record<string, number> = {
-  NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7,
-};
 const DIFF_TO_CN: Record<string, string> = {
   NORMAL: 'DP_NOR', HYPER: 'DP_HYP', ANOTHER: 'DP_ANO', LEGGENDARIA: 'DP_LEG',
 };
-// calcWeakness 는 DP 패턴만 분석 (patterns-all-slim 의 chart key 가 DP_NOR/DP_HYP/DP_ANO/DP_LEG).
-//   SP 데이터를 vec 계산 input 으로 넣으면 안 됨. 항상 DP slot 만 추출.
-function rowsToWeaknessCharts(rows: SongRow[]): {
-  title: string; diff: string; exScore: number; noteCount: number;
-  scorePercent: number; lampNum: number;
-}[] {
-  const out: { title: string; diff: string; exScore: number; noteCount: number; scorePercent: number; lampNum: number }[] = [];
-  for (const r of rows) {
-    for (const slot of ['DPN', 'DPH', 'DPA', 'DPL'] as ChartSlot[]) {
-      const c = r.charts[slot];
-      if (!c) continue;
-      const diff = SLOT_TO_DIFF_KEY[slot];
-      if (!diff) continue;
-      if (!c.noteCount || c.noteCount <= 0) continue;
-      out.push({
-        title: r.title, diff,
-        exScore: c.exScore || 0,
-        noteCount: c.noteCount,
-        scorePercent: ((c.exScore || 0) / (c.noteCount * 2)) * 100,
-        lampNum: LAMP_TO_NUM[c.lamp] ?? 0,
-      });
-    }
-  }
-  return out;
-}
 
 // slot (SPN/DPN 등) → diff filter key. 외부(서열표)에서 곡 클릭 시 diff 토글 맞추는 용도.
 const SLOT_TO_DIFF_FILTER: Record<string, string> = {

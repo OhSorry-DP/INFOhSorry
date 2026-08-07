@@ -2,6 +2,29 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.106 — 2026-08-08 중복 코드 정리 (동작 변경 없음)
+
+오소리 전체 레포 중복 검사(jscpd)에서 나온 INFOhSorry 몫을 정리. **순수 리팩터링으로 동작 변경 없음.**
+
+- **캐시 상태 헬퍼 4벌 → 1벌** ([src/main/cacheStatus.ts](src/main/cacheStatus.ts) 신설) —
+  `ereter.ts` / `zasa.ts` / `spTier.ts` 는 `getCacheStatus()` 가 **행 번호까지 206 으로 같았고**,
+  `rating.ts` 는 이름만 `getRatingCacheStatus` 로 다를 뿐 본문이 동일했다. 넷 다
+  "userData 에 JSON 캐시 + TTL 24h" 구조라 `readCacheStatus(path, ttlMs)` 하나로 통합.
+  - 각 모듈의 공개 타입(`EreterCacheStatus` 등)과 함수 시그니처는 **그대로 유지** — preload / renderer 계약 무변경.
+  - 미사용이 된 `statSync` import 4곳 정리.
+- **렌더러 gist 헬퍼 통합** ([src/renderer/src/gistLib.ts](src/renderer/src/gistLib.ts) 신설) —
+  `loadGistModule`(4벌) · `loadJson`(4벌) · `SLOT_TO_DIFF_KEY`(3벌) · `rowsToWeaknessCharts`(2벌).
+  - `loadGistModule` 은 Analysis 에만 있던 `force` 파라미터 버전을 채택(기본 `false` 라 기존 호출 동작 동일).
+  - `App.tsx` 가 `recommendCore` 에서 import 하고 있어 그쪽은 re-export 로 유지.
+  - `LAMP_TO_NUM`(3벌)은 이미 있던 [shared/match.ts](src/shared/match.ts) 것을 쓰도록,
+    `LAMP_NUM_TO_ABBR`(2벌)은 [lampStyle.ts](src/renderer/src/lampStyle.ts) 로 이동.
+- ⚠️ 추출 리팩터링은 모듈레벨 상수를 안 딸려 보내면 정적 검사를 다 통과하고도 런타임
+  `ReferenceError` 가 나는 전례(`LAMP_TO_PD_KEY`)가 있어, `noUnusedLocals` 가 꺼져 있는 점을 감안해
+  타입체크만이 아니라 **빌드까지** 돌려 확인했다.
+- 남은 중복: `PlayData.tsx` ↔ `WeaknessRecommend.tsx` 의 `calcUserWeakness` 호출 19줄.
+  `useMemo` 훅에 묶여 있어(각자 다른 deps / libsRef 초기화 경로) 커스텀 훅으로 빼야 해 이번엔 보류.
+- 검증: `npm run typecheck` · `npm run build` 통과.
+
 ### v0.0.105 — 2026-08-05 게임 빌드별 offset 분기 (게임이 알려주는 datecode 로 매칭)
 - **배경**: 지금까지 gist `offsets.json` 의 `version` 은 자기 신고 라벨일 뿐이라, 앱이 **실행 중인 게임이 어느 빌드인지 물어본 적이 없었음**. 그래서 gist 에 최신 offset 을 올리면 아직 구버전 클라이언트를 쓰는 유저도 그 값을 받아갔고, 되돌릴 수단도 없었음.
 - **방식 — 게임에게 직접 묻는다** ([src/main/gameBuild.ts](src/main/gameBuild.ts) 신설): 게임이 자기 버전 문자열(`P2D:J:B:A:YYYYMMDDxx`)을 메모리에 들고 있으므로 그대로 읽음. bm2dx.exe 주 모듈 범위를 4MB 청크로 훑어 `"P2D:J:B:A:"` 를 찾고 즉시 중단(Reflux `Program.cs` 와 같은 방법). **offset 하드코딩이 없어 패치에 안 깨지는 것**이 핵심. 게임 미실행 대비로 마지막 값을 캐시(offsets.txt 는 게임 기동 전 `startAll` 에서 준비되므로 필요).

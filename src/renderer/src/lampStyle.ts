@@ -38,6 +38,12 @@ export function lampStyle(lamp: Lamp): LampStyle {
   }
 }
 
+// lampNum → 약어 (.ct-lamp-XX 클래스 키). LAMP_TO_NUM(shared/match) 의 역방향.
+//   7 은 FC/PFC 공용이라 FC 로만 되돌린다.
+export const LAMP_NUM_TO_ABBR: Record<number, string> = {
+  0: 'NP', 1: 'F', 2: 'AC', 3: 'EC', 4: 'NC', 5: 'HC', 6: 'EX', 7: 'FC',
+};
+
 // Letter (DJ Level) 에 색상
 export function letterColor(letter: string): string {
   switch (letter) {

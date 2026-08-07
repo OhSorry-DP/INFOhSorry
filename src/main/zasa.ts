@@ -9,9 +9,10 @@
 //
 // 캐시: userData/zasa-data.json, TTL 24h.
 import { app } from 'electron';
-import { promises as fsp, existsSync, statSync } from 'fs';
+import { promises as fsp, existsSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'node-html-parser';
+import { readCacheStatus } from './cacheStatus';
 
 export const TTL_MS = 24 * 60 * 60 * 1000;
 const ZASA_URL = 'https://zasa.sakura.ne.jp/dp/run.php';
@@ -204,16 +205,5 @@ export interface ZasaCacheStatus {
   exists: boolean;
 }
 export function getCacheStatus(): ZasaCacheStatus {
-  const path = dataPath();
-  if (!existsSync(path)) return { mtime: null, isStale: true, exists: false };
-  try {
-    const st = statSync(path);
-    return {
-      mtime: st.mtimeMs,
-      isStale: Date.now() - st.mtimeMs > TTL_MS,
-      exists: true,
-    };
-  } catch {
-    return { mtime: null, isStale: true, exists: false };
-  }
+  return readCacheStatus(dataPath(), TTL_MS);
 }

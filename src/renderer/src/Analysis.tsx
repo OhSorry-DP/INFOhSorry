@@ -10,7 +10,9 @@
 //      → 모듈이 panel.innerHTML 채우고 클릭 위임. 곡 클릭 시 onPickChart 호출.
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SongChart, RatingData, ZasaData } from '../../shared/types';
+import { LAMP_TO_NUM } from '../../shared/match';
 import { IS_BROWSER_REMOTE } from './api';
+import { loadGistModule, loadJson } from './gistLib';
 
 const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
 // 평소 11·12 만 fetch (7MB→1.8MB). 약점 분석은 고렙 기준이라 1112 로 충분.
@@ -32,27 +34,6 @@ const SLOT_TO_DIFF: Record<string, string> = {
 const DIFF_TO_SLOT: Record<string, string> = {
   NORMAL: 'DPN', HYPER: 'DPH', ANOTHER: 'DPA', LEGGENDARIA: 'DPL',
 };
-const LAMP_TO_NUM: Record<string, number> = {
-  NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7,
-};
-
-async function loadGistModule(url: string, globalKey: string, force = false): Promise<unknown> {
-  const w = window as unknown as Record<string, unknown>;
-  if (!force && w[globalKey]) return w[globalKey];
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`${globalKey} fetch HTTP ${res.status}`);
-  const text = await res.text();
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
-  new Function(text)();
-  return w[globalKey];
-}
-
-async function loadJson<T>(url: string): Promise<T> {
-  const res = await fetch(`${url}?t=${Date.now()}`);
-  if (!res.ok) throw new Error(`JSON fetch HTTP ${res.status}`);
-  return res.json();
-}
-
 function songChartsToWeaknessCharts(charts: SongChart[]): {
   title: string; diff: string; exScore: number; noteCount: number;
   scorePercent: number; lampNum: number;

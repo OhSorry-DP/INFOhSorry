@@ -17,15 +17,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { SongRow, RatingData, ZasaData, EreterData } from '../../shared/types';
 import { copyToClipboard } from './ChartTable';
+import { LAMP_NUM_TO_ABBR } from './lampStyle';
 import { loadRecLibs, createRecCtx, type RecRow, type RecCoreLibs } from './recommendCore';
 
 // 채보 정체성 색 (PlayData 와 동일).
 const DIFF_COLOR: Record<string, string> = {
   NORMAL: '#74c0fc', HYPER: '#efef51', ANOTHER: '#fba8c1', LEGGENDARIA: '#ce8ef9',
-};
-// lampNum → 약어 (.ct-lamp-XX 클래스 키).
-const LAMP_NUM_TO_ABBR: Record<number, string> = {
-  0: 'NP', 1: 'F', 2: 'AC', 3: 'EC', 4: 'NC', 5: 'HC', 6: 'EX', 7: 'FC',
 };
 
 interface Props {
