@@ -13,11 +13,12 @@ import { promises as fsp, existsSync } from 'fs';
 import { join } from 'path';
 import { parse } from 'node-html-parser';
 import { readCacheStatus } from './cacheStatus';
+import { DATA_BASE } from '../shared/dataSource';
 
 export const TTL_MS = 24 * 60 * 60 * 1000;
 const ZASA_URL = 'https://zasa.sakura.ne.jp/dp/run.php';
 const ZASA_GIST_URL =
-  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/zasa-data.json';
+  DATA_BASE + '/zasa-data.json';
 
 // span class → 우리가 쓰는 차트 표기 (ereter 와 일치)
 const SPAN_TO_DIFF: Record<string, string> = {

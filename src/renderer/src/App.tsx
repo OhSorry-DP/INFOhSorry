@@ -22,7 +22,8 @@ import DpTable from './DpTable';
 import Analysis from './Analysis';
 import Recent from './Recent';
 import PlayData from './PlayData';
-import { loadRecLibs, createRecCtx, ensurePatternsLevel, loadGistModule, GIST_RAW, type RecCoreLibs } from './recommendCore';
+import { loadRecLibs, createRecCtx, ensurePatternsLevel, loadGistModule, type RecCoreLibs } from './recommendCore';
+import { LIB_BASE, DATA_BASE } from '../../shared/dataSource';
 
 // SP 대표 실력값(発狂★相当) — ohSorryRating spSkillCpi 커널(gist) 입출력 타입.
 interface SpCpiRow { title: string; diff: string; ec: number; cl: number; hc: number; ex: number; fc: number }
@@ -847,11 +848,11 @@ export default function App() {
     (async () => {
       try {
         // 선행 의존 (순서 무관, 모두 window 전역 등록). normTitle→OhsorryNorm, OSR13.5+→OSR135.
-        await loadGistModule(`${GIST_RAW}/normTitle.js`, 'OhsorryNorm');
-        await loadGistModule(`${GIST_RAW}/OSR13.5%2B.js`, 'OSR135');
-        await loadGistModule(`${GIST_RAW}/onlyOSR.js`, 'onlyOSR');
+        await loadGistModule(`${LIB_BASE}/normTitle.js`, 'OhsorryNorm');
+        await loadGistModule(`${LIB_BASE}/OSR13.5%2B.js`, 'OSR135');
+        await loadGistModule(`${LIB_BASE}/onlyOSR.js`, 'onlyOSR');
         // onlyOSRtoEreter — 위 3개가 window 에 있으니 require 폴백 안 탐.
-        const lib = (await loadGistModule(`${GIST_RAW}/onlyOSRtoEreter.js`, 'onlyOSRtoEreter')) as
+        const lib = (await loadGistModule(`${LIB_BASE}/onlyOSRtoEreter.js`, 'onlyOSRtoEreter')) as
           { inferEreter?: InferEreterFn; version?: string } | undefined;
         if (typeof lib?.inferEreter === 'function') {
           setOnlyOSR2eLib({ inferEreter: lib.inferEreter, version: lib.version || '?' });
@@ -865,10 +866,10 @@ export default function App() {
       }
       // SP 대표 실력값 — cpiStar → spSkillCpi(window.cpiStar 의존) 순 로드 + cpi.json. 실패해도 DP★ 무관.
       try {
-        await loadGistModule(`${GIST_RAW}/cpiStar.js`, 'cpiStar');
-        const spLib = (await loadGistModule(`${GIST_RAW}/spSkillCpi.js`, 'spSkillCpi')) as SpSkillLib | undefined;
+        await loadGistModule(`${LIB_BASE}/cpiStar.js`, 'cpiStar');
+        const spLib = (await loadGistModule(`${LIB_BASE}/spSkillCpi.js`, 'spSkillCpi')) as SpSkillLib | undefined;
         if (spLib && typeof spLib.computeUserSpCpi === 'function') setSpSkillLib(spLib);
-        const cpiRes = await fetch(`${GIST_RAW}/cpi.json?t=${Date.now()}`);
+        const cpiRes = await fetch(`${DATA_BASE}/cpi.json?t=${Date.now()}`);
         if (cpiRes.ok) setCpiData((await cpiRes.json()) as SpCpiRow[]);
       } catch (e) {
         console.warn('[SP★] cpiStar/spSkillCpi/cpi 로드 실패 (SP 별값 N/A):', (e as Error).message);

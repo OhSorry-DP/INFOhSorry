@@ -18,6 +18,7 @@ import type { ProfileInfo } from './useProfile';
 import type { StarResult, SongChart } from '../../shared/types';
 import type { RecInputChart } from '../../shared/recommend';
 import { norm, slotToDiff } from '../../shared/match';
+import { DATA_BASE } from '../../shared/dataSource';
 
 const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
@@ -50,7 +51,7 @@ export interface SongEntry {
 //   supabase songs cache 가 stale 한 케이스 (옛 row 와 norm 매칭 실패) 에서 textage-meta 가 fresh 면
 //   textage_song_id UNIQUE 키로 매칭 → series_no=99 새 row 생성 안 됨.
 const TEXTAGE_META_URL =
-  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/textage-meta.json';
+  DATA_BASE + '/textage-meta.json';
 let textageByTitle: Map<string, string> | null = null;
 // title(raw)→textage_song_id 매핑(norm 키). score 업로드 + 원격 라이벌 비교 머지 키(remoteUser)에서 공유.
 export async function getTextageByTitle(): Promise<Map<string, string>> {
@@ -717,7 +718,7 @@ export async function fetchRecentDates(iidxId: string, dbrOnly = false): Promise
 
 // DBR 난이도 맵 — dbr-inf-recommend.json(gist) 에서 textageid|diff → dbrLevel 로드 (1회 캐시).
 //   DBR 모드 RECENT 의 레벨 칸/곡명 앞에 DBR 난이도 표시 + 정렬에 사용. 실패 시 빈 맵(graceful).
-const DBR_RECOMMEND_URL = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/dbr-inf-recommend.json';
+const DBR_RECOMMEND_URL = DATA_BASE + '/dbr-inf-recommend.json';
 let _dbrMapCache: Map<string, number> | null = null;
 export async function loadDbrMap(): Promise<Map<string, number>> {
   if (_dbrMapCache) return _dbrMapCache;

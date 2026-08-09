@@ -14,12 +14,13 @@ import { app } from 'electron';
 import { promises as fsp, existsSync } from 'fs';
 import { join } from 'path';
 import { readCacheStatus } from './cacheStatus';
+import { DATA_BASE } from '../shared/dataSource';
 import { parse } from 'node-html-parser';
 
 export const TTL_MS = 24 * 60 * 60 * 1000;
 const PERLEVEL_URL = 'https://ereter.net/iidxsongs/analytics/perlevel/';
 const ERETER_GIST_URL =
-  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/ereter-data.json';
+  DATA_BASE + '/ereter-data.json';
 
 export interface EreterChart {
   title: string;

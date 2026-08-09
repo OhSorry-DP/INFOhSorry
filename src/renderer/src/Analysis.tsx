@@ -13,17 +13,17 @@ import type { SongChart, RatingData, ZasaData } from '../../shared/types';
 import { LAMP_TO_NUM } from '../../shared/match';
 import { IS_BROWSER_REMOTE } from './api';
 import { loadGistModule, loadJson } from './gistLib';
+import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
 
-const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
 // 평소 11·12 만 fetch (7MB→1.8MB). 약점 분석은 고렙 기준이라 1112 로 충분.
-const PATTERNS_URL = `${GIST_RAW}/patterns-dp-1112.json`;
-const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
-const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
-const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
-const ANALYSIS_RENDER_URL = `${GIST_RAW}/analysisRender.js`;
+const PATTERNS_URL = `${DATA_BASE}/patterns-dp-1112.json`;
+const RATE_REF_URL = `${DATA_BASE}/rate-reference-slim.json`;
+const CALC_WEAKNESS_URL = `${LIB_BASE}/calcWeakness.js`;
+const NORM_TITLE_URL = `${LIB_BASE}/normTitle.js`;
+const ANALYSIS_RENDER_URL = `${LIB_BASE}/analysisRender.js`;
 // feature-scores-slim.json — 차트별 11 feature quantile score (0~100). 분석탭 기여곡 표의 곡 점수.
 //   dbConn v0.0.407 의 user_ohsorry_radars feature score 백필 알고리즘과 동일 데이터 — DB 값과 일관성 있게 표시.
-const FEATURE_SCORES_URL = `${GIST_RAW}/feature-scores-slim.json`;
+const FEATURE_SCORES_URL = `${DATA_BASE}/feature-scores-slim.json`;
 
 const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2eHBlZWN4aWF3ZGRtcnpiZHZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5ODMxMzQsImV4cCI6MjA5NDU1OTEzNH0.lWnnSsSIFFLs7NsJq5yI6fe9HPiT9yQ3Pj-8sgfGuxI';

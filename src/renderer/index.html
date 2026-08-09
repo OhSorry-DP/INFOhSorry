@@ -3,7 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co https://gist.githubusercontent.com http://localhost:* ws://localhost:*" />
+    <!-- connect-src 화이트리스트 — 여기 없는 오리진으로의 fetch 는 **브라우저 레벨에서 차단**된다(코드가 멀쩡해도 안 됨).
+         · data.iidx.in  : 코어 JS·데이터(CF 통합 §3, 2026-08-09 gist 에서 이전). src/shared/dataSource.ts 와 짝.
+         · gist.github…  : 운영 메타(service-status / offsets / series-name)는 gist 에 남는다 + 구버전 호환용 잔존. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://*.supabase.co https://data.iidx.in https://gist.githubusercontent.com http://localhost:* ws://localhost:*" />
     <title>ohSorryScoreINF</title>
   </head>
   <body>

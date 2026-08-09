@@ -25,6 +25,7 @@ import {
 import { lampStyle } from './lampStyle';
 import { copyToClipboard } from './ChartTable';
 import { loadGistModule, loadJson, rowsToWeaknessCharts } from './gistLib';
+import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
 
 // DJ Level letter 색 — ChartTable 의 LETTER_COLOR 와 동일 (inline style 적용).
 //   CSS [data-letter] 셀렉터도 같이 동작 (다크 테마 override) — ChartTable 와 같은 디자인 시스템 reuse.
@@ -484,12 +485,11 @@ function SeriesFolder({
 // ─── calcWeakness gist lib 로드 (Analysis 와 같은 module global cache 활용) ─────
 // 탭이 별도라 Analysis 와 PlayData 가 동시에 마운트 안 되지만, window.OhsorryWeakness 가
 // 한 번 eval 되면 글로벌 cache → 두 컴포넌트 다 재사용 (force=false).
-const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
-const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
-const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
+const CALC_WEAKNESS_URL = `${LIB_BASE}/calcWeakness.js`;
+const NORM_TITLE_URL = `${LIB_BASE}/normTitle.js`;
 // 평소 11·12 만 fetch (7MB→1.8MB). 약점 분석은 고렙 기준이라 1112 로 충분.
-const PATTERNS_URL = `${GIST_RAW}/patterns-dp-1112.json`;
-const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
+const PATTERNS_URL = `${DATA_BASE}/patterns-dp-1112.json`;
+const RATE_REF_URL = `${DATA_BASE}/rate-reference-slim.json`;
 
 // calcWeakness lib 타입 — Analysis.tsx 와 동일하게 any.
 //   Analysis 에 정의된 인터페이스가 export 안 됐고 calcWeakness 내부도 거대해서 외부 타입 안 매김.

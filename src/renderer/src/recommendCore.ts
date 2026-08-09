@@ -15,6 +15,7 @@ import type { SongRow, ChartSlot, RatingData, ZasaData, EreterData } from '../..
 import { norm } from '../../shared/match';
 import { isVariantTitle } from '../../shared/variants';
 import { loadGistModule, loadJson, SLOT_TO_DIFF_KEY } from './gistLib';
+import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
 
 // variant(AC≠INF 동일 title+diff 다중채보) INF 플레이 표식 — recommend.js userChartByKey 의
 //   variantInfIds Set 에 이 값 하나만 넣어 매칭(textage_song_id 가 없는 TSV 모델이라 sentinel 사용).
@@ -22,21 +23,20 @@ const VARIANT_INF_SENTINEL = '@inf';
 const VARIANT_INF_SENTINEL_SET = new Set([VARIANT_INF_SENTINEL]);
 
 // ─── gist URL ────────────────────────────────────────────────────────
-export const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
 const SERIES_GIST = 'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw';
-const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
-const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
-const RECOMMEND_URL = `${GIST_RAW}/recommend.js`;
+const CALC_WEAKNESS_URL = `${LIB_BASE}/calcWeakness.js`;
+const NORM_TITLE_URL = `${LIB_BASE}/normTitle.js`;
+const RECOMMEND_URL = `${LIB_BASE}/recommend.js`;
 // 평소 11·12 만 fetch (7MB→1.8MB). 하위 레벨(8~10 / 1~7)은 추천이 저렙을 다룰 때만
 // ensurePatternsLevel 로 lazy 병합 (ohSorry / ohSorryWeb 과 동일 구조).
-const PATTERNS_URL = `${GIST_RAW}/patterns-dp-1112.json`;
-const PATTERNS_URL_0810 = `${GIST_RAW}/patterns-dp-0810.json`;
-const PATTERNS_URL_REST = `${GIST_RAW}/patterns-dp-rest.json`;
-const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
-const FEATURE_SCORES_URL = `${GIST_RAW}/feature-scores-slim.json`;
-const TEXTAGE_META_URL = `${GIST_RAW}/textage-meta.json`;
+const PATTERNS_URL = `${DATA_BASE}/patterns-dp-1112.json`;
+const PATTERNS_URL_0810 = `${DATA_BASE}/patterns-dp-0810.json`;
+const PATTERNS_URL_REST = `${DATA_BASE}/patterns-dp-rest.json`;
+const RATE_REF_URL = `${DATA_BASE}/rate-reference-slim.json`;
+const FEATURE_SCORES_URL = `${DATA_BASE}/feature-scores-slim.json`;
+const TEXTAGE_META_URL = `${DATA_BASE}/textage-meta.json`;
 const SERIES_NAME_URL = `${SERIES_GIST}/series-name.json`;
-const WEAKNESS_POPMEAN_URL = `${GIST_RAW}/weakness-popmean.json`;  // ③④ 추천 usernorm baseline (웹과 동일, Phase 3-3)
+const WEAKNESS_POPMEAN_URL = `${DATA_BASE}/weakness-popmean.json`;  // ③④ 추천 usernorm baseline (웹과 동일, Phase 3-3)
 
 // ─── module global cache (Analysis / PlayData / WeaknessRecommend 와 공유) ───
 // 로더 본체는 gistLib. App.tsx 가 여기서 loadGistModule 을 import 하므로 그대로 re-export 한다.

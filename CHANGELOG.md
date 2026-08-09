@@ -2,6 +2,17 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.107 — 2026-08-09 코어 JS·데이터 소스를 gist → Cloudflare R2 로 (CF 통합 §3)
+
+앱이 받는 코어 JS 모듈·데이터 JSON 21종의 소스를 gist raw 에서 **`data.iidx.in`(Cloudflare R2 + Worker)** 로 옮겼다. gist raw 는 `Cache-Control: max-age=300` 고정이라 캐시 정책을 우리가 쥘 수 없었는데, R2 는 Worker 가 쥔다(현재 `max-age=60`) → 데이터 갱신 반영이 빨라진다.
+
+- **[src/shared/dataSource.ts](src/shared/dataSource.ts) 신설** — `LIB_BASE`(JS·CSS) / `DATA_BASE`(JSON) / `OPS_GIST_RAW`(운영 메타). 종전엔 같은 gist URL 이 **8개 파일에 하드코딩**돼 있어 소스를 옮길 때마다 전수 수정 + 릴리즈가 필요했다. 이제 여기만 고치면 된다.
+- 전환 파일 — `main/{ereter,rating,zasa}.ts`, `renderer/src/{Analysis,PlayData,WeaknessRecommend}.tsx`, `renderer/src/{recommendCore,supabaseSync}.ts`, `renderer/src/App.tsx`(`recommendCore` 가 export 하던 `GIST_RAW` 를 쓰고 있었다).
+- ⚠️ **[index.html](src/renderer/index.html) CSP `connect-src` 에 `https://data.iidx.in` 추가** — 이게 없으면 위 fetch 가 **코드가 멀쩡해도 브라우저 레벨에서 전부 차단**된다. URL 을 옮길 때 반드시 짝으로 가야 하는 변경.
+- **운영 메타는 gist 그대로** — `service-status.json`(kill-switch)·`offsets.json`(메모리 오프셋)·`series-name.json`. 코드 배포 없이 웹에서 바로 고쳐 켜고 끄는 스위치라 gist 편집이 낫다. CSP 에서 gist 도 유지한다.
+- 검증 — 앱이 받는 R2 URL **21개 전부 200**(content-type `application/javascript`/`application/json` 정확, URL 인코딩된 `OSR13.5%2B.js` 포함), `typecheck` 통과, 빌드 산출물에 **코어 gist 잔존 0**.
+- 📌 이중 배포 기간 — gist 쪽도 같은 내용으로 계속 갱신되므로(오소리 배포 퍼블리셔 + 미러) **업데이트하지 않은 구버전도 그대로 동작**한다.
+
 ### v0.0.106 — 2026-08-08 중복 코드 정리 (동작 변경 없음)
 
 오소리 전체 레포 중복 검사(jscpd)에서 나온 INFOhSorry 몫을 정리. **순수 리팩터링으로 동작 변경 없음.**

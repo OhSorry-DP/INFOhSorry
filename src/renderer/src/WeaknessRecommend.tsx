@@ -15,14 +15,14 @@ import type { SongRow, RatingData, ZasaData } from '../../shared/types';
 import { copyToClipboard } from './ChartTable';
 import { LAMP_NUM_TO_ABBR } from './lampStyle';
 import { loadGistModule, loadJson, rowsToWeaknessCharts } from './gistLib';
+import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
 
 // ─── gist URL (Analysis / PlayData 와 동일) ────────────────────────────
-const GIST_RAW = 'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw';
-const CALC_WEAKNESS_URL = `${GIST_RAW}/calcWeakness.js`;
-const NORM_TITLE_URL = `${GIST_RAW}/normTitle.js`;
+const CALC_WEAKNESS_URL = `${LIB_BASE}/calcWeakness.js`;
+const NORM_TITLE_URL = `${LIB_BASE}/normTitle.js`;
 // 평소 11·12 만 fetch (7MB→1.8MB). 약점 추천은 고렙 기준이라 1112 로 충분.
-const PATTERNS_URL = `${GIST_RAW}/patterns-dp-1112.json`;
-const RATE_REF_URL = `${GIST_RAW}/rate-reference-slim.json`;
+const PATTERNS_URL = `${DATA_BASE}/patterns-dp-1112.json`;
+const RATE_REF_URL = `${DATA_BASE}/rate-reference-slim.json`;
 
 const OS_FEATS = [
   'NOTES', 'CHORD', 'PEAK', 'CHARGE', 'SCRATCH',

@@ -8,10 +8,11 @@ import { app } from 'electron';
 import { promises as fsp, existsSync } from 'fs';
 import { join } from 'path';
 import { readCacheStatus } from './cacheStatus';
+import { DATA_BASE } from '../shared/dataSource';
 
 export const TTL_MS = 24 * 60 * 60 * 1000;
 const RATING_GIST_URL =
-  'https://gist.githubusercontent.com/OhSorry-DP/c3da608194c44f431abd2f1a7a4a9f5e/raw/ohSorryRating.json';
+  DATA_BASE + '/ohSorryRating.json';
 
 export interface RatingChart {
   title: string;
