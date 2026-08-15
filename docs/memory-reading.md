@@ -137,22 +137,42 @@ heap 값(매번 위치가 바뀌는 동적 버퍼)을 안정적으로 따라가�
 
 ### profileOffsets 상수 (`src/shared/profileOffsets.ts`)
 
-`bm2dx.exe` modBase 기준 정적 offset 의 코드 fallback. `PROFILE_OFFSETS`(`src/shared/profileOffsets.ts:22-59`):
-- `refluxVersion`: 발견 당시 게임 버전(`P2D:J:B:A:2026060300`).
-- `djName`(offset `0x690d3e`, utf8), `iidxId`(`0x690d30`, utf8), `spRank`(`0x58d9f8`, utf16le), `dpRank`(`0x58d9f0`, utf16le).
-- DJ NAME / IIDX ID 는 14 bytes 간격 인접 — 같은 player profile struct 필드(`src/shared/profileOffsets.ts:4`). SP/DP 단위는 한자(中伝/皆伝/十段 등) utf16le.
-- **게임 패치로 `.data` section layout 이 바뀌면 깨짐** → MemoryScanner 로 재스캔(주석 `src/shared/profileOffsets.ts:6`). 2026-04-22 패치 때 struct 가 +0x80 이동했던 이력 기록(`src/shared/profileOffsets.ts:31-32`).
+`bm2dx.exe` modBase 기준 정적 offset 의 코드 fallback. 문자열 필드(`PROFILE_OFFSETS`)와 숫자 필드(`PROFILE_NUMERIC_OFFSETS`)로 나뉩니다.
+
+**문자열 — `PROFILE_OFFSETS`** (게임 빌드 `P2D:J:B:A:2026080500` 기준)
+- `djName`(`0x697cfe`, utf8), `iidxId`(`0x697cf0`, utf8). 14 bytes 간격 인접 — 같은 player profile struct 필드.
+- **게임 패치로 `.data` section layout 이 바뀌면 깨짐** → MemoryScanner 로 재스캔. 이동 이력: 2026-04-22 +0x80(`0x690cbe→0x690d3e`), 2026-08-05 +0x6fc0(`0x690d3e→0x697cfe`).
+
+**숫자 — `PROFILE_NUMERIC_OFFSETS`** (int32 배열로 읽음, `memory:read-ints`)
+- `radar`(`0x699790`, 12개, scale 100) — 노트레이더. 축마다 **[SP, DP] 쌍이 연속**입니다:
+  `SP.NOTES DP.NOTES | SP.PEAK DP.PEAK | SP.SCRATCH DP.SCRATCH | SP.SOF-LAN DP.SOF-LAN | SP.CHARGE DP.CHARGE | SP.CHORD DP.CHORD`
+  (`RADAR_AXIS_ORDER`). 값은 100 배 정수(`9234` = `92.34`). **합계 레이더 스코어는 메모리에 없고 6개 합**입니다.
+- `dan`(`0x697d1c`, 2개) — 단위 `[SP, DP]`. 값은 `DAN_NAMES` 의 index(0=七級 … 6=一級, 7=初段 … 16=十段, 17=中伝, 18=皆伝), **미취득은 `-1`**.
+  같은 struct 의 DJ POINT 도 `[SP=0x697d14, DP=0x697d18]` 순서라 SP→DP 배치가 일관됩니다.
+- `danIndexToRankInt()` — 게임 index → supabase `users.sp_rank/dp_rank` 스케일(`idx - 6`. 一級 이 양쪽 0). 미취득/범위 밖은 `null`.
+
+> **옛 `spRank`/`dpRank` 문자열 offset(`0x58d9f8`/`0x58d9f0`)은 제거했습니다.** 그 주소는 플레이어 값이 아니라
+> **게임의 단위 이름 테이블**(`bm2dx+0x592970`, 七級…皆伝 19개, 8바이트 stride)의 두 칸이었습니다. 모듈 전체에서
+> `"十段"`(utf16le)은 그 테이블에 **딱 한 번** 나옵니다 — 즉 문자열 스캔으로는 애초에 플레이어 단위를 찾을 수 없고,
+> 누구에게나 같은 문자열이 나오거나 엉뚱한 값이 나왔습니다. 이것이 "단위 리딩이 자주 실패" 의 정체였습니다.
+> 사용자가 MemoryScanner 로 저장한 슬롯이 있으면 `useProfile` 이 여전히 그 문자열을 우선합니다(legacy 호환).
 
 ### useProfile (`src/renderer/src/useProfile.ts`)
 
-`refluxState` 가 ready/hooked 일 때 5초 주기 polling(`POLL_INTERVAL_MS=5000`, `src/renderer/src/useProfile.ts:14`)으로 4 필드를 읽습니다.
+`refluxState` 가 ready/hooked 일 때 5초 주기 polling(`POLL_INTERVAL_MS=5000`)으로 읽습니다 —
+문자열 2개(`djName`/`iidxId`, `memory.readString`) + 정수 블록 2개(`radar` 12개 / `dan` 2개, `memory.readInts`).
 
-offset 우선순위(`effective`, `src/renderer/src/useProfile.ts:79-90`):
-1. **사용자 저장값**(`localStorage`, MemoryScanner 로 저장) — anchor 또는 direct 모드(`SavedSlot`, `src/renderer/src/useProfile.ts:24-37`).
-2. **gist offsets.json 의 profile**(IPC `offsets:getProfile`, `pickDef` `src/renderer/src/useProfile.ts:66-77`).
-3. **코드 상수** `PROFILE_OFFSETS`.
+offset 우선순위(`effective`):
+1. **사용자 저장값**(`localStorage`, MemoryScanner 로 저장) — anchor 또는 direct 모드(`SavedSlot`). 문자열 필드 전용.
+2. **gist offsets.json 의 profile**(IPC `offsets:getProfile`, `pickDef` / 숫자는 `pickNumericDef`).
+3. **코드 상수** `PROFILE_OFFSETS` / `PROFILE_NUMERIC_OFFSETS`.
 
-읽기(`readField`, `src/renderer/src/useProfile.ts:92-116`)는 anchor 면 `memory.readViaAnchor`, direct 면 `memory.readString` 호출. 인코딩별 제어문자 trim.
+읽기(`readField`)는 anchor 면 `memory.readViaAnchor`, direct 면 `memory.readString` 호출. 인코딩별 제어문자 trim.
+숫자는 `readNumeric` → `memory.readInts`. gist 의 숫자 항목은 `{offset, count, scale?}` 형태로 같은 `profile` 맵에 섞여 옵니다.
+
+파싱/검증(`parseRadarBlock` / `parseDanBlock`) — **offset 이 어긋나면 조용히 쓰레기를 표시하지 않고 버립니다**:
+- 레이더: 12개 전부 `0 ~ 60000`(=0~600.00) 범위여야 하고, 전부 0 이면(로그인 전) `null`. 한쪽 스타일 6개가 전부 0 이면 그 스타일만 `null` — SP 만/DP 만 하는 유저 대응.
+- 단위: `-1 ~ 18` 밖이면 `null`. `-1` 은 "미취득"이라 정상값이고 표기는 `null`(ProfileCard 가 `-` 로 그림).
 
 stage 가 idle/starting/downloading 이면 profile state 를 null 리셋(옛 값 sticky 방지, `src/renderer/src/useProfile.ts:155-161`).
 
@@ -161,7 +181,10 @@ stage 가 idle/starting/downloading 이면 profile state 를 null 리셋(옛 값
 localStorage 키(`STORAGE_KEY`, `src/renderer/src/useProfile.ts:17-22`):
 `infohsorry-scanner-djname-v2` / `-iidxid-v2` / `-sprank-v2` / `-dprank-v2`. (MemoryScanner 는 추가로 `-matches-v1` 류 스캔 매치 캐시도 저장.)
 
-> SP/DP 단위는 메모리 리딩이 자주 실패합니다. 그래서 `ProfileCard` 는 Supabase `users.sp_rank/dp_rank`(eagate djdata 기반, ohSorryAdmin/getInfRadar.js 가 채움)를 `fetchUserPublic` 으로 받아 보강합니다. INF오소리 자체는 단위를 **업로드하지 않습니다**(`upsert_user` 에 `p_sp_rank:null`, `src/renderer/src/supabaseSync.ts:273-274`). 상세는 [data-flow.md](data-flow.md).
+`ProfileInfo` 반환: `djName` / `iidxId` / `iidxIdFormatted` / `spRank`·`dpRank`(표기 문자열) / `spRankInt`·`dpRankInt`(supabase 스케일 int) / `spRadar`·`dpRadar`(`RadarValues`, 실수값).
+
+> **supabase fallback 은 유지합니다.** `App.tsx` 가 메모리 값이 있으면 그걸 쓰고(`radarSource='memory'`), 없을 때만 Supabase `user_radars`/`users.sp_rank·dp_rank`(eagate djdata 기반, ohSorryAdmin/getInfRadar.js 가 채움)를 씁니다 — 게임 미실행/로그인 전이나 offset 이 패치로 깨졌을 때의 안전망. supabase 쪽은 **DP 레이더만** 있습니다(SP 레이더는 메모리에서만 나옵니다).
+> INF오소리 자체는 여전히 단위를 **업로드하지 않습니다**(`upsert_user` 에 `p_sp_rank:null`, `src/renderer/src/supabaseSync.ts:273-274`). 상세는 [data-flow.md](data-flow.md).
 
 ---
 
@@ -215,9 +238,13 @@ v0.0.103 까지의 `version` 은 gist 의 **자기 신고 라벨**일 뿐이었�
 
 ```
 findInfinitas('bm2dx.exe') → modBaseAddr / modBaseSize
-  → 그 범위를 4MB 청크로 읽으며 "P2D:J:B:A:" 바이트 패턴 검색 (찾는 즉시 중단)
-  → 뒤 10자리가 datecode. 예: P2D:J:B:A:2026080500
+  → 그 범위를 4MB 청크로 읽으며 "P2D:J:B:A:" 바이트 패턴 전부 검색
+  → 매치들 중 datecode 가 가장 큰 것 채택. 예: P2D:J:B:A:2026080500
 ```
+
+> ⚠️ **첫 매치에서 멈추면 안 됩니다** (v0.0.108 에서 고침). 모듈에는 옛 빌드 문자열이 상수로 여러 개 박혀 있고,
+> 실측상 앞쪽에 있습니다 — `2016090700` / `2026031200` / `2022031600` / `2016051600` 이 실제 빌드 `2026080500` 보다 먼저 나옵니다.
+> 앞쪽을 잡으면 `resolveBuild` 가 매번 미매칭(`latest`) 으로 떨어져 빌드 분기가 사실상 무력화됩니다.
 
 **offset 하드코딩이 전혀 없어서 패치에 깨지지 않는 것**이 이 방식의 핵심입니다. PE 타임스탬프·파일크기로 지문을 만드는 방법도 검토했지만, 그건 빌드를 *간접 추론* 하는 것이라 빌드마다 지문을 미리 수집해 둬야 합니다. datecode 는 게임 자신이 알려주므로 수집이 필요 없습니다.
 

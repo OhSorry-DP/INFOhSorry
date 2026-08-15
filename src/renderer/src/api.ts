@@ -205,6 +205,10 @@ if (!IS_HOST) {
         callIpc('memory:read-string', exeName, off, enc, maxBytes) as ReturnType<
           Window['infohsorry']['memory']['readString']
         >,
+      readInts: (exeName: string, off: string, count: number) =>
+        callIpc('memory:read-ints', exeName, off, count) as ReturnType<
+          Window['infohsorry']['memory']['readInts']
+        >,
       findAnchor: (exeName: string, heapAddr: string) =>
         callIpc('memory:find-anchor', exeName, heapAddr) as ReturnType<
           Window['infohsorry']['memory']['findAnchor']

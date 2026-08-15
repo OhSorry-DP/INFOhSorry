@@ -5,7 +5,8 @@
 //   - iidx_id 형식: ohSorry = 8자리 숫자 (xxxx-xxxx 의 하이픈 제거), INFOhSorry = "C293036891870" (C + 12자리)
 //   - played_version: 0 (INF)
 //   - song matching: songs.ac & 2 (INF) 인 곡만 매칭 (동명이곡 자동 분리)
-//   - user_radar 업로드 X (INF 는 notes radar 데이터 없음)
+//   - user_radars / 단위: v0.0.108 부터 INFINITAS 메모리에서 직접 읽어 SP·DP 둘 다 업로드
+//     (그 전엔 INF 쪽에 레이더 데이터가 없어 ohSorryAdmin/getInfRadar.js 배치에만 의존했다)
 //
 // 마이그레이션:
 //   - 옛 RPC: upsert_user_profile + upsert_user_chart_scores (user_profiles + user_chart_scores)
@@ -277,6 +278,62 @@ interface ScoreRow {
   played_version: number;
   play_style: number;   // 0=SP, 1=DP
   date: string;
+  // 14_scores_bp_notecount.sql 로 추가된 컬럼. 값 없으면 null → RPC 가 NULL 로 저장(미상).
+  bp: number | null;          // Bad+Poor 미스카운트 (TSV missCount)
+  note_count: number | null;  // 채보 총 노트수 (TSV noteCount)
+}
+
+// TSV 숫자 필드 → DB 값. 음수/비유한수는 "미상"(null) 으로 — Reflux 가 모르는 값을 -1 로 주는 경우가 있고,
+//   0 은 BP 0(=FC) / noteCount 0(=미상) 로 의미가 갈려서 필드별로 최소값을 다르게 본다.
+function bpOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Math.round(v) : null;
+}
+function noteCountOrNull(v: unknown): number | null {
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.round(v) : null;
+}
+
+// user_radars 업로드 — SP(play_style 0) / DP(1) 각각 RPC upsert_user_radar 1회.
+//   INFINITAS 메모리에서 읽은 값만 올린다 (supabase 에서 받아온 값은 되쓰기하지 않음 — 왕복 오염 방지).
+//   값이 없는 스타일은 skip. 실패는 warn 만 남기고 삼킨다 (fire-and-forget).
+//
+//   DB 함수는 ohSorryAdmin 이 쓰던 기존 upsert_user_radar 를 그대로 쓴다
+//   (p_iidx_id, p_play_style, p_notes, p_peak, p_charge, p_chord, p_scratch, p_soft).
+//   PostgREST 는 파라미터를 **이름**으로 넘기므로 선언 순서와 무관하다. 같은 이름으로 함수를 하나 더
+//   만들면 오버로드가 되어 PGRST203("could not choose the best candidate")로 전부 실패한다 — 만들지 말 것.
+async function uploadRadars(iidxIdNorm: string, profile: ProfileInfo): Promise<void> {
+  const targets: Array<{ style: number; label: string; r: DpRadarRow | null }> = [
+    { style: 0, label: 'SP', r: profile.spRadar },
+    { style: 1, label: 'DP', r: profile.dpRadar },
+  ];
+  for (const t of targets) {
+    if (!t.r) continue;
+    const num = (v: number | null | undefined): number | null =>
+      typeof v === 'number' && Number.isFinite(v) && v >= 0 ? Number(v.toFixed(2)) : null;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_radar`, {
+        method: 'POST',
+        headers: HEADERS,
+        body: JSON.stringify({
+          p_iidx_id: iidxIdNorm,
+          p_play_style: t.style,
+          p_notes: num(t.r.notes),
+          p_chord: num(t.r.chord),
+          p_peak: num(t.r.peak),
+          p_charge: num(t.r.charge),
+          p_scratch: num(t.r.scratch),
+          p_soft: num(t.r.soft),
+        }),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => '');
+        console.warn(`[supabase] user_radars ${t.label} upsert 실패 HTTP ${res.status} ${errText}`);
+        continue;
+      }
+      console.log(`[supabase] user_radars ${t.label} upsert OK ${iidxIdNorm}`);
+    } catch (e) {
+      console.warn(`[supabase] user_radars ${t.label} upsert error:`, (e as Error).message);
+    }
+  }
 }
 
 export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; error?: string }> {
@@ -297,8 +354,12 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
   const spCpiVal = (typeof spCpi === 'number' && isFinite(spCpi)) ? Math.round(spCpi) : null;
   const spStarVal = (typeof spStar === 'number' && isFinite(spStar)) ? Number(spStar.toFixed(1)) : null;
+  // SP/DP 단위 — 게임 메모리에서 읽은 값 (supabase 스케일 int). 못 읽었거나 미취득이면 null →
+  //   RPC COALESCE 가 기존 DB값 유지 (eagate 배치가 넣어둔 값을 지우지 않음).
+  const spRankVal = typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
+  const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
   try {
-    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'}`);
+    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
     const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user`, {
       method: 'POST',
       headers: HEADERS,
@@ -307,11 +368,10 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         p_dj_name: profile.djName ?? null,
         p_star: starResult ? Number(starResult.star.toFixed(4)) : null,
         p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
-        // SP/DP 단위는 절대 업셋하지 않음 — null 보내 RPC COALESCE 가 기존 값 유지.
-        // 단위 채우는 책임: ohSorryAdmin/getInfRadar.js (eagate djdata 페이지에서 fetch).
-        // INFOhSorry 메모리 리딩에서 단위가 안 잡혀도 supabase 저장값을 fetchUserPublic 으로 받아 ProfileCard 에 표시.
-        p_sp_rank: null,
-        p_dp_rank: null,
+        // SP/DP 단위 — v0.0.108 부터 게임 메모리에서 직접 읽어 업로드 (프로필 struct 의 정수 index).
+        //   못 읽음/미취득이면 null → RPC COALESCE 가 기존 값 유지 (eagate 배치값을 null 로 덮지 않음).
+        p_sp_rank: spRankVal,
+        p_dp_rank: dpRankVal,
         p_sp_cpi: spCpiVal,    // SP 대표 실력값(CPI). null → COALESCE 보존
         p_sp_star: spStarVal,  // 発狂★相当. null → COALESCE 보존
       }),
@@ -324,6 +384,10 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   } catch (e) {
     return { ok: false, error: `users error: ${(e as Error).message}` };
   }
+
+  // 1-B. user_radars upsert — 메모리에서 읽은 SP(0) / DP(1) 노트레이더.
+  //   실패해도 scores 업로드는 계속한다 (레이더는 부가 정보 — 점수 유실이 더 치명적).
+  await uploadRadars(iidxIdNorm, profile);
 
   // 2. scores upsert — chart row 변환 + songs 매칭 + ac flag dedup
   const allChartsForScores = [...charts, ...(unclassifiedCharts ?? [])];
@@ -459,6 +523,8 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
       played_version: PLAYED_VERSION_INF,
       play_style: 1,   // DP
       date: scoreDate,
+      bp: bpOrNull(c.missCount),
+      note_count: noteCountOrNull(c.noteCount),
     };
     const pk = `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}|1`;
     const prev = dedup.get(pk);
@@ -487,6 +553,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     const newRow: ScoreRow = {
       song_id: songId, iidx_id: iidxIdNorm, diff: diffInt, lamp: lampInt,
       ex_score: exScore, played_version: PLAYED_VERSION_INF, play_style: 0, date: scoreDate,
+      bp: bpOrNull(c.missCount), note_count: noteCountOrNull(c.noteCount),
     };
     const pk = `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}|0`;
     const prev = dedup.get(pk);
@@ -515,6 +582,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     const newRow: ScoreRow = {
       song_id: songId, iidx_id: iidxIdNorm, diff: diffInt, lamp: lampInt,
       ex_score: exScore, played_version: PLAYED_VERSION_INF, play_style: 1, date: scoreDate,
+      bp: bpOrNull(c.missCount), note_count: noteCountOrNull(c.noteCount),
     };
     const pk = `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}|1`;
     const prev = dedup.get(pk);

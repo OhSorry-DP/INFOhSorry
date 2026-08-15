@@ -26,8 +26,12 @@ export function datecodeNum(datecode: string): number {
 }
 
 // bm2dx.exe 의 모듈 범위를 훑어 datecode 를 찾는다. 게임 미실행/미발견이면 null.
-//   전체 프로세스 메모리가 아니라 주 모듈 범위(보통 ~70MB)만 보므로 스캔 비용이 제한적이고,
-//   찾는 즉시 중단한다.
+//   전체 프로세스 메모리가 아니라 주 모듈 범위(보통 ~70MB)만 본다.
+//
+// ⚠️ 첫 매치에서 멈추면 안 된다. 모듈 안에는 옛 빌드 문자열이 상수로 여럿 박혀 있고
+//   (실측: 2016090700 / 2026031200 / 2022031600 / 2016051600 이 실제 빌드 2026080500 보다 앞에 있음)
+//   앞쪽 매치를 잡으면 resolveBuild 가 엉뚱한 빌드로 매칭된다.
+//   전부 훑어 **가장 큰 datecode** 를 고른다 — 실행 중인 빌드가 그 프로세스 안에서 가장 최신이다.
 function scanDatecode(): string | null {
   let inf: ReturnType<typeof findInfinitas> = null;
   try {
@@ -41,6 +45,8 @@ function scanDatecode(): string | null {
   const total = inf.modBaseSize;
   // 청크 경계에 걸친 매치를 놓치지 않도록 (패턴 + datecode) 만큼 겹쳐 읽는다.
   const overlap = pattern.length + DATECODE_LEN;
+  const valid = new RegExp(`^${PREFIX}\\d{${DATECODE_LEN}}$`);
+  let best: string | null = null;
   try {
     for (let off = 0; off < total; off += CHUNK - overlap) {
       const size = Math.min(CHUNK, total - off);
@@ -58,14 +64,14 @@ function scanDatecode(): string | null {
         const cand = buf
           .subarray(found, found + pattern.length + DATECODE_LEN)
           .toString('ascii');
-        if (new RegExp(`^${PREFIX}\\d{${DATECODE_LEN}}$`).test(cand)) return cand;
+        if (valid.test(cand) && (!best || datecodeNum(cand) > datecodeNum(best))) best = cand;
         idx = found + 1;
       }
     }
   } finally {
     closeHandle(inf.handle);
   }
-  return null;
+  return best;
 }
 
 // 현재 빌드 datecode. 게임이 떠 있으면 실측, 아니면 이번 프로세스에서 마지막으로 본 값.

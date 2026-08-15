@@ -24,6 +24,7 @@ export interface RadarValues {
 interface NotesRadarProps {
   data: RadarValues | null;
   size?: number;  // SVG 한 변 (px). 기본 50.
+  label?: string; // 스크린리더용 이름 (예: "SP 노트레이더"). 기본 "노트레이더".
 }
 
 // 시각 정규화 max. 실제 지표값은 0~200 까지 가능하지만 100 으로 over-driven 해서
@@ -63,7 +64,11 @@ function pickNum(v: number | null | undefined): number {
   return typeof v === 'number' && v >= 0 ? v : 0;
 }
 
-export function NotesRadar({ data, size = 50 }: NotesRadarProps): JSX.Element | null {
+export function NotesRadar({
+  data,
+  size = 50,
+  label = '노트레이더',
+}: NotesRadarProps): JSX.Element | null {
   if (!data) return null;
 
   const cx = size / 2;
@@ -95,7 +100,7 @@ export function NotesRadar({ data, size = 50 }: NotesRadarProps): JSX.Element | 
         viewBox={`0 0 ${size} ${size}`}
         xmlns="http://www.w3.org/2000/svg"
         role="img"
-        aria-label="DP 노트레이더"
+        aria-label={label}
       >
         {/* 외곽 6각형 — 다크 테마용 fill / stroke 은 CSS 에서. */}
         <polygon points={bgPoly} className="notes-radar-bg" />

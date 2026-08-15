@@ -139,8 +139,12 @@ ohSorry 와 같은 Supabase 프로젝트 `cvxpeecxiawddmrzbdvn`(Tokyo) 공유. `
 ### uploadProfile (`src/renderer/src/supabaseSync.ts:246-400`)
 
 1. **kill-switch 확인**: `serviceStatus.get()` 의 `uploadEnabled===false` 면 skip(`src/renderer/src/supabaseSync.ts:250-253`).
-2. **users upsert**: RPC `upsert_user`(`src/renderer/src/supabaseSync.ts:262-276`). `p_star`(ereterStar 4자리), `p_sp_rank:null`/`p_dp_rank:null`(INF 메모리 신뢰성 X — 단위는 ohSorryAdmin 이 채움).
+2. **users upsert**: RPC `upsert_user`. `p_star`(ereterStar 4자리), `p_sp_rank`/`p_dp_rank` = **게임 메모리에서 읽은 단위**(v0.0.108+, supabase 스케일 int). 못 읽음/미취득이면 `null` → RPC COALESCE 가 기존값(ohSorryAdmin 배치가 넣은 값) 보존.
+2-B. **user_radars upsert**: RPC `upsert_user_radar`(`uploadRadars`) — 메모리에서 읽은 SP(`play_style:0`) / DP(`1`) 노트레이더 6지표를 스타일별 1회씩. 값 없는 스타일은 skip, 실패는 warn 만 남기고 **scores 업로드를 막지 않는다**.
+   - ⚠️ 이 RPC 는 **ohSorryAdmin 이 쓰던 기존 함수**(`text, integer, numeric×6`)다. 같은 이름으로 새로 만들면 파라미터 이름이 겹쳐 PostgREST 가 후보를 못 골라(PGRST203) 호출이 전부 HTTP 300 으로 죽는다. PostgREST 는 인자를 **이름**으로 넘기므로 선언 순서 차이는 문제가 안 된다.
 3. **scores upsert**: chart row 변환 + songs 매칭 + dedup → RPC `upsert_scores`(`src/renderer/src/supabaseSync.ts:285-399`).
+   - **`bp`(TSV missCount) / `note_count`(TSV noteCount)** 함께 전송(v0.0.108+, `14_scores_bp_notecount.sql`). 음수/비유한수는 `null`(미상) 로 — `bp` 는 0 이 유효값(FC)이라 `>= 0`, `note_count` 는 0 이 미상이라 `> 0` 기준.
+   - ⚠️ `upsert_scores` 는 historical best 미달이면 INSERT 자체를 skip 하므로, **이미 best 가 저장된 채보는 재업로드해도 bp/note_count 가 안 채워진다**. 기존 행까지 메우려면 `16_scores_bp_notecount_backfill.sql`(빈 칸만 채우는 패스 추가) 적용 필요.
    - `DIFF_MAP`/`LAMP_MAP`(`src/renderer/src/supabaseSync.ts:33-34`), `PLAYED_VERSION_INF=0`.
    - songs 매칭: `getSongsCache()`(norm key → `SongEntry[]`, ac/legen bit, 페이징 fetch `src/renderer/src/supabaseSync.ts:81-122`) + `pickSongId`(INF 비트 2, `src/renderer/src/supabaseSync.ts:150-159`).
    - 미등록 신곡: `ensure_song` RPC 자동 호출(textage-meta 의 `textage_song_id` 전달해 옛 row 통합, `src/renderer/src/supabaseSync.ts:313-352`).
@@ -164,7 +168,7 @@ DBR 토글(`dbrOnly`): ON 이면 `played_version=-10`(배틀) 날짜만, DBR 난
 
 ### 기타 Supabase fetch
 
-- `fetchUserPublic(iidxId)`(`src/renderer/src/supabaseSync.ts:184-224`) — `user_radars`(DP 6지표) + `users`(sp_rank/dp_rank) 병렬. ProfileCard 의 노트레이더 + 단위 보강.
+- `fetchUserPublic(iidxId)` — `user_radars`(DP 6지표) + `users`(sp_rank/dp_rank) 병렬. **메모리 리딩이 우선이고 이건 fallback** — 게임 미실행/로그인 전/패치로 offset 이 깨졌을 때 ProfileCard 가 빈 카드가 되지 않게 하는 안전망(App.tsx 의 `cardRadar`/`cardSpRank`).
 - `getSongsById()`/`ensureTextageMeta()`/`fetchSeriesNames()` — PlayData 의 곡 마스터/메타/시리즈명.
 
 ---
@@ -192,7 +196,11 @@ DBR 토글(`dbrOnly`): ON 이면 `played_version=-10`(배틀) 날짜만, DBR 난
 production 빌드에서만 시작(`src/main/index.ts:667-676`). 포트 3000, `0.0.0.0` 바인드. 라우팅:
 - `POST /api/ipc` — `{channel, args}` → `ipcHandlers[channel](...args)` → `{result}` 또는 `{error}`(`handleIpc`). **ipcMain 과 같은 핸들러 맵 공유**([architecture.md](architecture.md) 3절).
 - `GET /api/events` — SSE(text/event-stream). reflux state 실시간 push(아래).
-- `GET /api/me` — renderer 가 push 한 원격모드 본인 카드(`remote.setUser`). 오소리웹 `?remote` 분기가 supabase 대신 읽음.
+- `GET /api/me` — renderer 가 push 한 원격모드 본인 카드(`remote.setUser`, payload 는 `buildRemoteUser`). 오소리웹 `?remote` 분기가 supabase 대신 읽음.
+  - 형식은 오소리웹 `modules/api.js` 의 `fetchUserProfile` 반환과 1:1 이어야 한다 — 어긋나면 카드가 안 그려진다.
+  - `notes_radar` = `{ sp, dp }`, 각 값은 **대문자 키**(`NOTES/PEAK/CHARGE/CHORD/SCRATCH/SOF-LAN`) + `total`(6개 합, DB 에도 total 컬럼이 없어 계산). `sp_rank`/`dp_rank` 는 **표시 문자열**(`十段`, 미취득 `-`) — supabase 경로가 `rankIntToStr` 로 이미 문자열을 넣기 때문.
+  - BP / 노트수는 `charts_json`·`sp_charts_json` 항목의 `missCount`/`noteCount`(웹 `shelf.js` 가 읽는 키). supabase 경로는 `make_grid_data` 가 `bp`/`note_count` 를 반환하지 않아 아직 `missCount:null` 이다 — 원격모드가 이 점에서 오히려 데이터가 더 많다.
+  - push 는 값 변경 시에만(`sig` 비교, Reflux 가 2초마다 같은 값을 다시 써서 생기는 폭주 방지). sig 에는 차트 합계뿐 아니라 **레이더/단위도 포함** — 메모리 read 가 첫 push 보다 늦게 잡히는 경우가 있어서다.
 - `GET /` — `?remote` 없으면 `/?remote` 로 302(IP 만 쳐도 원격 카드). `GET /osr,/osr/*` 레거시는 루트 등가물로 302.
 - `GET /*` — 오소리웹 루트 마운트(`serveOsr`: vercel 정본 네트워크 우선 + 로컬 캐시 fallback). `/index.html`·`/assets/*` 만 INF 자체 renderer(`out/renderer/`).
 - CORS: `access-control-allow-origin: *` + OPTIONS preflight 처리.

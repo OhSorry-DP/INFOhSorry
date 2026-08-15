@@ -18,8 +18,12 @@ interface ProfileCardProps {
   spStar?: number | null;
   // SP 실력선 CPI 정수(sp_cpi) — SP ★ 아래 보조 표기. null 이면 미표시.
   spCpi?: number | null;
-  // supabase user_radars (play_style=1) row. null 이면 레이더 영역 자체 숨김.
+  // 노트레이더 6지표. INFINITAS 메모리 우선, 없으면 supabase user_radars (DP만) fallback — App 이 골라 넘긴다.
+  //   null 이면 그 스타일의 레이더 영역만 숨김.
+  spRadar?: DpRadarRow | null;
   dpRadar?: DpRadarRow | null;
+  // 레이더 출처 — 툴팁 표기용 ('memory' = 게임 메모리 실시간, 'eagate' = supabase 저장값).
+  radarSource?: 'memory' | 'eagate';
   // supabase users.sp_rank / dp_rank (int). null 이면 해당 단위 표시 숨김.
   // int 매핑 — setup_users.sql: 12=皆伝 / 11=中伝 / 10~1=十段~初段 / 0=一級 / -8~-1=九級~二級.
   spRank?: number | null;
@@ -54,6 +58,10 @@ function rankIntToKanji(rankInt: number | null | undefined): string | null {
 const KANJI_NUM: Record<string, number> = {
   一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
 };
+function radarSourceLabel(src: 'memory' | 'eagate'): string {
+  return src === 'memory' ? 'INFINITAS 메모리' : 'eagate djdata 기반';
+}
+
 function rankClass(rank: string | null): string {
   if (!rank) return '';
   // 皆伝 / 개전 / 皆傳 — 'kaiden' (금)
@@ -83,7 +91,9 @@ export function ProfileCard({
   osrStar,
   spStar,
   spCpi,
+  spRadar,
   dpRadar,
+  radarSource = 'eagate',
   spRank,
   dpRank,
   onStarClick,
@@ -140,10 +150,23 @@ export function ProfileCard({
         </div>
         {iidxId && <div className="profile-card-id">{iidxIdFormatted || iidxId}</div>}
       </div>
-      {/* 6각형 차트 — info(단위 포함) 바로 오른쪽. row 없으면 영역 숨김. */}
-      {dpRadar && (
-        <div className="profile-card-radar" title="DP 노트레이더 (eagate djdata 기반)">
-          <NotesRadar data={dpRadar} />
+      {/* 6각형 차트 — info(단위 포함) 바로 오른쪽. SP / DP 각각, 데이터 없는 쪽은 숨김. */}
+      {(spRadar || dpRadar) && (
+        <div className="profile-card-radars">
+          {(['SP', 'DP'] as const).map((style) => {
+            const data = style === 'SP' ? spRadar : dpRadar;
+            if (!data) return null;
+            return (
+              <div
+                key={style}
+                className="profile-card-radar"
+                title={`${style} 노트레이더 (${radarSourceLabel(radarSource)})`}
+              >
+                <span className="profile-card-radar-label">{style}</span>
+                <NotesRadar data={data} label={`${style} 노트레이더`} />
+              </div>
+            );
+          })}
         </div>
       )}
       {(starResult || spStar != null) && (

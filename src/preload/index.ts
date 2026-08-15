@@ -15,6 +15,7 @@ import type {
   RatingCacheStatus,
   UpdateInfo,
 } from '../shared/types';
+import type { RemoteProfileMap } from '../shared/profileOffsets';
 
 const api = {
   // TSV 직접 읽기
@@ -81,10 +82,11 @@ const api = {
   },
 
   // gist offsets.json 의 프로필 메모리 offset (useProfile 기본값)
+  //   문자열 필드(djName/iidxId)와 숫자 필드(radar/dan)가 같은 맵에 섞여 온다 — RemoteProfileMap 참고.
   offsets: {
     getProfile: (): Promise<{
       // 값이 null 인 필드 = 이 빌드에서 주소 미상 → 읽기 건너뜀 (useProfile pickDef 참고)
-      profile: Record<string, { offset: string; encoding: string; maxBytes: number } | null> | null;
+      profile: RemoteProfileMap | null;
       buildVersion: string | null;
       confidence: 'matched' | 'latest' | 'blind' | 'legacy' | null;
     } | null> => ipcRenderer.invoke('offsets:getProfile'),
@@ -149,6 +151,13 @@ const api = {
       maxBytes?: number,
     ): Promise<{ ok: boolean; text?: string; error?: string }> =>
       ipcRenderer.invoke('memory:read-string', exeName, relativeOffset, encoding, maxBytes),
+    // int32 배열 읽기 (노트레이더 / 단위) — count 는 main 에서 1~64 로 clamp.
+    readInts: (
+      exeName: string,
+      relativeOffset: string,
+      count: number,
+    ): Promise<{ ok: boolean; values?: number[]; error?: string }> =>
+      ipcRenderer.invoke('memory:read-ints', exeName, relativeOffset, count),
     findAnchor: (
       exeName: string,
       heapAddr: string,

@@ -42,6 +42,7 @@
 | `memory:find-anchor` | heap 주소를 가리키는 정적 포인터 + Reflux anchor delta + valueOffset 계산. `{ok, modBase, candidates[], refluxVersion, directHits}` | `memory.findAnchor(exe, heapAddr)` |
 | `memory:read-via-anchor` | `(anchor, delta, valueOffset)` 로 string 읽기(`modBase+anchorRel+delta → *ptr+valueOffset`) | `memory.readViaAnchor(exe, anchor, delta, enc, maxBytes, valueOffset)` |
 | `memory:read-string` | 저장된 module-base 상대 offset 으로 직접 string 읽기 | `memory.readString(exe, offset, enc, maxBytes)` |
+| `memory:read-ints` | module-base 상대 offset 에서 int32 배열 읽기(노트레이더 12개 / 단위 2개). `count` 는 1~64 로 clamp. `{ok, values[]}` | `memory.readInts(exe, offset, count)` |
 | `memory:probe` | 프로세스 진단 — pid/modBase/modSize/modName. `ProbeResult` | `probe(exe)` |
 
 정의: `src/main/index.ts:216-495`. preload `src/preload/index.ts:115-182`. 메커니즘 상세는 [memory-reading.md](memory-reading.md) 3절.

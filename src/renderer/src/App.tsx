@@ -41,6 +41,7 @@ import { MemoryScanner } from './MemoryScanner';
 import { QrConnect } from './QrConnect';
 import { ProfileCard } from './ProfileCard';
 import { useProfile } from './useProfile';
+import type { RadarValues } from './NotesRadar';
 import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
@@ -58,6 +59,14 @@ const CORE_LAMP_FULL_TO_ABBR: Record<string, string> = {
 const CORE_CAT_MAP: Record<string, RecCandidate['category']> = {
   cleanup: 'cleanup', easy: 'challenge-easy', hard: 'challenge-hard',
 };
+// 노트레이더 6지표를 한 문자열로 — 원격 push 변경 감지(sig)용. 값 없으면 'x'.
+function radarSig(r: RadarValues | null | undefined): string {
+  if (!r) return 'x';
+  return [r.notes, r.peak, r.charge, r.chord, r.scratch, r.soft]
+    .map((v) => Math.round((typeof v === 'number' ? v : 0) * 100))
+    .join(',');
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function recRowToCandidate(r: any, stage: CardStage): RecCandidate {
   const slot = CORE_DIFF_TO_SLOT[r.chart] || 'DPA';
@@ -1024,6 +1033,15 @@ export default function App() {
     return () => { cancelled = true; };
   }, [profile.iidxId]);
 
+  // ProfileCard 에 넘길 레이더 / 단위 — 게임 메모리 값이 있으면 그걸 쓰고, 없을 때만 supabase 저장값.
+  //   메모리 = 지금 이 계정의 실시간 값 (SP/DP 둘 다), supabase = eagate 배치 스냅샷 (DP 만).
+  const memoryRadar = profile.spRadar || profile.dpRadar;
+  const cardRadar = memoryRadar
+    ? { source: 'memory' as const, sp: profile.spRadar, dp: profile.dpRadar }
+    : { source: 'eagate' as const, sp: null, dp: userPublic.dpRadar };
+  const cardSpRank = profile.spRankInt ?? userPublic.spRank;
+  const cardDpRank = profile.dpRankInt ?? userPublic.dpRank;
+
   // 실력값 추정 + Supabase 업로드 — tryUpload 정의 + 노출(스케줄러/콘솔/종료요청). 주기 자체는 아래 스케줄 effect.
   // tsv 재읽기는 위 실시간 reload effect(refluxState.lastTsvMtime 감지)가 담당 →
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
@@ -1181,6 +1199,11 @@ export default function App() {
       part('s', spAllCharts),
       spTierData ? '1' : '0',
       textageByTitle ? 't1' : 't0',   // textage 매핑 로드되면 sig 변경 → 재push(머지 키 반영)
+      // 레이더/단위 — 점수와 무관하게 변할 수 있고(단위 인정 합격, 레이더 갱신), 메모리 read 가
+      //   첫 push 보다 늦게 잡히는 경우도 있어 sig 에 포함. 안 넣으면 다음 점수 변동까지 카드가 빈 채로 남는다.
+      `r${radarSig(profile.spRadar)}`,
+      `R${radarSig(profile.dpRadar)}`,
+      `k${profile.spRank ?? '-'}${profile.dpRank ?? '-'}`,
     ].join('|');
     if (sig === lastRemoteSigRef.current) return dbg('skip: tsv 값 변동 없음(동일)');  // 값 동일 → push 안 함
     lastRemoteSigRef.current = sig;
@@ -1741,9 +1764,11 @@ export default function App() {
             osrStar={dp12StarResult?.nativeStar ?? null}
             spStar={spStarResult?.star ?? null}
             spCpi={spStarResult?.cpiInt ?? null}
-            dpRadar={userPublic.dpRadar}
-            spRank={userPublic.spRank}
-            dpRank={userPublic.dpRank}
+            spRadar={cardRadar.sp}
+            dpRadar={cardRadar.dp}
+            radarSource={cardRadar.source}
+            spRank={cardSpRank}
+            dpRank={cardDpRank}
             onStarClick={IS_BROWSER_REMOTE ? undefined : () => {
               // tsv 재로드 → rows → dp12StarResult + Analysis vec 모두 재계산. DB upload 없음.
               if (tsvPath) void loadTsv(tsvPath);

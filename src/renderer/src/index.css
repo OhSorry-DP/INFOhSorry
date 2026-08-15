@@ -2612,12 +2612,28 @@ body {
   margin-top: 2px;
 }
 
-/* DP 노트레이더 — profile-card 의 단위 옆. supabase user_radars 에서 fetch (없으면 영역 자체 숨김).
-   profile-card 의 padding(12px 20px) 을 negative margin 으로 무시 — radar 가 카드 가장자리까지 차지. */
+/* 노트레이더 (SP / DP) — profile-card 의 단위 옆.
+   출처는 INFINITAS 메모리(우선) 또는 supabase user_radars (둘 다 없으면 영역 자체 숨김).
+   profile-card 의 세로 padding(12px) 을 negative margin 으로 무시 — radar 가 카드 위/아래까지 차지. */
+.profile-card-radars {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  margin: -12px 0;
+}
 .profile-card-radar {
   flex-shrink: 0;
   padding: 0;
-  margin: -12px -20px -12px 0;
+  display: flex;
+  align-items: center;
+  gap: 1px;
+}
+/* SP / DP 구분 라벨 — ★ 컬럼의 라벨과 같은 톤 (작게·non-bold). */
+.profile-card-radar-label {
+  font-size: 10px;
+  font-weight: 400;
+  color: var(--text-muted);
 }
 .notes-radar-wrap {
   position: relative;

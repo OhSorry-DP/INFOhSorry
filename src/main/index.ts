@@ -484,6 +484,28 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     }
   },
 
+  // 저장된 offset 으로 int32 배열 읽기 — 노트레이더(12개) / 단위(2개) 처럼 문자열이 아닌 필드용.
+  //   count 는 안전 상한 (64) 을 둔다 — renderer 가 실수로 큰 값을 넘겨 프로세스 메모리를 통째로
+  //   퍼오는 일이 없게. 반환은 raw int32 그대로이고, 스케일링/검증은 호출부 몫.
+  'memory:read-ints': async (...args: never[]) => {
+    const exeName = (args[0] as string) || 'bm2dx.exe';
+    const relativeOffset = args[1] as string; // bigint string
+    const count = Math.max(1, Math.min(64, (args[2] as number) || 1));
+    const found = findInfinitas(exeName);
+    if (!found) return { ok: false, error: '프로세스 못 찾음' };
+    try {
+      const addr = found.modBaseAddr + BigInt(relativeOffset);
+      const buf = readBytes(found.handle, addr, count * 4);
+      const values: number[] = [];
+      for (let i = 0; i < count; i++) values.push(buf.readInt32LE(i * 4));
+      return { ok: true, values };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message };
+    } finally {
+      closeHandle(found.handle);
+    }
+  },
+
   // 진단
   'memory:probe': async (...args: never[]) => {
     const exeName = args[0] as string;

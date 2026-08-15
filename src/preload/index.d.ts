@@ -15,6 +15,7 @@ import type {
   RatingCacheStatus,
   UpdateInfo,
 } from '../shared/types';
+import type { RemoteProfileMap } from '../shared/profileOffsets';
 
 declare global {
   interface Window {
@@ -58,8 +59,9 @@ declare global {
       };
       offsets: {
         // 게임 datecode 로 고른 build 의 profile offset. 값이 null 인 필드 = 이 빌드에서 주소 미상.
+        //   문자열 필드({offset,encoding,maxBytes}) 와 숫자 필드({offset,count,scale}) 가 섞인 맵.
         getProfile: () => Promise<{
-          profile: Record<string, { offset: string; encoding: string; maxBytes: number } | null> | null;
+          profile: RemoteProfileMap | null;
           buildVersion: string | null;
           confidence: 'matched' | 'latest' | 'blind' | 'legacy' | null;
         } | null>;
@@ -115,6 +117,11 @@ declare global {
           encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
           maxBytes?: number,
         ) => Promise<{ ok: boolean; text?: string; error?: string }>;
+        readInts: (
+          exeName: string,
+          relativeOffset: string,
+          count: number,
+        ) => Promise<{ ok: boolean; values?: number[]; error?: string }>;
         findAnchor: (
           exeName: string,
           heapAddr: string,

@@ -15,14 +15,17 @@ import { getGameDatecode, datecodeNum } from './gameBuild';
 const GIST_OFFSETS_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw/offsets.json';
 
-export interface RemoteProfileEntry {
-  offset: string; // bigint string (modBase 기준)
-  encoding: string; // 'utf16le' | 'utf8' | 'ascii' | 'shiftjis'
-  maxBytes: number;
-}
-// profile 필드는 null 가능 — "이 빌드에서는 그 주소를 아직 모른다" 는 뜻.
-//   생략(키 없음)과 구분한다: null 이면 옛 빌드 상수로 fallback 하지 않고 읽기를 건너뛴다.
-export type RemoteProfileMap = Record<string, RemoteProfileEntry | null>;
+// profile 맵 항목 = 문자열 offset({offset, encoding, maxBytes}) 또는 숫자 offset({offset, count, scale}).
+//   djName/iidxId 는 전자, radar/dan 은 후자. 값이 null 이면 "이 빌드에서는 그 주소를 아직 모른다" 는 뜻이고,
+//   생략(키 없음)과 구분한다 — null 이면 옛 빌드 상수로 fallback 하지 않고 읽기를 건너뛴다.
+//   타입 정의는 renderer(useProfile)도 함께 쓰므로 shared 에 있다.
+export type {
+  RemoteProfileEntry,
+  RemoteProfileMap,
+  RemoteStringOffset,
+  RemoteNumericOffset,
+} from '../shared/profileOffsets';
+import type { RemoteProfileMap } from '../shared/profileOffsets';
 
 export interface RemoteBuild {
   version: string; // 'P2D:J:B:A:YYYYMMDDxx'

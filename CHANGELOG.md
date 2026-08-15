@@ -2,6 +2,38 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.108 — 2026-08-15 노트레이더(SP/DP) + 단위(SP/DP) 를 게임 메모리에서 직접 읽기 · Supabase 업로드 확장
+
+프로필 카드가 **SP·DP 노트레이더 6지표와 SP·DP 단위를 INFINITAS 메모리에서 실시간으로** 읽습니다. 종전엔 DJ NAME / IIDX ID 만 읽었고, 레이더는 supabase 의 DP 스냅샷(eagate djdata 배치), 단위는 사실상 못 읽는 상태였습니다.
+
+- **노트레이더 12개 값** ([shared/profileOffsets.ts](src/shared/profileOffsets.ts) `PROFILE_NUMERIC_OFFSETS.radar`) — `bm2dx+0x699790` 부터 int32 12개. 축마다 **[SP, DP] 쌍이 연속** (`NOTES → PEAK → SCRATCH → SOF-LAN → CHARGE → CHORD`), 값은 100 배 정수(`9234` = `92.34`). **합계 레이더 스코어는 메모리에 없어 6개 합**으로 계산합니다(게임 표기와 일치 확인: SP 559.58 / DP 747.07).
+- **단위** (`PROFILE_NUMERIC_OFFSETS.dan`) — `bm2dx+0x697d1c` 의 int32 `[SP, DP]`. 값은 이름 index(0=七級 … 16=十段, 17=中伝, 18=皆伝), **미취득은 -1**. `danIndexToRankInt()` 로 supabase `sp_rank/dp_rank` 스케일(`idx-6`) 변환.
+- 🔎 **옛 단위 offset 은 애초에 플레이어 값이 아니었습니다** — `0x58d9f8`/`0x58d9f0` 은 **게임의 단위 이름 테이블**(`bm2dx+0x592970`, 七級…皆伝 19개 × 8byte)의 두 칸이었습니다. 모듈 전체에서 `"十段"`(utf16le)은 그 테이블에 **딱 한 번** 나옵니다 → 문자열 스캔으로는 원래 찾을 수 없는 값이었고, 이게 "단위 리딩이 자주 실패" 의 정체였습니다. 기본값에서 제거하고 정수 index 경로로 교체(사용자가 MemoryScanner 로 저장한 슬롯은 계속 존중).
+- **gist `offsets.json` 원격 갱신 지원** — `profile` 맵에 숫자 항목 `radar`/`dan` (`{offset, count, scale?}`) 을 문자열 항목과 **같은 맵에 섞어** 넣을 수 있습니다. 구분은 키 이름이 아니라 모양(`encoding` vs `count`)이고, 타입/런타임 가드는 [shared/profileOffsets.ts](src/shared/profileOffsets.ts) 의 `RemoteProfileMap` · `isRemoteNumericOffset` · `isRemoteStringOffset` 로 통일했습니다(main·preload·renderer 가 같은 타입 사용). 모양이 깨진 항목은 무시하고 코드 상수로 fallback, `null` 이면 읽기 skip — 그대로입니다. 정수용을 별도 키로 둔 이유: 구버전 앱은 `spRank`/`dpRank` 를 무조건 문자열 offset 으로 해석하므로 거기에 정수 주소를 넣으면 쓰레기 문자열을 표시합니다.
+- **[memory:read-ints](src/main/index.ts) IPC 신설** — module-base 상대 offset 에서 int32 배열 읽기(`count` 1~64 clamp). preload `memory.readInts`, 브라우저 원격(PC2)용 [api.ts](src/renderer/src/api.ts) 프록시도 함께.
+- **[useProfile](src/renderer/src/useProfile.ts)** — 5초 polling 에 정수 블록 2번 read 추가. `parseRadarBlock`/`parseDanBlock` 이 **범위 검증 후 이상하면 버립니다**(레이더 0~600.00 밖 / 전부 0 = 로그인 전 / 단위 -1~18 밖). 한쪽 스타일 6개가 전부 0 이면 그 스타일만 숨김 — SP 만/DP 만 하는 유저 대응.
+- **[ProfileCard](src/renderer/src/ProfileCard.tsx)** — 레이더를 SP/DP 두 개 표시(라벨 + 호버 시 6지표 + 합계). 출처는 메모리 우선, 없으면 종전 supabase 값 그대로 fallback(게임 미실행·로그인 전·패치로 offset 깨짐 대비). 단위도 메모리 → supabase 순.
+- 🐛 **게임 datecode 를 첫 매치에서 잡던 버그** ([main/gameBuild.ts](src/main/gameBuild.ts)) — 모듈 앞쪽에 옛 빌드 문자열이 상수로 박혀 있어(`2016090700` / `2026031200` / `2022031600` / `2016051600`) 실행 중인 빌드(`2026080500`) 대신 그걸 반환했습니다. 그 결과 v0.0.104 의 빌드별 offset 분기가 **항상 미매칭(`latest`)** 으로 떨어지고 있었습니다. 이제 전부 훑어 **가장 큰 datecode** 를 고릅니다.
+- **djName / iidxId 상수 갱신** — 2026-08-05 패치로 프로필 struct 가 `+0x6fc0` 이동(`0x690d3e→0x697cfe`, `0x690d30→0x697cf0`). 코드 상수는 최종 fallback 이라 gist 가 살아 있으면 영향 없지만, 오프라인/ gist 다운 시 동작이 달라집니다.
+- 검증 — 실행 중인 INFINITAS(빌드 2026080500) 메모리에서 12지표 + 단위 전부 게임 화면 표기와 일치 확인. gist 에 실제로 올린 `radar`/`dan` 항목만으로(코드 상수 배제) 다시 읽어 같은 값 재현, build 매칭 `confidence=matched` 확인. `typecheck` / `build` 통과.
+
+**Supabase 업로드 확장** — 메모리에서 읽게 된 값 + TSV 에 있었지만 안 보내던 값:
+
+- **단위** — `upsert_user` 의 `p_sp_rank`/`p_dp_rank` 에 실제 값 전송(종전 하드코딩 `null`). 못 읽음/미취득이면 `null` 이라 RPC COALESCE 가 기존값을 보존합니다 — ohSorryAdmin 배치가 넣어둔 값을 지우지 않습니다.
+- **노트레이더 SP/DP** — `user_radars` 에 스타일별(0=SP, 1=DP) upsert(`uploadRadars`). ohSorryAdmin 이 쓰던 **기존 RPC `upsert_user_radar` 를 그대로** 호출합니다(anon 은 테이블 직접 쓰기 권한이 없어 SECURITY DEFINER RPC 경유). 레이더 업로드 실패는 warn 만 남기고 scores 업로드를 막지 않습니다(점수 유실이 더 치명적).
+- **BP / 노트수** — `upsert_scores` row 에 `bp`(TSV missCount) / `note_count`(TSV noteCount) 추가. DP·SP·DP전레벨 세 경로 모두. 음수/비유한수는 `null`(미상) 처리하되, `bp` 는 0 이 유효값(FC)이라 `>= 0`, `note_count` 는 0 이 미상이라 `> 0` 기준으로 다르게 봅니다.
+- ⚠️ **기존 행은 자동으로 안 채워집니다** — `upsert_scores` 는 historical best 미달이면 INSERT 자체를 skip 하므로, 이미 best 가 저장된 채보는 재업로드해도 bp/note_count 가 NULL 로 남습니다(앞으로 기록을 깬 채보만 채워짐). 기존 라이브러리까지 메우려면 **`16_scores_bp_notecount_backfill.sql`**(빈 칸만 채우는 패스 추가, 값 덮어쓰기 아님) 을 적용하세요. `note_count` 는 채보 고정값이라 비면 항상 채우고, `bp` 는 판정 회차 종속이라 저장된 `ex_score` 와 일치할 때만 채웁니다.
+- ⚠️ **`upsert_user_radar` 는 이미 DB 에 있던 함수를 씁니다** — ohSorryAdmin 이 쓰던 `(text, integer, numeric×6)` 버전. 같은 이름으로 함수를 하나 더 만들면 파라미터 이름이 겹쳐 PostgREST 가 후보를 못 고르고(PGRST203) 레이더 업로드가 **HTTP 300 으로 전부 실패**합니다. 실제로 한 번 겪었고 `17_drop_dup_upsert_user_radar.sql` 로 되돌렸습니다. PostgREST 는 인자를 **이름**으로 넘기므로 선언 순서가 달라도 그대로 호출됩니다.
+- **원격모드(`/api/me`)** — `notes_radar`(SP/DP, 오소리웹 형식인 대문자 키 + `total` 합계) 와 `sp_rank`/`dp_rank`(표시 문자열 `十段` / 미취득 `-`) 를 채웁니다. 종전엔 셋 다 `null` 이라 LAN 원격 카드에 레이더·단위가 안 떴습니다. BP/노트수는 `charts_json`/`sp_charts_json` 의 `missCount`/`noteCount` 로 **이미 나가고 있었고**(웹 `shelf.js` 가 그 키를 읽음) 그대로입니다. push 변경감지 sig 에 레이더/단위를 포함 — 안 그러면 메모리 read 가 첫 push 보다 늦게 잡혔을 때 다음 점수 변동까지 카드가 빈 채로 남습니다.
+- 📌 **웹의 supabase 경로에서 BP 를 보려면 DB RPC 도 손봐야 합니다(미적용)** — `make_grid_data` / `make_recent_data` 반환 컬럼에 `bp`/`note_count` 가 없어서(실측 확인) 오소리웹 `viewRowToChart` 는 여전히 `missCount: null` 입니다. 원격모드는 영향 없습니다.
+  - `make_recent_data` 는 `scores` 행 1:1 이라 `s.bp, s.note_count` 두 줄만 추가하면 끝입니다.
+  - ⚠️ `make_grid_data` 는 그렇게 단순하지 않습니다 — 03_scores.sql 본문을 보면 **`lamp` 은 lamp_best 행, `ex_score` 는 ex_best 행**에서 오고 `score_id` 는 둘 중 date 가 더 최근인 쪽입니다. 즉 한 행이 여러 회차의 합성이라 "이 차트의 BP" 가 하나로 정해지지 않고, `score_id` 로 `scores` 를 조인하는 래퍼로는 표시 중인 `ex_score` 와 짝이 안 맞는 BP 가 붙을 수 있습니다. 붙인다면 **ex_best 행의 bp** 여야 하고 본문 수정이 필요합니다. `note_count` 는 채보 고정값이라 어느 쪽이든 안전합니다.
+
+**기타 정리**
+
+- 🐛 **dev 모드 렌더러 백지** ([electron.vite.config.ts](electron.vite.config.ts)) — `commonjsOptions` 는 Rollup 빌드 전용이라 renderer 의 Vite dev 서버는 타지 않습니다. 그래서 dev 에서만 UMD 인 `normTitle.js` 가 변환 없이 ESM 으로 서빙되어 `match.ts` 의 default import 가 *"does not provide an export named 'default'"* 로 실패, 화면이 통째로 비었습니다. `apply: 'serve'` 플러그인으로 CJS 껍데기를 씌워 UMD wrapper 의 Node 분기를 태우고 그 값을 default 로 재노출 — 빌드 결과와 같은 형태를 dev 에서 재현합니다.
+- **`useProfile.ts` 가 git 에서 바이너리로 잡히던 문제** — utf16le 분기의 NUL trim 정규식에 **리터럴 NUL 바이트**가 들어 있었습니다. `\x00` 이스케이프로 바꿔 동작은 그대로 두고 텍스트 파일로 되돌렸습니다(그 전엔 이 파일 diff 가 `Bin ... -> ...` 로만 표시돼 리뷰가 불가능했습니다).
+
 ### v0.0.107 — 2026-08-09 코어 JS·데이터 소스를 gist → Cloudflare R2 로 (CF 통합 §3)
 
 앱이 받는 코어 JS 모듈·데이터 JSON 21종의 소스를 gist raw 에서 **`data.iidx.in`(Cloudflare R2 + Worker)** 로 옮겼다. gist raw 는 `Cache-Control: max-age=300` 고정이라 캐시 정책을 우리가 쥘 수 없었는데, R2 는 Worker 가 쥔다(현재 `max-age=60`) → 데이터 갱신 반영이 빨라진다.

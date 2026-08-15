@@ -12,9 +12,46 @@ type TxMap = Map<string, string> | null | undefined;
 const txIdOf = (title: string, txMap: TxMap): string | null =>
   (txMap ? (txMap.get(norm(title)) ?? null) : null);
 
+// 노트레이더 6지표 (useProfile 이 INFINITAS 메모리에서 읽은 값).
+interface RadarLike {
+  notes: number | null;
+  chord: number | null;
+  peak: number | null;
+  charge: number | null;
+  scratch: number | null;
+  soft: number | null;
+}
+
 interface RemoteProfile {
   iidxId: string | null;
   djName: string | null;
+  // v0.0.108+ — 메모리에서 읽은 노트레이더 / 단위. ProfileInfo 가 그대로 들어온다(구조적 호환).
+  spRadar?: RadarLike | null;
+  dpRadar?: RadarLike | null;
+  spRank?: string | null;   // 표기 문자열 ('十段' 등). 미취득/미확인은 null → '-' 로 내보냄
+  dpRank?: string | null;
+}
+
+// 오소리웹 notes_radar 형식 — 대문자 키 + total(6지표 합).
+//   modules/api.js 의 radarOut 과 1:1 (supabase 경로가 user_radars 로 만드는 것과 같은 모양이어야
+//   원격/서버 어느 쪽이든 카드가 같은 코드로 그려진다). total 컬럼은 DB 에도 없어서 합으로 만든다.
+function toWebRadar(r: RadarLike | null | undefined): Record<string, number> | null {
+  if (!r) return null;
+  const v = (x: number | null | undefined): number =>
+    typeof x === 'number' && Number.isFinite(x) ? x : 0;
+  const out: Record<string, number> = {
+    NOTES: v(r.notes),
+    PEAK: v(r.peak),
+    CHARGE: v(r.charge),
+    CHORD: v(r.chord),
+    SCRATCH: v(r.scratch),
+    'SOF-LAN': v(r.soft),
+  };
+  // 부동소수 오차 정리 (747.0699999999999 → 747.07) — 카드가 그대로 표시할 수 있게.
+  out.total = Number(
+    (out.NOTES + out.PEAK + out.CHARGE + out.CHORD + out.SCRATCH + out['SOF-LAN']).toFixed(2),
+  );
+  return out;
 }
 
 // unclassifiedCharts 는 level 이 빠진 RecInputChart — 공통 타입으로 받아 charts 와 함께 변환.
@@ -85,7 +122,9 @@ function spChartToJson(c: SongChart, txMap?: TxMap): unknown {
 }
 
 // INF 로컬 값(profile + 별값 + 분류/미분류 charts) → 오소리웹 user 객체.
-//   notes_radar / os_pattern_score 는 옵션(null) — 카드 내부 calcWeakness 가 charts_json 으로 패턴 보강.
+//   notes_radar / sp_rank / dp_rank 는 v0.0.108+ 부터 INFINITAS 메모리 값으로 채운다(그 전엔 null).
+//   os_pattern_score 는 여전히 null — 카드 내부 calcWeakness 가 charts_json 으로 패턴을 보강한다.
+//   BP / 노트수는 charts_json 각 항목의 missCount / noteCount 로 이미 나간다(웹 shelf.js 가 그 키를 읽음).
 //   spCharts / spTier12 는 원격모드 SP 표시용 (소스 비종속 — 추후 DB 백필 시 같은 필드 재사용).
 export function buildRemoteUser(
   profile: RemoteProfile,
@@ -107,15 +146,18 @@ export function buildRemoteUser(
     // SP 발광★ — 오소리웹 ?remote SP 모드 카드/서열표 헤더·목록 별값용(없으면 null).
     sp_cpi: spStar && typeof spStar.cpiInt === 'number' ? spStar.cpiInt : null,
     sp_star: spStar && typeof spStar.starRounded === 'number' ? spStar.starRounded : null,
-    sp_rank: null,
-    dp_rank: null,
+    // 단위 — 오소리웹은 supabase 경로에서 rankIntToStr 로 이미 문자열('十段' / 미취득 '-')을 넣어 보낸다.
+    //   원격도 같은 모양이어야 카드가 분기 없이 그린다.
+    sp_rank: profile.spRank ?? '-',
+    dp_rank: profile.dpRank ?? '-',
     series: 'INF',
     played_version: 0,
     charts_json: allCharts.map((c) => toChartJson(c, textageByTitle)),
     // SP — 친 모든 SP 채보(전 레벨/시리즈) + SP12 서열표. 오소리웹이 ?remote 에서 SP 모드로 표시.
     sp_charts_json: Array.isArray(spCharts) ? spCharts.map((c) => spChartToJson(c, textageByTitle)) : [],
     sp_tier12: spTier12 ?? null,
-    notes_radar: null,
+    // 노트레이더 — 메모리에서 읽은 SP/DP. 없으면 null (카드가 레이더 영역을 접는다).
+    notes_radar: { sp: toWebRadar(profile.spRadar), dp: toWebRadar(profile.dpRadar) },
     os_pattern_score: null,
     _ratingData: null,
   };
