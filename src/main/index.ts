@@ -235,30 +235,30 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     try {
       found = findInfinitas(exeName);
       if (!found) return { ok: false, error: `프로세스 "${exeName}" 못 찾음 (게임 실행 중인지 확인)` };
-      const process = found;
-      const results = scanString(process.handle, text);
+      const proc = found;
+      const results = scanString(proc.handle, text);
       const flat = results.flatMap((r) =>
         r.matches.map((abs) => ({
           encoding: r.encoding,
           absolute: '0x' + abs.toString(16),
           // base 기준 상대 offset (음수 가능 — 모듈 밖 메모리)
           relative:
-            (abs >= process.modBaseAddr ? '+0x' : '-0x') +
-            (abs >= process.modBaseAddr
-              ? abs - process.modBaseAddr
-              : process.modBaseAddr - abs
+            (abs >= proc.modBaseAddr ? '+0x' : '-0x') +
+            (abs >= proc.modBaseAddr
+              ? abs - proc.modBaseAddr
+              : proc.modBaseAddr - abs
             ).toString(16),
           // bigint 직렬화 어려워서 string 으로
           relativeRaw:
-            abs >= process.modBaseAddr
-              ? (abs - process.modBaseAddr).toString()
-              : '-' + (process.modBaseAddr - abs).toString(),
+            abs >= proc.modBaseAddr
+              ? (abs - proc.modBaseAddr).toString()
+              : '-' + (proc.modBaseAddr - abs).toString(),
         })),
       );
       return {
         ok: true,
-        modBase: '0x' + process.modBaseAddr.toString(16),
-        modSize: process.modBaseSize,
+        modBase: '0x' + proc.modBaseAddr.toString(16),
+        modSize: proc.modBaseSize,
         results: flat,
       };
     } catch (e) {
@@ -285,7 +285,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     try {
       found = findInfinitas(exeName);
       if (!found) return { ok: false, error: `프로세스 "${exeName}" 못 찾음 (게임 실행 중인지 확인)` };
-      const process = found;
+      const proc = found;
       // 빈 문자열 검색은 NULL 매치 (인코딩별 첫 char 가 0x00) 확인
       const isEmptySearch = text === '';
       // encoding 별 needle (encoded bytes 또는 NULL probe size) 미리 계산
@@ -302,7 +302,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
           const addr = BigInt(m.absolute);
           if (isEmptySearch) {
             const size = nullSizeByEnc[m.encoding] ?? 1;
-            const actual = readBytes(process.handle, addr, size);
+            const actual = readBytes(proc.handle, addr, size);
             // 첫 char 가 모두 NULL byte 면 디코딩 시 "" → keep
             if (actual.every((b) => b === 0)) kept.push(m);
           } else {
@@ -311,7 +311,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
               needle = encodeString(text, m.encoding);
               needleByEnc.set(m.encoding, needle);
             }
-            const actual = readBytes(process.handle, addr, needle.length);
+            const actual = readBytes(proc.handle, addr, needle.length);
             if (actual.equals(needle)) kept.push(m);
           }
         } catch {
@@ -320,8 +320,8 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
       }
       const flat = kept.map((m) => {
         const abs = BigInt(m.absolute);
-        const isAbove = abs >= process.modBaseAddr;
-        const diff = isAbove ? abs - process.modBaseAddr : process.modBaseAddr - abs;
+        const isAbove = abs >= proc.modBaseAddr;
+        const diff = isAbove ? abs - proc.modBaseAddr : proc.modBaseAddr - abs;
         return {
           encoding: m.encoding,
           absolute: m.absolute,
@@ -331,8 +331,8 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
       });
       return {
         ok: true,
-        modBase: '0x' + process.modBaseAddr.toString(16),
-        modSize: process.modBaseSize,
+        modBase: '0x' + proc.modBaseAddr.toString(16),
+        modSize: proc.modBaseSize,
         results: flat,
       };
     } catch (e) {
@@ -355,14 +355,14 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     try {
       found = findInfinitas(exeName);
       if (!found) return { ok: false, error: '프로세스 못 찾음' };
-      const process = found;
+      const proc = found;
       const heapAddr = BigInt(heapAddrStr);
 
       // 1차: 직접 매칭
       const directPtrs = scanForPointer(
-        process.handle,
-        process.modBaseAddr,
-        process.modBaseSize,
+        proc.handle,
+        proc.modBaseAddr,
+        proc.modBaseSize,
         heapAddr,
       );
       // (ptr 위치, struct base = ptr 가리키는 값, valueOffset = heapAddr - struct base)
@@ -373,9 +373,9 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
       if (pointerHits.length === 0) {
         const STRUCT_LOOKBACK = 0x1000n;
         const ranged = scanForPointersInRange(
-          process.handle,
-          process.modBaseAddr,
-          process.modBaseSize,
+          proc.handle,
+          proc.modBaseAddr,
+          proc.modBaseSize,
           heapAddr - STRUCT_LOOKBACK,
           heapAddr,
         );
@@ -397,7 +397,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
       // Reflux offsets 로드 → 가장 가까운 anchor 와 delta 계산
       const refluxOff = await readRefluxOffsets();
       const candidates = pointerHits.map((h) => {
-        const ptrRel = h.ptrAddr - process.modBaseAddr;
+        const ptrRel = h.ptrAddr - proc.modBaseAddr;
         let bestAnchor: { name: string; delta: bigint } | null = null;
         if (refluxOff) {
           for (const [name, anchorRel] of Object.entries(refluxOff.relative)) {
@@ -422,7 +422,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
 
       return {
         ok: true,
-        modBase: '0x' + process.modBaseAddr.toString(16),
+        modBase: '0x' + proc.modBaseAddr.toString(16),
         candidates,
         refluxVersion: refluxOff?.version ?? null,
         // 디버그용: 직접 매칭 / 범위 매칭 각각 몇 개였나

@@ -211,13 +211,25 @@ export async function readIidxIdFresh(): Promise<{
   processMissing: boolean;
   error?: string;
 }> {
-  const result = await readField('iidxId', cachedRemoteProfile);
-  return {
-    ok: result.value != null,
-    iidxId: result.value,
-    processMissing: result.processMissing,
-    error: result.error,
-  };
+  // 예외를 밖으로 흘리지 않는다 — 호출부(tryUpload)가 await 하는데 여기서 reject 되면
+  //   final 트리거에서 upload.finalDone() 까지 못 가 main 이 6초 타임아웃을 기다리고
+  //   마지막 플레이 업로드가 통째로 유실된다. 실패는 ok:false 로만 표현한다.
+  try {
+    const result = await readField('iidxId', cachedRemoteProfile);
+    return {
+      ok: result.value != null,
+      iidxId: result.value,
+      processMissing: result.processMissing,
+      error: result.error,
+    };
+  } catch (e) {
+    return {
+      ok: false,
+      iidxId: null,
+      processMissing: false,
+      error: (e as Error)?.message ?? String(e),
+    };
+  }
 }
 
 export interface ProfileInfo {
