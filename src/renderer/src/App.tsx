@@ -40,7 +40,7 @@ import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { QrConnect } from './QrConnect';
 import { ProfileCard } from './ProfileCard';
-import { useProfile } from './useProfile';
+import { readIidxIdFresh, useProfile } from './useProfile';
 import type { RadarValues } from './NotesRadar';
 import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { buildRemoteUser } from './remoteUser';
@@ -1074,6 +1074,20 @@ export default function App() {
       if (!src || !/^[A-Z]\d{12}$/.test(src) || src !== p.iidxId) {
         console.warn(`${tag} skip: rows 출처 ID(${src}) 미확정/불일치 (현재 ${p.iidxId}) — 새 TSV 덤프 대기`);
         return;
+      }
+      // 메모리 재검증 — 캐시된 profile state 만 믿고 DB 에 쓰지 않는다.
+      //   final 은 게임 종료 뒤 호출되므로 재읽기 실패 시 캐시값으로 마지막 업로드를 진행한다.
+      const fresh = await readIidxIdFresh();
+      if (fresh.ok && fresh.iidxId) {
+        if (fresh.iidxId !== p.iidxId) {
+          console.warn(`${tag} skip: 메모리 재검증 불일치 (state=${p.iidxId} memory=${fresh.iidxId})`);
+          return;
+        }
+      } else if (trigger !== 'final') {
+        console.warn(`${tag} skip: IIDX ID 메모리 재검증 실패 (processMissing=${fresh.processMissing} err=${fresh.error ?? '-'})`);
+        return;
+      } else {
+        console.log(`${tag} 메모리 재검증 생략 — 게임 종료 후 마지막 업로드 (캐시 ${p.iidxId} 사용)`);
       }
       // ★ 추정(s) / dp12Match(m) 가 없어도 — SP 전용·DP 저레벨 전용 유저 — 업로드 진행.
       //   iidxId + djName 만 있으면(위 가드 통과) users row 등록 + 가진 scores(SP10~12 / DP11~12) 적재.

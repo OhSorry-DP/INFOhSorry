@@ -149,14 +149,14 @@ const api = {
       relativeOffset: string,
       encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
       maxBytes?: number,
-    ): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ): Promise<{ ok: boolean; text?: string; error?: string; processMissing?: boolean }> =>
       ipcRenderer.invoke('memory:read-string', exeName, relativeOffset, encoding, maxBytes),
     // int32 배열 읽기 (노트레이더 / 단위) — count 는 main 에서 1~64 로 clamp.
     readInts: (
       exeName: string,
       relativeOffset: string,
       count: number,
-    ): Promise<{ ok: boolean; values?: number[]; error?: string }> =>
+    ): Promise<{ ok: boolean; values?: number[]; error?: string; processMissing?: boolean }> =>
       ipcRenderer.invoke('memory:read-ints', exeName, relativeOffset, count),
     findAnchor: (
       exeName: string,
@@ -182,7 +182,7 @@ const api = {
       encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
       maxBytes?: number,
       valueOffset?: string,
-    ): Promise<{ ok: boolean; text?: string; error?: string }> =>
+    ): Promise<{ ok: boolean; text?: string; error?: string; processMissing?: boolean }> =>
       ipcRenderer.invoke(
         'memory:read-via-anchor',
         exeName,

@@ -116,12 +116,12 @@ declare global {
           relativeOffset: string,
           encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
           maxBytes?: number,
-        ) => Promise<{ ok: boolean; text?: string; error?: string }>;
+        ) => Promise<{ ok: boolean; text?: string; error?: string; processMissing?: boolean }>;
         readInts: (
           exeName: string,
           relativeOffset: string,
           count: number,
-        ) => Promise<{ ok: boolean; values?: number[]; error?: string }>;
+        ) => Promise<{ ok: boolean; values?: number[]; error?: string; processMissing?: boolean }>;
         findAnchor: (
           exeName: string,
           heapAddr: string,
@@ -146,7 +146,7 @@ declare global {
           encoding: 'utf16le' | 'utf8' | 'ascii' | 'shiftjis',
           maxBytes?: number,
           valueOffset?: string,
-        ) => Promise<{ ok: boolean; text?: string; error?: string }>;
+        ) => Promise<{ ok: boolean; text?: string; error?: string; processMissing?: boolean }>;
       };
       shell: {
         showInFolder: (path: string) => Promise<{ ok: boolean }>;

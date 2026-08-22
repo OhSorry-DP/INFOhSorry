@@ -27,6 +27,10 @@ import type { RefluxState } from '../../shared/types';
 //   문자열 필드({offset,encoding,maxBytes})와 숫자 필드({offset,count,scale})가 같은 맵에 섞여 온다.
 type RemoteProfile = RemoteProfileMap | null;
 
+// gist profile offsets 모듈 캐시 — hook 이 마운트 시 채우고, hook 밖(업로드 재검증)에서도 참조한다.
+//   아직 안 채워졌으면 null → PROFILE_OFFSETS 코드 상수 fallback (hook 의 초기 동작과 동일).
+let cachedRemoteProfile: RemoteProfile = null;
+
 const EXE_NAME = 'bm2dx.exe';
 const POLL_INTERVAL_MS = 5000;
 
@@ -167,9 +171,15 @@ function effective(key: FieldKey, remote: RemoteProfile): SavedSlot | null {
   };
 }
 
-async function readField(key: FieldKey, remote: RemoteProfile): Promise<string | null> {
+interface ReadFieldResult {
+  value: string | null;
+  processMissing: boolean;
+  error?: string;
+}
+
+async function readField(key: FieldKey, remote: RemoteProfile): Promise<ReadFieldResult> {
   const slot = effective(key, remote);
-  if (!slot) return null;
+  if (!slot) return { value: null, processMissing: false, error: '프로필 offset 없음' };
   const maxBytes = pickDef(key, remote)?.maxBytes ?? 64;
   const r =
     slot.mode === 'anchor'
@@ -182,7 +192,7 @@ async function readField(key: FieldKey, remote: RemoteProfile): Promise<string |
           slot.valueOffset,
         )
       : await window.infohsorry.memory.readString(EXE_NAME, slot.offset, slot.encoding, maxBytes);
-  if (!r.ok || !r.text) return null;
+  if (!r.ok || !r.text) return { value: null, processMissing: r.processMissing ?? false, error: r.error };
   // null / 비정상 문자 trim — ascii 의 경우 0x20 미만은 제어문자
   let t = r.text;
   if (slot.encoding === 'ascii') {
@@ -190,7 +200,24 @@ async function readField(key: FieldKey, remote: RemoteProfile): Promise<string |
   } else {
     t = t.replace(/\x00/g, '').trim();
   }
-  return t || null;
+  return { value: t || null, processMissing: false };
+}
+
+// 업로드 직전 재검증용 — React state 를 거치지 않고 그 순간의 메모리에서 IIDX ID 를 직접 읽는다.
+//   processMissing = 게임이 이미 종료됨(정상 상황). 호출부가 fail-open/closed 를 판단한다.
+export async function readIidxIdFresh(): Promise<{
+  ok: boolean;
+  iidxId: string | null;
+  processMissing: boolean;
+  error?: string;
+}> {
+  const result = await readField('iidxId', cachedRemoteProfile);
+  return {
+    ok: result.value != null,
+    iidxId: result.value,
+    processMissing: result.processMissing,
+    error: result.error,
+  };
 }
 
 export interface ProfileInfo {
@@ -232,7 +259,10 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
       ?.getProfile?.()
       .then((r) => {
         // main 이 게임 datecode 로 고른 build 의 profile — 빌드가 안 맞으면 main 이 이미 경고를 남긴다.
-        if (alive && r) remoteRef.current = r.profile ?? null;
+        if (alive && r) {
+          remoteRef.current = r.profile ?? null;
+          cachedRemoteProfile = r.profile ?? null;
+        }
       })
       .catch(() => {
         /* gist 실패 — 코드 상수 fallback */
@@ -269,32 +299,47 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
         const remote = remoteRef.current;
         // 단위/레이더는 정수 블록 2번 read 로 끝난다 (문자열 필드처럼 인코딩별 시도 불필요).
         // 문자열 단위 슬롯은 사용자가 MemoryScanner 로 저장했을 때만 읽는다 (기본 offset 은 이제 없음).
-        const [dj, id, radarInts, danInts, legacySp, legacyDp] = await Promise.all([
+        const [djR, idR, radarR, danR, legacySpR, legacyDpR] = await Promise.allSettled([
           readField('djName', remote),
           readField('iidxId', remote),
           readNumeric('radar', remote),
           readNumeric('dan', remote),
-          loadSaved('spRank') ? readField('spRank', remote) : Promise.resolve(null),
-          loadSaved('dpRank') ? readField('dpRank', remote) : Promise.resolve(null),
+          loadSaved('spRank') ? readField('spRank', remote) : Promise.resolve({ value: null, processMissing: false }),
+          loadSaved('dpRank') ? readField('dpRank', remote) : Promise.resolve({ value: null, processMissing: false }),
         ]);
         if (!alive) return;
-        if (dj !== djName) setDjName(dj);
-        if (id !== iidxId) setIidxId(id);
-        const dan = parseDanBlock(danInts);
-        if (dan.sp !== spDan) setSpDan(dan.sp);
-        if (dan.dp !== dpDan) setDpDan(dan.dp);
-        if (legacySp !== legacySpRank) setLegacySpRank(legacySp);
-        if (legacyDp !== legacyDpRank) setLegacyDpRank(legacyDp);
+        // stale closure 방지 — 이 effect 는 deps 가 [refluxState.stage] 뿐이라 djName 등 state 를
+        //   생성 시점 값으로 캡처한다. 원시값의 동일 setState 는 React 가 bailout 한다.
+        if (djR.status === 'fulfilled') setDjName(djR.value.value);
+        else console.warn('[useProfile] djName 읽기 실패:', djR.reason);
+        if (idR.status === 'fulfilled') setIidxId(idR.value.value);
+        else console.warn('[useProfile] iidxId 읽기 실패:', idR.reason);
+        if (danR.status === 'fulfilled') {
+          const dan = parseDanBlock(danR.value);
+          setSpDan(dan.sp);
+          setDpDan(dan.dp);
+        } else {
+          console.warn('[useProfile] 단위 읽기 실패:', danR.reason);
+        }
+        if (legacySpR.status === 'fulfilled') setLegacySpRank(legacySpR.value.value);
+        else console.warn('[useProfile] SP 단위 읽기 실패:', legacySpR.reason);
+        if (legacyDpR.status === 'fulfilled') setLegacyDpRank(legacyDpR.value.value);
+        else console.warn('[useProfile] DP 단위 읽기 실패:', legacyDpR.reason);
         // 레이더는 객체라 값이 같아도 매번 새 참조 → JSON 시그니처(ref) 로 비교해야 리렌더가 안 샌다.
         //   (이 effect 는 stage 에만 의존해서 state 를 stale 하게 캡처하므로 state 비교로는 안 된다.)
-        const nextRadar = parseRadarBlock(radarInts, pickNumericDef('radar', remote)?.scale);
-        const nextJson = JSON.stringify(nextRadar);
-        if (nextJson !== radarJsonRef.current) {
-          radarJsonRef.current = nextJson;
-          setRadar(nextRadar);
+        if (radarR.status === 'fulfilled') {
+          const nextRadar = parseRadarBlock(radarR.value, pickNumericDef('radar', remote)?.scale);
+          const nextJson = JSON.stringify(nextRadar);
+          if (nextJson !== radarJsonRef.current) {
+            radarJsonRef.current = nextJson;
+            setRadar(nextRadar);
+          }
+        } else {
+          console.warn('[useProfile] 레이더 읽기 실패:', radarR.reason);
         }
-      } catch {
-        // 무시 — 다음 poll 에서 재시도
+      } catch (e) {
+        // 다음 poll 에서 재시도 — 원인은 남긴다 (재현 진단용)
+        console.warn('[useProfile] 프로필 폴링 실패:', (e as Error)?.message ?? e);
       }
       if (alive) timer = window.setTimeout(tick, POLL_INTERVAL_MS);
     };
