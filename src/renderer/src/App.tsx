@@ -850,7 +850,8 @@ export default function App() {
     charts: { title: string; diff: string; lampNum: number }[],
     ratingData: RatingData,
     ereterData: { charts: unknown[]; players?: Record<string, number> },
-  ) => { ereterStar?: number; ohsorryStar?: number; tier?: string; nFit12?: number };
+    opts?: { prevStar?: number },
+  ) => { ereterStar?: number; ereterStarRaw?: number; ratcheted?: boolean; ohsorryStar?: number; tier?: string; nFit12?: number };
   const [onlyOSR2eLib, setOnlyOSR2eLib] = useState<{ inferEreter: InferEreterFn; version: string } | null>(null);
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -886,20 +887,36 @@ export default function App() {
     })();
   }, []);
 
+  // 별값 단조 래칫의 하한. ① supabase 저장값(다른 세션에서 올린 값) ② 이번 세션에서 계산된 최고값.
+  //   모델(onlyOSRtoEreter)은 미플레이 곡을 새로 클리어하는 경우를 원리적으로 못 막는다 — 클리어율의
+  //   분모가 "친 곡 수"라 신규곡이 들어오면 분모도 같이 늘기 때문. 그래서 표시단에서 덮는다.
+  //   계수/난이도축 재배포 후 재기준화는 래칫을 안 타는 backfillStars.js --apply 로 한다.
+  const [starFloor, setStarFloor] = useState<number | null>(null);
+
   // 표시 별값(ereterStar) + 추천 native base(ohsorryStar) 를 inferEreter 한 번에 산출.
   const dp12StarResult = useMemo<StarResult | null>(() => {
     if (!onlyOSR2eLib || !ratingData || !ereterData || osrChartsInput.length === 0) return null;
     try {
-      const r = onlyOSR2eLib.inferEreter(osrChartsInput, ratingData, { charts: ereterData.charts, players: {} });
+      const r = onlyOSR2eLib.inferEreter(
+        osrChartsInput, ratingData, { charts: ereterData.charts, players: {} },
+        starFloor != null ? { prevStar: starFloor } : undefined,
+      );
       if (typeof r.ereterStar !== 'number') return null;
       const nativeStar = typeof r.ohsorryStar === 'number' ? r.ohsorryStar : r.ereterStar;
-      console.log(`[★] ereterStar=${r.ereterStar.toFixed(2)} native(onlyOSR)=${nativeStar.toFixed(2)} tier=${r.tier ?? '-'} nFit12=${r.nFit12 ?? '?'}`);
-      return { star: r.ereterStar, nativeStar, tier: r.tier ?? null, nFit12: r.nFit12 ?? null };
+      const raw = typeof r.ereterStarRaw === 'number' ? r.ereterStarRaw : r.ereterStar;
+      console.log(`[★] ereterStar=${r.ereterStar.toFixed(2)}${r.ratcheted ? ` (래칫 — 계산값 ${raw.toFixed(2)})` : ''} native(onlyOSR)=${nativeStar.toFixed(2)} tier=${r.tier ?? '-'} nFit12=${r.nFit12 ?? '?'}`);
+      return { star: r.ereterStar, starRaw: raw, ratcheted: r.ratcheted, nativeStar, tier: r.tier ?? null, nFit12: r.nFit12 ?? null };
     } catch (e) {
       console.warn('[★] inferEreter 실패:', (e as Error).message);
       return null;
     }
-  }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput]);
+  }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor]);
+
+  // 세션 래칫 — 계산값이 하한보다 높으면 하한을 끌어올린다(단조 증가라 루프는 한 번에 수렴).
+  useEffect(() => {
+    const s = dp12StarResult?.star;
+    if (typeof s === 'number') setStarFloor((f) => (f == null || s > f ? s : f));
+  }, [dp12StarResult]);
 
   // 추천 baseStar = 표시 별값(ereterStar) 그대로 사용.
   // SP 대표 실력값(発狂★相当) — sp12 클리어 × cpi.json.
@@ -1020,15 +1037,18 @@ export default function App() {
   // 유저 공개 정보 (DP 노트레이더 + SP/DP 단위) — supabase 에서 iidxId 감지 시 1회 fetch.
   // 메모리 리딩이 단위를 못 가져오는 케이스가 있어 supabase 저장값 (getInfRadar.js 가 eagate djdata 에서 채움) 으로 보강.
   // 데이터 없는 필드는 ProfileCard 가 영역 자체 숨김.
-  const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, spRank: null, dpRank: null });
+  const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, star: null, spRank: null, dpRank: null });
   useEffect(() => {
     if (!profile.iidxId || !/^[A-Z]\d{12}$/.test(profile.iidxId)) {
-      setUserPublic({ dpRadar: null, spRank: null, dpRank: null });
+      setUserPublic({ dpRadar: null, star: null, spRank: null, dpRank: null });
       return;
     }
     let cancelled = false;
     fetchUserPublic(profile.iidxId).then((r) => {
-      if (!cancelled) setUserPublic(r);
+      if (cancelled) return;
+      setUserPublic(r);
+      // 저장된 별값을 래칫 하한으로 채택 (다른 세션/본체 크롤로 올라간 값 반영).
+      if (typeof r.star === 'number') setStarFloor((f) => (f == null || r.star! > f ? r.star! : f));
     });
     return () => { cancelled = true; };
   }, [profile.iidxId]);

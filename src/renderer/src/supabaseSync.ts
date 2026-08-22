@@ -197,11 +197,12 @@ export interface DpRadarRow {
 // 채워두는 주체: ohSorryAdmin/getInfRadar.js (INF 유저 대상 batch).
 export interface UserPublicInfo {
   dpRadar: DpRadarRow | null;
+  star: number | null;     // 저장된 별값 — 별값 단조 래칫의 하한으로 쓴다
   spRank: number | null;   // int 매핑 — setup_users.sql 의 매핑 (12=皆伝 / 11=中伝 / 10~1=十段~初段 / 0=一級 / -8~-1=九級~二級)
   dpRank: number | null;
 }
 
-const EMPTY_PUBLIC: UserPublicInfo = { dpRadar: null, spRank: null, dpRank: null };
+const EMPTY_PUBLIC: UserPublicInfo = { dpRadar: null, star: null, spRank: null, dpRank: null };
 
 // supabase user_radars (DP) + users (sp_rank/dp_rank) 를 병렬 fetch.
 // 둘 중 한 쪽이 비어도 다른 쪽은 채워서 반환 (부분 데이터 OK). 네트워크 실패 / 데이터 없음 → 그 필드만 null.
@@ -218,12 +219,12 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
   const userUrl =
     `${SUPABASE_URL}/rest/v1/users` +
     `?iidx_id=eq.${encodeURIComponent(id)}` +
-    `&select=sp_rank,dp_rank` +
+    `&select=sp_rank,dp_rank,star` +
     `&limit=1`;
 
   const [radarResult, userResult] = await Promise.allSettled([
     fetch(radarUrl, { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as DpRadarRow[] : []),
-    fetch(userUrl,  { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as Array<{ sp_rank: number | null; dp_rank: number | null }> : []),
+    fetch(userUrl,  { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as Array<{ sp_rank: number | null; dp_rank: number | null; star: number | null }> : []),
   ]);
 
   let dpRadar: DpRadarRow | null = null;
@@ -238,13 +239,15 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
 
   let spRank: number | null = null;
   let dpRank: number | null = null;
+  let star: number | null = null;
   if (userResult.status === 'fulfilled' && userResult.value.length > 0) {
     const u = userResult.value[0];
     spRank = typeof u.sp_rank === 'number' ? u.sp_rank : null;
     dpRank = typeof u.dp_rank === 'number' ? u.dp_rank : null;
+    star = typeof u.star === 'number' ? u.star : null;
   }
 
-  return { dpRadar, spRank, dpRank };
+  return { dpRadar, star, spRank, dpRank };
 }
 
 export interface UploadInput {

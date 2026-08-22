@@ -2,6 +2,16 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.110 — 2026-08-22 별값이 내려가지 않도록 (계수 재fit + 단조 래칫)
+
+"많이 깼는데 ★가 4.77 → 4.76 으로 줄었다" 는 문제를 잡았다. 원인은 별값 모델 계수 5개의 부호가 뒤집혀 있어서, 클리어를 추가하면 값이 내려가는 경로가 실재했던 것이다.
+
+- **별값 계수 교체** — gist 의 `onlyOSRtoEreter` v0.0.4 를 그대로 받는다(앱 재빌드와 무관하게 런타임 로드). ereter 원시 3,375명으로 재fit + 비음수 제약. 정확도도 같이 올라 CV MAE 0.342 → 0.287. 자세한 내용은 [ohSorryRating CHANGELOG](https://github.com/OhSorry-DP/ohSorryRating/blob/main/CHANGELOG.md).
+- **표시 별값 단조 래칫** — supabase 저장값과 이번 세션 계산 최고값을 하한으로 잡아, 플레이 중 ★가 내려가지 않는다. 미플레이 곡을 새로 클리어하는 경우는 모델로 못 막아서(클리어율 분모가 "친 곡 수") 표시단에서 덮는다.
+- `fetchUserPublic` 이 `users.star` 를 같이 받아온다 — 다른 세션이나 본체 크롤로 올라간 값도 하한에 반영된다.
+- native(추천 baseStar)는 래칫 대상이 아니다 — 고착되면 추천 난이도가 같이 굳는다.
+- 검증: `npm run typecheck`, `npm run build`.
+
 ### v0.0.109 — 2026-08-22 게임 재기동 뒤 프로필 미인식 및 업로드 안전성 보완
 
 - **프로필 폴링 stale closure 수정** — 게임 재기동 시 같은 DJ NAME/IIDX ID가 다시 읽혀도 `null` 상태에 고착되지 않도록 원시 프로필 state를 매 tick 반영하고, IPC 일부 실패는 해당 필드의 직전 값을 유지합니다.

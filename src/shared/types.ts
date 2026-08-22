@@ -32,7 +32,9 @@ export interface SongRow {
 //   nativeStar: ohsorryStar (onlyOSR 전체곡 native 50%, 본체 native_star)
 //   tier: OSR13.5 tier 라벨 / nFit12: lv12 fit 곡 수 (디버그)
 export interface StarResult {
-  star: number;
+  star: number;          // 표시 별값 — 단조 래칫 적용 후 (내려가지 않음)
+  starRaw?: number;      // 래칫 전 원 계산값 (진단용)
+  ratcheted?: boolean;   // 래칫이 실제로 걸렸는지
   nativeStar?: number;
   tier?: string | null;
   nFit12?: number | null;
