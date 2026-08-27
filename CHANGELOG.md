@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.111 — 2026-08-27 사용자 r★ 계산 및 Supabase 업로드
+
+- 크롤러와 동일한 공용 `userRateStar.js`의 `inferUserRStar()` 커널로 INF DP EX SCORE와 노트수에서 사용자 r★를 계산합니다.
+- `ohSorryRating.json`의 `rateStar.scale`과 곡별 `rStarA`/`rStarAa`/`rStarAaa`/`rStarMaxm`을 그대로 사용합니다.
+- Supabase의 기존 `users.r_star`를 단조 래칫 하한으로 사용하고, 산출 성공 시 `upsert_user.p_r_star`로 저장합니다. 표본 부족·로드 실패·계산 실패 시에는 `null`을 보내 기존 값을 보존합니다.
+- 검증: `npm run typecheck`, `npm run build`.
+
 ### v0.0.110 — 2026-08-22 별값이 내려가지 않도록 (계수 재fit + 단조 래칫)
 
 "많이 깼는데 ★가 4.77 → 4.76 으로 줄었다" 는 문제를 잡았다. 원인은 별값 모델 계수 5개의 부호가 뒤집혀 있어서, 클리어를 추가하면 값이 내려가는 경로가 실재했던 것이다.

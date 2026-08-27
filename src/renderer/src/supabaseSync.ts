@@ -198,11 +198,12 @@ export interface DpRadarRow {
 export interface UserPublicInfo {
   dpRadar: DpRadarRow | null;
   star: number | null;     // 저장된 별값 — 별값 단조 래칫의 하한으로 쓴다
+  rStar: number | null;    // 저장된 r★ — userRateStar 단조 래칫의 하한으로 쓴다
   spRank: number | null;   // int 매핑 — setup_users.sql 의 매핑 (12=皆伝 / 11=中伝 / 10~1=十段~初段 / 0=一級 / -8~-1=九級~二級)
   dpRank: number | null;
 }
 
-const EMPTY_PUBLIC: UserPublicInfo = { dpRadar: null, star: null, spRank: null, dpRank: null };
+const EMPTY_PUBLIC: UserPublicInfo = { dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null };
 
 // supabase user_radars (DP) + users (sp_rank/dp_rank) 를 병렬 fetch.
 // 둘 중 한 쪽이 비어도 다른 쪽은 채워서 반환 (부분 데이터 OK). 네트워크 실패 / 데이터 없음 → 그 필드만 null.
@@ -219,12 +220,12 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
   const userUrl =
     `${SUPABASE_URL}/rest/v1/users` +
     `?iidx_id=eq.${encodeURIComponent(id)}` +
-    `&select=sp_rank,dp_rank,star` +
+    `&select=sp_rank,dp_rank,star,r_star` +
     `&limit=1`;
 
   const [radarResult, userResult] = await Promise.allSettled([
     fetch(radarUrl, { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as DpRadarRow[] : []),
-    fetch(userUrl,  { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as Array<{ sp_rank: number | null; dp_rank: number | null; star: number | null }> : []),
+    fetch(userUrl,  { headers: HEADERS }).then(async (r) => r.ok ? (await r.json()) as Array<{ sp_rank: number | null; dp_rank: number | null; star: number | null; r_star: number | null }> : []),
   ]);
 
   let dpRadar: DpRadarRow | null = null;
@@ -240,20 +241,23 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
   let spRank: number | null = null;
   let dpRank: number | null = null;
   let star: number | null = null;
+  let rStar: number | null = null;
   if (userResult.status === 'fulfilled' && userResult.value.length > 0) {
     const u = userResult.value[0];
     spRank = typeof u.sp_rank === 'number' ? u.sp_rank : null;
     dpRank = typeof u.dp_rank === 'number' ? u.dp_rank : null;
     star = typeof u.star === 'number' ? u.star : null;
+    rStar = typeof u.r_star === 'number' ? u.r_star : null;
   }
 
-  return { dpRadar, star, spRank, dpRank };
+  return { dpRadar, star, rStar, spRank, dpRank };
 }
 
 export interface UploadInput {
   appVersion: string; // package.json version, e.g. '0.0.9'
   profile: ProfileInfo;
   starResult: StarResult | null; // null = ★ 미산출 (SP 전용·DP 저레벨 전용 유저) → users.star = null
+  rStar?: number | null; // 사용자 r★. null = 미산출/표본부족 → RPC COALESCE 로 기존값 보존
   charts: RecInputChart[]; // dp12Match.charts (★11.6~12.7 ereter 매칭된 차트) + unclassified 도 합쳐 올림
   unclassifiedCharts?: Omit<RecInputChart, 'level'>[];
   // SP 차트 (전체) — gameLevel 10~12 만 추려 play_style:0 으로 함께 업로드.
@@ -340,7 +344,7 @@ async function uploadRadars(iidxIdNorm: string, profile: ProfileInfo): Promise<v
 }
 
 export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; error?: string }> {
-  const { appVersion, profile, starResult, charts, unclassifiedCharts, ereterStar, spCpi, spStar } = input;
+  const { appVersion, profile, starResult, rStar, charts, unclassifiedCharts, ereterStar, spCpi, spStar } = input;
 
   // 원격 service status — uploadEnabled === false 면 upload skip
   const status = await window.infohsorry.serviceStatus.get();
@@ -362,7 +366,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const spRankVal = typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
   const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
   try {
-    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
+    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
     const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user`, {
       method: 'POST',
       headers: HEADERS,
@@ -377,6 +381,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         p_dp_rank: dpRankVal,
         p_sp_cpi: spCpiVal,    // SP 대표 실력값(CPI). null → COALESCE 보존
         p_sp_star: spStarVal,  // 発狂★相当. null → COALESCE 보존
+        p_r_star: typeof rStar === 'number' && Number.isFinite(rStar) ? Number(rStar.toFixed(2)) : null,
       }),
     });
     if (!userRes.ok) {

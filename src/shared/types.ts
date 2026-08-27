@@ -266,12 +266,22 @@ export interface RatingChart {
   nEcCleared?: number | null;
   nHcCleared?: number | null;
   nPlayed?: number | null;
+  rStarA?: number | null;
+  rStarAa?: number | null;
+  rStarAaa?: number | null;
+  rStarMaxm?: number | null;
+  rStarMaxmEstimated?: number | null;
 }
 
 export interface RatingData {
   generatedAt: string;
   source: string;
   ratings: RatingChart[];
+  rateStar?: {
+    scale?: {
+      unit?: number;
+    } | null;
+  } | null;
 }
 
 export interface RatingGetResult {

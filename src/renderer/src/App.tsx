@@ -36,6 +36,23 @@ interface SpSkillLib {
   // sp_star 게이지 보정 커널(신규). 구 gist 엔 없을 수 있어 옵셔널 — 호출부에서 fallback.
   computeSpStarGuarded?: (charts: SpChartIn[], cpi: SpCpiRow[], opts: { normFn: (s: string) => string }) => SpSkillResult;
 }
+type RStarChartIn = { title: string; diff: string; exScore: number; noteCount: number };
+interface UserRStarResult {
+  rStar: number | null;
+  rStarRaw: number | null;
+  ratcheted: boolean;
+  method?: string;
+  reason?: string;
+  nPairs: number;
+  nCharts: number;
+}
+interface UserRateStarLib {
+  inferUserRStar: (
+    charts: RStarChartIn[],
+    ratingData: RatingData,
+    opts: { normFn: (s: string) => string; scale: { unit?: number } | null; prevRStar: number | null },
+  ) => UserRStarResult;
+}
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { QrConnect } from './QrConnect';
@@ -853,6 +870,7 @@ export default function App() {
     opts?: { prevStar?: number },
   ) => { ereterStar?: number; ereterStarRaw?: number; ratcheted?: boolean; ohsorryStar?: number; tier?: string; nFit12?: number };
   const [onlyOSR2eLib, setOnlyOSR2eLib] = useState<{ inferEreter: InferEreterFn; version: string } | null>(null);
+  const [userRateStarLib, setUserRateStarLib] = useState<UserRateStarLib | null>(null);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     (async () => {
@@ -874,6 +892,17 @@ export default function App() {
       } catch (e) {
         console.warn('[★] 별값 lib 로드 실패:', (e as Error).message);
       }
+      try {
+        const lib = (await loadGistModule(`${LIB_BASE}/userRateStar.js`, 'userRateStar')) as UserRateStarLib | undefined;
+        if (lib && typeof lib.inferUserRStar === 'function') {
+          setUserRateStarLib(lib);
+          console.log('[r★] userRateStar 로드');
+        } else {
+          console.warn('[r★] userRateStar.inferUserRStar 미등록 — r★ N/A');
+        }
+      } catch (e) {
+        console.warn('[r★] userRateStar 로드 실패:', (e as Error).message);
+      }
       // SP 대표 실력값 — cpiStar → spSkillCpi(window.cpiStar 의존) 순 로드 + cpi.json. 실패해도 DP★ 무관.
       try {
         await loadGistModule(`${LIB_BASE}/cpiStar.js`, 'cpiStar');
@@ -892,6 +921,7 @@ export default function App() {
   //   분모가 "친 곡 수"라 신규곡이 들어오면 분모도 같이 늘기 때문. 그래서 표시단에서 덮는다.
   //   계수/난이도축 재배포 후 재기준화는 래칫을 안 타는 backfillStars.js --apply 로 한다.
   const [starFloor, setStarFloor] = useState<number | null>(null);
+  const [rStarFloor, setRStarFloor] = useState<number | null>(null);
 
   // 표시 별값(ereterStar) + 추천 native base(ohsorryStar) 를 inferEreter 한 번에 산출.
   const dp12StarResult = useMemo<StarResult | null>(() => {
@@ -917,6 +947,39 @@ export default function App() {
     const s = dp12StarResult?.star;
     if (typeof s === 'number') setStarFloor((f) => (f == null || s > f ? s : f));
   }, [dp12StarResult]);
+
+  // 사용자 r★ — 크롤러와 동일한 userRateStar.inferUserRStar 커널에 INF DP EX SCORE/노트수를 전달한다.
+  // 계산 실패·표본부족이면 null로 두어 업로드 RPC의 COALESCE가 기존 users.r_star를 보존한다.
+  const userRStar = useMemo<number | null>(() => {
+    if (!userRateStarLib || !ratingData || dpAllCharts.length === 0) return null;
+    try {
+      const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
+      const charts = dpAllCharts.map((c) => ({
+        title: c.title,
+        diff: slotToDiff(c.slot),
+        exScore: c.exScore,
+        noteCount: c.noteCount,
+      }));
+      const result = userRateStarLib.inferUserRStar(charts, ratingData, {
+        normFn,
+        scale: ratingData.rateStar?.scale ?? null,
+        prevRStar: rStarFloor,
+      });
+      if (typeof result.rStar !== 'number' || !Number.isFinite(result.rStar)) {
+        console.warn('[r★] 산출 불가 — 기존 users.r_star 보존:', result.reason || 'unknown');
+        return null;
+      }
+      console.log(`[r★] ${result.rStar.toFixed(2)} (${result.method || result.reason || 'unknown'}, charts ${result.nCharts})`);
+      return result.rStar;
+    } catch (e) {
+      console.warn('[r★] inferUserRStar 실패 — 기존 users.r_star 보존:', (e as Error).message);
+      return null;
+    }
+  }, [userRateStarLib, ratingData, dpAllCharts, rStarFloor]);
+
+  useEffect(() => {
+    if (typeof userRStar === 'number') setRStarFloor((f) => (f == null || userRStar > f ? userRStar : f));
+  }, [userRStar]);
 
   // 추천 baseStar = 표시 별값(ereterStar) 그대로 사용.
   // SP 대표 실력값(発狂★相当) — sp12 클리어 × cpi.json.
@@ -984,6 +1047,7 @@ export default function App() {
       rowsSourceIidxIdRef.current = null;
       spawnTsvBaselineRef.current = null;   // baseline 리셋 — 정리 후 tracker.tsv truncate → 다음 새 덤프를 fresh 로 인정
       osrAccumRef.current.clear();          // 별값 누적 리셋 — 유저 전환 시 이전 유저 클리어가 섞이지 않게
+      setRStarFloor(null);                  // r★ 래칫도 계정별 값 — 이전 유저 하한이 섞이지 않게
       initialUploadDoneRef.current = false;
       if (!IS_BROWSER_REMOTE && tsvPath) {
         void (async () => {
@@ -1037,10 +1101,10 @@ export default function App() {
   // 유저 공개 정보 (DP 노트레이더 + SP/DP 단위) — supabase 에서 iidxId 감지 시 1회 fetch.
   // 메모리 리딩이 단위를 못 가져오는 케이스가 있어 supabase 저장값 (getInfRadar.js 가 eagate djdata 에서 채움) 으로 보강.
   // 데이터 없는 필드는 ProfileCard 가 영역 자체 숨김.
-  const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, star: null, spRank: null, dpRank: null });
+  const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
   useEffect(() => {
     if (!profile.iidxId || !/^[A-Z]\d{12}$/.test(profile.iidxId)) {
-      setUserPublic({ dpRadar: null, star: null, spRank: null, dpRank: null });
+      setUserPublic({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
       return;
     }
     let cancelled = false;
@@ -1049,6 +1113,7 @@ export default function App() {
       setUserPublic(r);
       // 저장된 별값을 래칫 하한으로 채택 (다른 세션/본체 크롤로 올라간 값 반영).
       if (typeof r.star === 'number') setStarFloor((f) => (f == null || r.star! > f ? r.star! : f));
+      if (typeof r.rStar === 'number') setRStarFloor((f) => (f == null || r.rStar! > f ? r.rStar! : f));
     });
     return () => { cancelled = true; };
   }, [profile.iidxId]);
@@ -1067,8 +1132,8 @@ export default function App() {
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts });
-  uploadStateRef.current = { profile, dp12StarResult, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts };
+  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts });
+  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts };
   // Analysis 의 vec 재계산 + supabase upsert 트리거 — 동일 timer 가 star upload 후 증가시킴
   const [vecRecomputeKey, setVecRecomputeKey] = useState(0);
 
@@ -1076,7 +1141,7 @@ export default function App() {
     if (IS_BROWSER_REMOTE) return;
 
     const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<void> => {
-      const { profile: p, dp12StarResult: s, spStarResult: sp, dp12Match: m, spAllCharts: spAll, dpAllCharts: dpAll, allTsvCharts: allTsv } = uploadStateRef.current;
+      const { profile: p, dp12StarResult: s, userRStar: rs, spStarResult: sp, dp12Match: m, spAllCharts: spAll, dpAllCharts: dpAll, allTsvCharts: allTsv } = uploadStateRef.current;
       const tag = `[supabase:${trigger}]`;
       if (!p.iidxId || !p.djName) {
         console.log(`${tag} skip: 프로필 미로드`, { iidxId: p.iidxId, djName: p.djName });
@@ -1119,6 +1184,7 @@ export default function App() {
         appVersion: APP_VERSION,
         profile: p,
         starResult: s,  // null 가능 (SP 전용·DP 저레벨 전용) → users.star = null
+        rStar: rs,      // null 가능 (표본부족/미산출) → users.r_star 기존값 보존
         charts: m?.charts ?? [],
         // 서열표 '미분류' 곡 — charts_json 에만 합쳐 올림 (lamp 통계는 m.charts 만 집계)
         unclassifiedCharts: m?.unclassifiedCharts ?? [],
