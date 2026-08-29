@@ -206,6 +206,8 @@ class Tools:
         base_star: Optional[float] = None,
         layout: str = "off",
         top_n: int = 5,
+        zasa_min: Optional[float] = None,
+        zasa_max: Optional[float] = None,
         **kwargs,
     ) -> str:
         """
@@ -218,6 +220,8 @@ class Tools:
         :param base_star: 기준 실력 별값. 생략 시 자동.
         :param layout: 배치 추천 'on'/'off'(기본).
         :param top_n: 곡 수(기본 5).
+        :param zasa_min: 후보곡 zasa 레벨 하한(예: 11.6). 생략 시 실력 기반 자동 범위(list_practice_features 의 practiceZasaDefault).
+        :param zasa_max: 후보곡 zasa 레벨 상한(예: 12.3). "12.0~12.5 곡으로 트릴 연습" 같은 요청에 zasa_min/zasa_max 를 함께 넘긴다.
         """
         params = {
             "feature": feature,
@@ -228,6 +232,10 @@ class Tools:
         }
         if base_star is not None:
             params["baseStar"] = base_star
+        if zasa_min is not None:
+            params["zasaMin"] = zasa_min
+        if zasa_max is not None:
+            params["zasaMax"] = zasa_max
         try:
             res = self._recommend("practice", params)
         except Exception as e:  # noqa: BLE001
