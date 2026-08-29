@@ -24,8 +24,8 @@ def _clip(text: str, limit: int = 6000) -> str:
 class Tools:
     class Valves(BaseModel):
         base_url: str = Field(
-            default="http://ohsorry.local:3000",
-            description="INF 로컬서버 주소 (mDNS 실패 시 http://<PC-IP>:3000)",
+            default="http://192.168.0.132:3000",
+            description="INF 앱이 뜬 PC 주소. OpenWebUI 가 Docker면 mDNS(ohsorry.local)가 안 풀리므로 LAN IP 를 쓴다.",
         )
         timeout_sec: int = Field(default=20, description="HTTP 타임아웃(초)")
 

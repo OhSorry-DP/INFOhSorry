@@ -78,9 +78,10 @@ function handle(req: RecRequest, deps: RecommendBridgeDeps): Record<string, unkn
   const p = req.params || {};
 
   if (req.kind === 'meta') {
+    const mod = (window as unknown as { OhsorryRecommend?: { VERSION?: string } }).OhsorryRecommend;
     return {
       ready: !!recCtx,
-      coreVersion: recCtx?.VERSION || null,
+      coreVersion: mod?.VERSION || null,
       baseStar,
       userRStar,
       practiceParents: recCtx?.practiceParents || null,
