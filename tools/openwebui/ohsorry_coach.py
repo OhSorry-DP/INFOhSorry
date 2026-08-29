@@ -4,9 +4,9 @@ author: yenkara
 version: 0.1.0
 license: MIT
 description: >
-  IIDX INFINITAS DP 코치 도구. 로컬 INF 앱(ohsorry.local)의 /api/me 와 /api/recommend 를
-  호출해 플레이어의 별값·약점·추천곡(클리어/연습/v3 사다리/등급 목표)을 가져온다.
-  추천 로직은 오소리 코어 recommend.js 를 그대로 쓴다(웹 iidx.in 과 동일 알고리즘).
+  IIDX INFINITAS DP 코치 도구. 로컬 INF 앱(ohsorry.local)의 /api/me 와 /api/recommend 로
+  별값·추천곡(클리어/연습/v3 사다리/등급 목표)을, 오소리 CDN 덤프(data.iidx.in)로 성향 리포트·
+  패턴 분석을 가져온다. 추천 로직은 오소리 코어 recommend.js 를 그대로 쓴다(웹 iidx.in 과 동일).
 requirements: requests
 """
 
@@ -15,6 +15,9 @@ from typing import Optional
 
 import requests
 from pydantic import BaseModel, Field
+
+# 오소리 성향/분석 덤프 CDN — INF 업로드마다 웹훅이 재생성한다. 웹 iidx.in 의 Report 탭과 같은 소스.
+_CDN_BASE = "https://data.iidx.in/"
 
 
 def _clip(text: str, limit: int = 6000) -> str:
@@ -31,10 +34,28 @@ class Tools:
 
     def __init__(self):
         self.valves = self.Valves()
+        self._iidx_id: Optional[str] = None
 
     # ── 내부 헬퍼 ──────────────────────────────────────────────
     def _get(self, path: str) -> dict:
         r = requests.get(self.valves.base_url + path, timeout=self.valves.timeout_sec)
+        r.raise_for_status()
+        return r.json()
+
+    def _my_iidx_id(self) -> str:
+        if not self._iidx_id:
+            me = self._get("/api/me")
+            self._iidx_id = (me.get("iidx_id") or "").replace("-", "").strip()
+        if not self._iidx_id:
+            raise RuntimeError("IIDX ID 를 못 읽었습니다 (INF 앱에서 게임 로그인 상태여야 함).")
+        return self._iidx_id
+
+    def _cdn_dump(self) -> dict:
+        """오소리 CDN 유저 덤프 (persona / osPattern / radars). 미덤프면 빈 dict."""
+        iid = self._my_iidx_id()
+        r = requests.get(_CDN_BASE + "user/" + iid + ".json", timeout=self.valves.timeout_sec)
+        if r.status_code == 404:
+            raise RuntimeError("아직 성향 리포트가 없습니다 (INF 로 점수 업로드 후 생성됩니다).")
         r.raise_for_status()
         return r.json()
 
@@ -95,6 +116,61 @@ class Tools:
         except Exception as e:  # noqa: BLE001
             return f"메타 정보를 가져오지 못했습니다: {e}"
         return _clip(json.dumps(meta, ensure_ascii=False, indent=2))
+
+    def get_persona(self, **kwargs) -> str:
+        """
+        플레이어의 오소리 성향 리포트(persona)를 가져온다. 웹 iidx.in Report 탭과 같은 것.
+        한 줄 요약(oneLiner) + 서사형 설명(prose) + 태그(tags) + 헤드라인(head).
+        "나 어떤 플레이어야 / 내 스타일 / 성향" 류 질문에 쓴다.
+        """
+        try:
+            d = self._cdn_dump()
+        except Exception as e:  # noqa: BLE001
+            return f"성향 리포트를 가져오지 못했습니다: {e}"
+        p = d.get("persona") or {}
+        if not p.get("prose"):
+            return "성향 리포트가 아직 없습니다 (표본 부족이거나 업로드 후 미생성)."
+        out = {
+            "head": p.get("head"),
+            "oneLiner": p.get("oneLiner"),
+            "prose": p.get("prose"),
+            "tags": p.get("tags"),
+            "nCharts": p.get("nCharts"),
+            "generatedAt": p.get("_v"),
+        }
+        return _clip(json.dumps(out, ensure_ascii=False, indent=2))
+
+    def get_pattern_analysis(self, **kwargs) -> str:
+        """
+        플레이어의 패턴 분석을 가져온다. 약점/강점 파악은 게임 노트레이더가 아니라 이걸 근거로 삼는다.
+        persona.report(피처별 강함/약함 σ 값 + 배치·개인차·무리·BPM 구간 분석) + osPattern(DP 피처 스코어
+        원값 notes/chord/peak/charge/scratch/soflan/phrase/jack/trill/rand)을 반환한다.
+        "내 약점 / 강점 / 뭘 연습해야 / 분석해줘" 류에 쓴다.
+        """
+        try:
+            d = self._cdn_dump()
+        except Exception as e:  # noqa: BLE001
+            return f"패턴 분석을 가져오지 못했습니다: {e}"
+        p = d.get("persona") or {}
+        # osPattern — play_style 1 = DP (0 = SP).
+        dp_scores = None
+        for row in d.get("osPattern") or []:
+            if row.get("play_style") == 1:
+                dp_scores = {
+                    k: row.get(k)
+                    for k in ("notes", "chord", "peak", "charge", "scratch",
+                              "soflan", "phrase", "jack", "trill", "rand")
+                }
+                break
+        out = {
+            "report": p.get("report"),
+            "oneLiner": p.get("oneLiner"),
+            "tags": p.get("tags"),
+            "dp_feature_scores": dp_scores,
+            "generatedAt": p.get("_v"),
+            "note": "report 의 +/- 값은 본인 평균 대비 σ. dp_feature_scores 는 절대 스코어(높을수록 강함).",
+        }
+        return _clip(json.dumps(out, ensure_ascii=False, indent=2))
 
     def recommend_clear_songs(
         self,

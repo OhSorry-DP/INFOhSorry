@@ -15,6 +15,10 @@ INF 앱 main process
         ├─ buildWeaknessRecs (연습곡)
         ├─ buildEstLadder    (추천곡 v3 사다리)
         └─ emodeTargets.ts   (E모드 등급 목표 폴더 A/AA/AAA/MAX−)
+
+   + get_persona / get_pattern_analysis 는 INF 안 거치고 오소리 CDN 덤프
+     (https://data.iidx.in/user/{IIDX_ID}.json) 를 직접 fetch — 웹 iidx.in Report 탭과 같은 소스.
+     INF 업로드마다 웹훅이 재생성한다.
 ```
 
 추천 알고리즘은 웹 iidx.in 이 쓰는 코어 `recommend.js` 와 동일하다. LLM 은 파라미터 선택 + 결과 언어화만 한다.
