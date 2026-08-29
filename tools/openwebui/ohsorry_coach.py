@@ -55,7 +55,7 @@ class Tools:
         return body.get("result", body)
 
     # ── 도구 ─────────────────────────────────────────────────
-    def get_profile(self) -> str:
+    def get_profile(self, **kwargs) -> str:
         """
         현재 플레이어의 오소리 프로필을 가져온다.
         별값(star_estimate), 점수 별값(r_star), SP/DP 단위, 노트레이더 6지표,
@@ -84,7 +84,7 @@ class Tools:
         }
         return _clip(json.dumps(summary, ensure_ascii=False, indent=2))
 
-    def list_practice_features(self) -> str:
+    def list_practice_features(self, **kwargs) -> str:
         """
         연습곡 추천(recommend_practice_songs)에서 쓸 수 있는 피처 목록과 코어 버전을 가져온다.
         practiceParents(1차) / practiceSubfeats(2차 세부축) 를 그대로 반환한다.
@@ -103,6 +103,7 @@ class Tools:
         level_mode: str = "lv11+12",
         layout: str = "off",
         limit: int = 10,
+        **kwargs,
     ) -> str:
         """
         클리어(램프) 추천곡을 가져온다. 오소리 코어 buildRecs 결과.
@@ -129,6 +130,7 @@ class Tools:
         base_star: Optional[float] = None,
         layout: str = "off",
         top_n: int = 5,
+        **kwargs,
     ) -> str:
         """
         약점 기반 연습곡을 가져온다. 오소리 코어 buildWeaknessRecs 결과.
@@ -161,6 +163,7 @@ class Tools:
         preset: str = "normal",
         base_star: Optional[float] = None,
         top_n: int = 5,
+        **kwargs,
     ) -> str:
         """
         추천곡 v3 (est축 사다리) 를 가져온다. '실력 다지기 / 목표 T1 / 목표 T2' 3섹션.
@@ -178,7 +181,7 @@ class Tools:
             return f"v3 사다리 추천을 가져오지 못했습니다: {e}"
         return _clip(json.dumps(res, ensure_ascii=False, indent=2))
 
-    def recommend_grade_target(self, grade: str = "aa", limit: int = 15) -> str:
+    def recommend_grade_target(self, grade: str = "aa", limit: int = 15, **kwargs) -> str:
         """
         E모드 등급 목표 폴더를 가져온다 — 지금 점수를 조금만 올리면 다음 등급을 딸 수 있는 곡.
         점수 별값(r_star) 기준. 웹 iidx.in 의 'A/AA/AAA/MAX− 목표' 폴더와 동일.
