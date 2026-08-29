@@ -2,6 +2,15 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.112 — 2026-08-29 원격모드 카드에 r★ 전달 (E모드 목표 폴더 복구)
+
+원격모드(LAN 로컬보드) 본인 카드에서 오소리웹 **E모드의 등급 목표 폴더(A / AA / AAA / MAX−)가 통째로 안 나오던 문제**를 잡았다. 원인은 `/api/me` 로 내보내는 user 객체에 `r_star` 필드가 아예 없었던 것이다 — v0.0.111 이 r★ 를 계산해 Supabase 에는 올리면서 원격 payload 에는 안 실었다. 오소리웹 `playdata.js` 의 목표 폴더는 `userData.r_star` 를 요구하므로(곡 쪽 r★ 데이터는 CDN 이라 원격에서도 정상) 이 한 필드만 비어 폴더 4개가 생성되지 않았다. 헤더 r★ 배지(`profileRenderer.js`)도 같은 원인이었다.
+
+- [remoteUser.ts](src/renderer/src/remoteUser.ts) `buildRemoteUser` — 인자에 `rStar` 추가, user 객체에 `r_star` 를 싣는다. 표본 부족·미산출이면 `null`(그 두 표시만 생략되고 나머지는 정상).
+- [App.tsx](src/renderer/src/App.tsx) — 이미 계산해 두던 `userRStar` 를 `buildRemoteUser` 에 전달한다. **push sig 에도 포함** — `ratingData`/lib 로드가 첫 push 보다 늦어 처음엔 `null` 로 나가는데, sig 에 없으면 다음 점수 변동 때까지 원격 카드의 목표 폴더가 계속 비어 있다(레이더/단위를 sig 에 넣은 것과 같은 이유).
+- 오소리웹 수정 없음 — 원격 분기가 `/api/me` 응답을 그대로 쓰고, 메인 프로세스도 필드를 거르지 않는다.
+- 검증: `npm run typecheck`, `npm run build`.
+
 ### v0.0.111 — 2026-08-27 사용자 r★ 계산 및 Supabase 업로드
 
 - 크롤러와 동일한 공용 `userRateStar.js`의 `inferUserRStar()` 커널로 INF DP EX SCORE와 노트수에서 사용자 r★를 계산합니다.

@@ -1304,14 +1304,17 @@ export default function App() {
       `r${radarSig(profile.spRadar)}`,
       `R${radarSig(profile.dpRadar)}`,
       `k${profile.spRank ?? '-'}${profile.dpRank ?? '-'}`,
+      // r★ — ratingData/lib 로드가 첫 push 보다 늦어 처음엔 null 로 나간다. sig 에 안 넣으면
+      //   다음 점수 변동까지 원격 카드의 목표 폴더가 계속 비어 있다(레이더/단위와 같은 이유).
+      `x${typeof userRStar === 'number' ? userRStar.toFixed(2) : '-'}`,
     ].join('|');
     if (sig === lastRemoteSigRef.current) return dbg('skip: tsv 값 변동 없음(동일)');  // 값 동일 → push 안 함
     lastRemoteSigRef.current = sig;
     dbg('PUSH ✅ setUser 호출');
     void window.infohsorry.remote.setUser(
-      buildRemoteUser(profile, dp12StarResult, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined),
+      buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined),
     );
-  }, [profile, dp12StarResult, dp12Match, spAllCharts, spTierData, spStarResult, textageByTitle]);
+  }, [profile, dp12StarResult, userRStar, dp12Match, spAllCharts, spTierData, spStarResult, textageByTitle]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:

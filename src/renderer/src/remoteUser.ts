@@ -124,11 +124,14 @@ function spChartToJson(c: SongChart, txMap?: TxMap): unknown {
 // INF 로컬 값(profile + 별값 + 분류/미분류 charts) → 오소리웹 user 객체.
 //   notes_radar / sp_rank / dp_rank 는 v0.0.108+ 부터 INFINITAS 메모리 값으로 채운다(그 전엔 null).
 //   os_pattern_score 는 여전히 null — 카드 내부 calcWeakness 가 charts_json 으로 패턴을 보강한다.
+//   r_star(점수 별값)는 v0.0.112+ — 없으면 오소리웹 E모드의 등급 목표 폴더(A/AA/AAA/MAX−)가 통째로 안 그려진다
+//   (playdata.js 가 userData.r_star 를 요구). supabase 경로는 users.r_star 를 싣고 있어 일반 카드만 되던 문제.
 //   BP / 노트수는 charts_json 각 항목의 missCount / noteCount 로 이미 나간다(웹 shelf.js 가 그 키를 읽음).
 //   spCharts / spTier12 는 원격모드 SP 표시용 (소스 비종속 — 추후 DB 백필 시 같은 필드 재사용).
 export function buildRemoteUser(
   profile: RemoteProfile,
   starResult: StarResult,
+  rStar: number | null,          // 사용자 r★(App.tsx inferUserRStar). 표본부족·미산출이면 null
   charts: RecInputChart[],
   unclassified: Array<Omit<RecInputChart, 'level'>>,
   spCharts?: SongChart[],
@@ -143,6 +146,8 @@ export function buildRemoteUser(
     star_estimate: typeof starResult.star === 'number' ? starResult.star : null,
     native_star: typeof starResult.nativeStar === 'number' ? starResult.nativeStar : null,
     ereter_star: typeof starResult.star === 'number' ? starResult.star : null,
+    // 점수 별값 — 오소리웹 E모드 등급 목표 폴더 + 헤더 r★ 배지용. null 이면 그 둘만 생략(나머지는 정상).
+    r_star: typeof rStar === 'number' && Number.isFinite(rStar) ? rStar : null,
     // SP 발광★ — 오소리웹 ?remote SP 모드 카드/서열표 헤더·목록 별값용(없으면 null).
     sp_cpi: spStar && typeof spStar.cpiInt === 'number' ? spStar.cpiInt : null,
     sp_star: spStar && typeof spStar.starRounded === 'number' ? spStar.starRounded : null,
