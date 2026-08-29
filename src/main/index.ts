@@ -33,6 +33,7 @@ import { fetchServiceStatus } from './serviceStatus';
 import { downloadPortable, runPortable, cleanupOldPortables } from './portableUpdate';
 import { checkForUpdate } from './updateCheck';
 import { startHttpServer } from './http-server';
+import { createRecommendBridge } from './recommendBridge';
 
 let mainWindow: BrowserWindow | null = null;
 const refluxManager = new RefluxManager();
@@ -42,6 +43,8 @@ const refluxManager = new RefluxManager();
 let remoteUser: unknown = null;
 // SSE me:update broadcaster — startHttpServer 가 채움. setUser 시 PC2 에 갱신 알림용.
 let notifyMeUpdate: (() => void) | null = null;
+// 추천 브릿지 — http-server(/api/recommend, OpenWebUI 챗봇용) ↔ renderer(recCtx) 중계.
+const recommendBridge = createRecommendBridge(() => mainWindow);
 // LAN 접속정보(QR/안내) — startHttpServer 가 채움. http-server 미시작(dev)이면 null.
 let serverConnectInfo: (() => unknown) | null = null;
 
@@ -562,6 +565,9 @@ ipcMain.handle('portable:run', async (_e, filePath: string) => {
   return runPortable(filePath);
 });
 
+// 추천 브릿지 — renderer(useRecommendBridge)가 recCtx 계산 결과를 이 채널로 돌려준다.
+ipcMain.on('recommend:response', (_e, payload) => recommendBridge.handleResponse(payload));
+
 // 앱(창 닫힘)/INFINITAS 종료 시 renderer 에 "마지막 업로드 1회" 를 요청하고 완료(또는 timeout)까지 대기.
 //   renderer 의 upload.onFinalRequest 가 받아 업로드 후 upload:final-done 으로 ack.
 function requestFinalUpload(timeoutMs = 6000): Promise<void> {
@@ -700,7 +706,7 @@ app.whenReady().then(() => {
   if (!process.env.ELECTRON_RENDERER_URL) {
     const rendererDir = join(__dirname, '../renderer');
     try {
-      const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'));
+      const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'), recommendBridge.query);
       notifyMeUpdate = http.notifyMeUpdate;
       serverConnectInfo = http.connectInfo;
     } catch (e) {

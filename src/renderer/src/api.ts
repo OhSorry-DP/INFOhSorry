@@ -248,6 +248,11 @@ if (!IS_HOST) {
       setUser: (user: unknown) =>
         callIpc('remote:setUser', user) as Promise<{ ok: boolean }>,
     },
+    // PC2(브라우저 원격)는 추천 브릿지 대상 아님 — recCtx 는 PC 본체 renderer 만 들고 있다. no-op.
+    recommend: {
+      onRequest: () => (): void => {},
+      respond: (): void => {},
+    },
     // PC2(브라우저 원격)는 업로드 안 함 — main 의 final-request 도 받지 않으므로 no-op.
     upload: {
       onFinalRequest: () => (): void => {},

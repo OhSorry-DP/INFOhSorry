@@ -23,6 +23,7 @@ import Analysis from './Analysis';
 import Recent from './Recent';
 import PlayData from './PlayData';
 import { loadRecLibs, createRecCtx, ensurePatternsLevel, loadGistModule, type RecCoreLibs } from './recommendCore';
+import { useRecommendBridge } from './useRecommendBridge';
 import { LIB_BASE, DATA_BASE } from '../../shared/dataSource';
 
 // SP 대표 실력값(発狂★相当) — ohSorryRating spSkillCpi 커널(gist) 입출력 타입.
@@ -1386,6 +1387,15 @@ export default function App() {
       return null;
     }
   }, [recLibs, rows, ratingData, zasaData, ereterData, isInfChart, patBandsReady]);
+
+  // main(http-server /api/recommend)이 보낸 추천 요청을 이 recCtx 로 처리 — OpenWebUI 챗봇용.
+  useRecommendBridge({
+    recCtx,
+    ratingData,
+    userRStar,
+    baseStar: ohsorryRecBase,
+    userCharts: dpAllCharts,
+  });
 
   const lastRerollEC = useRef(-1);
   const lastRerollHC = useRef(-1);

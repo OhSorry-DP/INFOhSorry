@@ -222,6 +222,20 @@ const api = {
     setUser: (user: unknown): Promise<{ ok: boolean }> => ipcRenderer.invoke('remote:setUser', user),
   },
 
+  // 추천 브릿지 — main(http-server /api/recommend, OpenWebUI 챗봇용)이 추천 요청을 보내면
+  //   renderer 가 recCtx(코어 recommend.js)로 계산해 응답한다. upload 채널과 같은 패턴.
+  recommend: {
+    onRequest: (cb: (req: { reqId: string; kind: string; params?: Record<string, unknown> }) => void): (() => void) => {
+      const listener = (_evt: unknown, req: { reqId: string; kind: string; params?: Record<string, unknown> }): void => cb(req);
+      ipcRenderer.on('recommend:request', listener);
+      return (): void => {
+        ipcRenderer.off('recommend:request', listener);
+      };
+    },
+    respond: (payload: { reqId: string; ok: boolean; result?: unknown; error?: string }): void =>
+      ipcRenderer.send('recommend:response', payload),
+  },
+
   // 업로드 — main(앱 종료/INFINITAS 종료 감지)이 "마지막 업로드" 를 요청하면 renderer 가 받아 1회 업로드 후 done 신호.
   upload: {
     onFinalRequest: (cb: () => void): (() => void) => {

@@ -2,6 +2,20 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.113 — 2026-08-29 추천 API (`/api/recommend`) — OpenWebUI DP 코치 챗봇용
+
+집에서 혼자 쓰는 IIDX DP 코치 챗봇(OpenWebUI)이 오소리 추천 로직을 그대로 쓸 수 있도록 로컬 HTTP 엔드포인트를 열었다. 추천 계산은 **renderer 가 이미 만들어 둔 `recCtx`(코어 `recommend.js`)를 재사용**한다 — main 에 patterns 등 ~3MB 를 다시 올리지 않고, main↔renderer 요청/응답 채널로 넘긴다(웹 iidx.in 과 동일 알고리즘). INF 창이 열려 있고 추천 lib 로딩이 끝났을 때만 동작(아니면 503).
+
+- **[http-server.ts](src/main/http-server.ts)** — `POST /api/recommend` 신설. body `{ kind, params }`, kind = `meta` / `clear` / `practice` / `ladder` / `targets`. `recommendQuery` 가 throw(창 없음 / timeout / recCtx 미준비)하면 503.
+- **[recommendBridge.ts](src/main/recommendBridge.ts)** (신규) — reqId 로 요청/응답 매칭. `webContents.send('recommend:request')` → 12초 timeout. `upload:final-*` 채널과 같은 패턴.
+- **[index.ts](src/main/index.ts)** — 브릿지 생성 + `ipcMain.on('recommend:response')` + `startHttpServer` 에 `recommendBridge.query` 전달.
+- **[preload](src/preload/index.ts)** `infohsorry.recommend` — `onRequest` / `respond`. 브라우저 원격(PC2)은 no-op([api.ts](src/renderer/src/api.ts)) — recCtx 는 PC 본체 renderer 만 들고 있다.
+- **[useRecommendBridge.ts](src/renderer/src/useRecommendBridge.ts)** (신규) — `recommend:request` 를 받아 `recCtx.buildRecs` / `buildWeaknessRecs` / `buildEstLadder` 호출, rec row 를 챗봇용 슬림 형태로 응답. App.tsx 가 `recCtx` / `ratingData` / `userRStar` / `ohsorryRecBase` / `dpAllCharts` 를 주입.
+- **[emodeTargets.ts](src/renderer/src/emodeTargets.ts)** (신규) — 오소리웹 `playdata.js` 의 E모드 등급 목표 폴더(A/AA/AAA/MAX−) 로직을 HTML 없이 이식. 상수(GRADE_TH / BASELINE_UNIT / lo·hi 밴드)는 웹 정본과 1:1.
+- **[tools/openwebui/](tools/openwebui/)** (신규) — `ohsorry_coach.py`(OpenWebUI Tools 모듈: `get_profile` / `list_practice_features` / `recommend_clear_songs` / `recommend_practice_songs` / `recommend_ladder` / `recommend_grade_target`) + 시스템 프롬프트 + 설치 README. LLM 은 파라미터 선택 + 언어화만.
+- 오소리웹 수정 없음. 웹 배포는 나중에 Cloudflare AI 워커로 별도 재구축 예정(이 구조와 무관).
+- 검증: `npm run typecheck`, `npm run build`.
+
 ### v0.0.112 — 2026-08-29 원격모드 카드에 r★ 전달 (E모드 목표 폴더 복구)
 
 원격모드(LAN 로컬보드) 본인 카드에서 오소리웹 **E모드의 등급 목표 폴더(A / AA / AAA / MAX−)가 통째로 안 나오던 문제**를 잡았다. 원인은 `/api/me` 로 내보내는 user 객체에 `r_star` 필드가 아예 없었던 것이다 — v0.0.111 이 r★ 를 계산해 Supabase 에는 올리면서 원격 payload 에는 안 실었다. 오소리웹 `playdata.js` 의 목표 폴더는 `userData.r_star` 를 요구하므로(곡 쪽 r★ 데이터는 CDN 이라 원격에서도 정상) 이 한 필드만 비어 폴더 4개가 생성되지 않았다. 헤더 r★ 배지(`profileRenderer.js`)도 같은 원인이었다.

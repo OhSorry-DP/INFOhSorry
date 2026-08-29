@@ -161,6 +161,12 @@ declare global {
       remote: {
         setUser: (user: unknown) => Promise<{ ok: boolean }>;
       };
+      recommend: {
+        onRequest: (
+          cb: (req: { reqId: string; kind: string; params?: Record<string, unknown> }) => void,
+        ) => () => void;
+        respond: (payload: { reqId: string; ok: boolean; result?: unknown; error?: string }) => void;
+      };
       upload: {
         onFinalRequest: (cb: () => void) => () => void;
         finalDone: () => void;

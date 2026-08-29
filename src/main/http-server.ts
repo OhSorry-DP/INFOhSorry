@@ -7,6 +7,8 @@
 //   GET  /api/events       — SSE (text/event-stream) — reflux state 변경을 PC2 에 실시간 push.
 //                             기존 5초 polling 대체. EventSource 가 자동 재연결 처리.
 //   GET  /api/me           — renderer 가 push 한 오소리웹 user 객체(원격모드 본인 카드).
+//   POST /api/recommend    — body { kind, params } → renderer recCtx 로 추천 계산 (OpenWebUI 챗봇용).
+//                             kind: meta / clear / practice / ladder / targets. renderer 미준비 시 503.
 //   GET  /index.html,/assets/* — out/renderer/ 의 INF 자체 화면(LAN 원격제어). 로컬 정적.
 //   GET  /osr, /osr/*      — 레거시 → 같은 경로의 루트 등가물로 302 (호환).
 //   GET  /                 — remote 쿼리 없으면 /?remote 로 302 (IP:3000 만 쳐도 원격 카드).
@@ -254,6 +256,7 @@ export function startHttpServer(
   ipcHandlers: IpcHandlers,
   getRemoteUser?: () => unknown,
   osrCacheDir?: string,
+  recommendQuery?: (kind: string, params: Record<string, unknown>) => Promise<unknown>,
 ): { server: http.Server; notifyMeUpdate: () => void; connectInfo: () => Promise<ConnectInfo>; stop: () => void } {
   const sse = setupSseBroadcast(refluxManager);
 
@@ -296,6 +299,42 @@ export function startHttpServer(
           'cache-control': 'no-cache',
         });
         res.end(JSON.stringify(user ?? { error: 'no remote user yet' }));
+        return;
+      }
+
+      // 추천 계산 — body { kind, params } → renderer recCtx (OpenWebUI 챗봇 Tools 용).
+      //   renderer 가 응답 안 하면(창 닫힘 / lib 미로딩) recommendQuery 가 throw → 503.
+      if (urlPath === '/api/recommend' && req.method === 'POST') {
+        if (!recommendQuery) {
+          res.writeHead(501, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' });
+          res.end(JSON.stringify({ error: 'recommend bridge 미설정' }));
+          return;
+        }
+        let body: string;
+        try {
+          body = await readBody(req, 1024 * 1024);
+        } catch (e) {
+          res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' });
+          res.end(JSON.stringify({ error: (e as Error).message }));
+          return;
+        }
+        let parsed: { kind?: string; params?: Record<string, unknown> };
+        try {
+          parsed = body ? JSON.parse(body) : {};
+        } catch (e) {
+          res.writeHead(400, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' });
+          res.end(JSON.stringify({ error: 'invalid json: ' + (e as Error).message }));
+          return;
+        }
+        const kind = parsed.kind || 'meta';
+        try {
+          const result = await recommendQuery(kind, parsed.params || {});
+          res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*', 'cache-control': 'no-cache' });
+          res.end(JSON.stringify({ result }));
+        } catch (e) {
+          res.writeHead(503, { 'content-type': 'application/json; charset=utf-8', 'access-control-allow-origin': '*' });
+          res.end(JSON.stringify({ error: (e as Error).message }));
+        }
         return;
       }
 
