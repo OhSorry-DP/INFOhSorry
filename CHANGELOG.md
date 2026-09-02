@@ -2,6 +2,16 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### (미배포) — 2026-09-02 추천 API `ladder` 에 growth landscape (`mode=lamp|score`)
+
+오소리 추천곡 v3/v4 재설계 Phase 1 을 로컬 추천 API 에 반영. **엔진(`data.iidx.in/lib/recommend.js`)이 R2 에 배포된 뒤에야 실제 동작**한다(그 전엔 `buildGrowthLandscape 없음` throw — 안전). 버전 bump·설치본은 R2 배포와 함께.
+
+- **[useRecommendBridge.ts](src/renderer/src/useRecommendBridge.ts)** — `kind=ladder` 에 `mode`(별칭 `axis`) 파라미터 **additive**. `mode` 없으면 레거시 `buildEstLadder` 3섹션 경로 **무변경**. `mode=lamp`|`score` 면 `recCtx.buildGrowthLandscape(base, { axis })` → `solid`/`aspiration` 2섹션 + row `growth`(엔진 `_growthExplain` 관측값: `currentStage→nextStage` 전이·`growthReason`·`discreteResidual/Stratum`·physical gate·cluster·validated·fallback).
+  - 축별 base 분리 — `lamp`=별값(`baseStar`) / `score`=유저 r★(`userRStar`). **r★ 결손이면 `{ error:'no_r_star', sections:[] }` 로 안전 반환**(throw 아님).
+  - `score` row 에서 클리어 축 값(`targetStar`·`margin`) 제거 — 축 혼동 방지. r★ 절대값 비노출.
+  - `growthSlim()` 헬퍼 신설(코치 API `growthExplainOf` 와 동형).
+- 타입체크(`typecheck:web`) 통과. 렌더러 `App.tsx` 는 이미 `userRStar` 를 브릿지 deps 로 전달 중 — 배선 추가 없음.
+
 ### v0.0.113 — 2026-08-29 추천 API (`/api/recommend`) — OpenWebUI DP 코치 챗봇용
 
 집에서 혼자 쓰는 IIDX DP 코치 챗봇(OpenWebUI)이 오소리 추천 로직을 그대로 쓸 수 있도록 로컬 HTTP 엔드포인트를 열었다. 추천 계산은 **renderer 가 이미 만들어 둔 `recCtx`(코어 `recommend.js`)를 재사용**한다 — main 에 patterns 등 ~3MB 를 다시 올리지 않고, main↔renderer 요청/응답 채널로 넘긴다(웹 iidx.in 과 동일 알고리즘). INF 창이 열려 있고 추천 lib 로딩이 끝났을 때만 동작(아니면 503).

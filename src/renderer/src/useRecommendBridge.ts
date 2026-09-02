@@ -9,7 +9,10 @@
 //   meta     — 코어 버전 + 연습곡 피처 목록(practiceParents/Subfeats) + baseStar/userRStar
 //   clear    — 클리어 추천 (buildRecs). params: { stage?, baseStar?, levelMode?, djMode?, layout?, limit? }
 //   practice — 연습곡 추천 (buildWeaknessRecs). params: { baseStar?, feature?, strength?, handMode?, flipOn?, topN?, layout?, zasaMin?, zasaMax? }
-//   ladder   — 추천곡 v3 (buildEstLadder). params: { baseStar?, preset?, topN? }
+//   ladder   — 추천곡 v3. params: { baseStar?, preset?, topN?, mode? }
+//              mode 없음 → 레거시 buildEstLadder(3섹션 solid/t1/t2).
+//              mode='lamp'|'score'(별칭 axis) → buildGrowthLandscape 2섹션(solid/aspiration) + row.growth 관측 payload.
+//              score 는 base=유저 r★(userRStar) — 결손이면 { error:'no_r_star', sections:[] }.
 //   targets  — E모드 등급 목표 폴더(A/AA/AAA/MAX−). params: { grade?, limit? }
 
 import { useEffect, useRef } from 'react';
@@ -71,6 +74,37 @@ function slimRow(r: Any): Record<string, unknown> {
 
 function toNum(v: unknown, dflt: number | null): number | null {
   return typeof v === 'number' && Number.isFinite(v) ? v : dflt;
+}
+
+// 추천곡 v3/v4 재설계 Phase 1 — 엔진 _growthExplain → 브릿지 payload. 코치 API growthExplainOf 와 동형.
+//   전부 buildGrowthLandscape 가 반환한 factual 값 — 여기서 파생/추측하지 않는다.
+function growthSlim(ge: Any, axis: string): Record<string, unknown> | null {
+  if (!ge) return null;
+  const g = ge.growth || {}, res = ge.residual || {}, phy = ge.physical || {}, cl = ge.cluster || {}, val = ge.validation || {};
+  return {
+    mode: ge.mode || axis,
+    currentStage: g.currentStage ?? null,
+    expectedStage: res.expectedStage ?? null,
+    targetStage: g.targetStage ?? null,          // 밴드 배치 stage
+    nextStage: g.nextStage ?? null,              // 현재 성취 바로 위 (terminal 이면 null)
+    nextStageAxisVal: g.nextStageAxisVal ?? null,
+    growthReason: g.growthReason ?? null,        // FRESH_TARGET | STAGE_UP | SCORE_REFINE | PRIMARY_TERMINAL
+    primaryTerminal: !!g.primaryTerminal,
+    targetGradeFolder: g.targetGradeFolder ?? null,
+    nextGradeFolder: g.nextGradeFolder ?? null,
+    discreteResidual: res.discrete ?? null,
+    discreteStratum: res.discreteStratum ?? null,
+    rawMargin: res.rawMargin ?? null,
+    effectiveMargin: res.effectiveMargin ?? null,
+    physical: { hardGate: phy.hardGate ?? null, confidencePenalty: phy.confidencePenalty ?? null },
+    cluster: {
+      type: cl.type ?? null, detector: cl.detector ?? null, range: cl.range ?? null, center: cl.center ?? null,
+      confidence: cl.confidence ?? null, evidence: cl.evidenceNote ?? null, marginBand: cl.marginBand ?? null,
+      boundaryReliability: cl.boundaryReliability ?? null,
+    },
+    validated: cl.type === 'solid' ? !!val.solidValidated : false,
+    fallbackReason: val.fallbackReason ?? (ge.fallback && ge.fallback.reason) ?? null,
+  };
 }
 
 function handle(req: RecRequest, deps: RecommendBridgeDeps): Record<string, unknown> {
@@ -155,6 +189,53 @@ function handle(req: RecRequest, deps: RecommendBridgeDeps): Record<string, unkn
   if (req.kind === 'ladder') {
     const preset = p.preset === 'light' || p.preset === 'hard' ? p.preset : 'normal';
     const topN = toNum(p.topN, 5) || 5;
+    const mode = typeof p.mode === 'string' ? p.mode.toLowerCase()
+      : typeof p.axis === 'string' ? p.axis.toLowerCase() : '';
+
+    // 추천곡 v3/v4 재설계 Phase 1 — mode 없으면 아래 레거시 buildEstLadder 무변경.
+    if (mode === 'lamp' || mode === 'score') {
+      if (typeof recCtx.buildGrowthLandscape !== 'function') {
+        throw new Error('코어 recommend.js 에 buildGrowthLandscape 없음 (구버전 캐시 — INF 재시작)');
+      }
+      const axis = mode === 'score' ? 'score' : 'lamp';
+      // 축별 base 분리 — lamp=별값(bs) / score=유저 r★(userRStar). r★ 결손이면 안전하게 빈 결과.
+      const gBase = axis === 'score' ? userRStar : bs;
+      if (gBase == null) {
+        return {
+          mode: axis, base: null, baseKind: axis === 'score' ? 'r_star' : 'star',
+          error: axis === 'score' ? 'no_r_star' : 'no_star',
+          hint: axis === 'score' ? 'DP r★ 미산출 (점수 기록 더 필요)' : 'DP 별값 미산출',
+          sections: [],
+        };
+      }
+      const res = recCtx.buildGrowthLandscape(gBase, { axis, topN }) as Any;
+      const sections = ((res && res.sections) || []).map((s: Any) => ({
+        key: s.key, // 'solid' | 'aspiration'
+        label: s.label,
+        validated: !!s.validated,
+        confidence: s.confidence ?? null,
+        range: s.range ?? null,
+        center: s.center ?? null,
+        target: s.target ?? null,
+        fixedStep: !!s.fixedStep,
+        fallbackReason: s.fallbackReason ?? null,
+        short: !!s.short,
+        rows: (s.recs || []).map((r: Any) => {
+          const o = slimRow(r);
+          if (axis === 'score') { delete o.targetStar; delete o.margin; } // 클리어 축 값 — score 문맥 혼동 방지
+          o.growth = growthSlim(r._growthExplain, axis);
+          return o;
+        }),
+      }));
+      return {
+        mode: axis, base: gBase, baseKind: axis === 'score' ? 'r_star' : 'star',
+        version: (res && res.version) || 'phase1-solid',
+        explain: (res && res.explain) || null,
+        sections,
+      };
+    }
+
+    // 레거시 buildEstLadder (3섹션 solid/t1/t2) — 무변경.
     const sections = recCtx.buildEstLadder(bs, { preset, topN }) as Any[];
     return {
       baseStar: bs,
