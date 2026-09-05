@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### (미배포) — 2026-09-06 SP☆12 서열표 데이터 소스를 ohSorryRating 발행 JSON으로 교체
+
+`spTier.ts`가 구글시트 "☆12参考表"를 직접 fetch+파싱하고 있었는데, 태그 경계를 무시한 `<br>` split 때문에 연속된 개인차 곡이 묶여 나올 때 caution 표시가 엉뚱한 곡으로 쏠리는 버그가 있었다(하드 개인차 130곡 중 28곡만 검출 등, 원인 분석·수정은 ohSorryRating 쪽 CHANGELOG 참고). 오소리웹도 같은 데이터를 별도 경로로 쓰고 있어 파서가 두 곳에 중복돼 있던 것도 같이 정리.
+
+- [src/main/spTier.ts](src/main/spTier.ts) — 구글시트 직접 파싱(`node-html-parser` DOM 순회 로직)을 전부 제거하고, `ohSorryRating/scripts/derive/sp/fetch-sp-tier-12.js`가 seed:full마다 재생성해 발행하는 `data.iidx.in/data/sp-tier-12.json`을 `rating.ts`/`ereter.ts`와 같은 패턴(단순 fetch + 24h 캐시 + stale fallback)으로 받아오도록 교체. 오소리웹(`SP_TIER12_URL`)과 동일 파일을 봐서 두 소비처가 항상 같은 서열표를 표시한다.
+- `getSpTierData`/`getCacheStatus` 시그니처는 그대로라 호출부(`main/index.ts`) 무변경.
+
 ### (미배포) — 2026-09-02 추천 API `ladder` 에 growth landscape (`mode=lamp|score`)
 
 오소리 추천곡 v3/v4 재설계 Phase 1 을 로컬 추천 API 에 반영. **엔진(`data.iidx.in/lib/recommend.js`)이 R2 에 배포된 뒤에야 실제 동작**한다(그 전엔 `buildGrowthLandscape 없음` throw — 안전). 버전 bump·설치본은 R2 배포와 함께.
