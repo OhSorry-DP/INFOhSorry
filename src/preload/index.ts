@@ -245,7 +245,10 @@ const api = {
         ipcRenderer.off('upload:final-request', listener);
       };
     },
-    finalDone: (): void => ipcRenderer.send('upload:final-done'),
+    finalDone: (outcome: import('../shared/uploadSnapshot').UploadOutcome): void => ipcRenderer.send('upload:final-done', outcome),
+    savePending: (snapshot: import('../shared/uploadSnapshot').UploadSnapshot) => ipcRenderer.invoke('upload:savePending', snapshot),
+    loadPending: () => ipcRenderer.invoke('upload:loadPending'),
+    clearPending: (iidxId: string) => ipcRenderer.invoke('upload:clearPending', iidxId),
   },
 
   // LAN 접속정보 — 폰 QR/주소 표시용. http-server 미시작(dev)이면 null.

@@ -34,6 +34,8 @@ import { downloadPortable, runPortable, cleanupOldPortables } from './portableUp
 import { checkForUpdate } from './updateCheck';
 import { startHttpServer } from './http-server';
 import { createRecommendBridge } from './recommendBridge';
+import { clearPending, loadAllPending, savePending } from './uploadPending';
+import type { UploadOutcome, UploadSnapshot } from '../shared/uploadSnapshot';
 
 let mainWindow: BrowserWindow | null = null;
 const refluxManager = new RefluxManager();
@@ -51,6 +53,9 @@ let serverConnectInfo: (() => unknown) | null = null;
 // 모든 IPC handler 를 단일 map 에. ipcMain.handle + HTTP /api/ipc 둘 다 같은 함수.
 // 시그니처: (...args) → Promise<any> | any. event 파라미터는 ipcMain.handle wrapper 에서 제거.
 export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
+  'upload:savePending': async (...args: never[]) => savePending(args[0] as UploadSnapshot),
+  'upload:loadPending': async () => loadAllPending(),
+  'upload:clearPending': async (...args: never[]) => clearPending(args[0] as string),
   // LAN 접속정보(폰 QR/주소) — http-server 안 떠 있으면(dev) null.
   'server:info': async () => (serverConnectInfo ? serverConnectInfo() : null),
   // Reflux
@@ -568,27 +573,42 @@ ipcMain.handle('portable:run', async (_e, filePath: string) => {
 // 추천 브릿지 — renderer(useRecommendBridge)가 recCtx 계산 결과를 이 채널로 돌려준다.
 ipcMain.on('recommend:response', (_e, payload) => recommendBridge.handleResponse(payload));
 
-// 앱(창 닫힘)/INFINITAS 종료 시 renderer 에 "마지막 업로드 1회" 를 요청하고 완료(또는 timeout)까지 대기.
-//   renderer 의 upload.onFinalRequest 가 받아 업로드 후 upload:final-done 으로 ack.
-function requestFinalUpload(timeoutMs = 6000): Promise<void> {
+const FINAL_UPLOAD_TIMEOUT_MS = 30_000;
+
+// 앱(창 닫힘)/INFINITAS 종료 시 renderer 에 "마지막 업로드 1회" 를 요청하고 ack/timeout을 구분해 대기.
+function requestFinalUpload(timeoutMs = FINAL_UPLOAD_TIMEOUT_MS): Promise<UploadOutcome> {
   return new Promise((resolve) => {
     const win = mainWindow;
-    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) return resolve();
+    if (!win || win.isDestroyed() || win.webContents.isDestroyed()) {
+      return resolve({ kind: 'skip-no-snapshot', reason: 'renderer-unavailable' });
+    }
+    const startedAt = Date.now();
     let done = false;
-    const finish = (): void => {
+    const finish = (outcome: UploadOutcome): void => {
       if (done) return;
       done = true;
-      ipcMain.removeListener('upload:final-done', finish);
-      resolve();
+      clearTimeout(timer);
+      ipcMain.removeListener('upload:final-done', onDone);
+      resolve(outcome);
     };
-    ipcMain.once('upload:final-done', finish);
+    const onDone = (_event: Electron.IpcMainEvent, outcome: UploadOutcome): void => finish(outcome);
+    ipcMain.on('upload:final-done', onDone);
+    const timer = setTimeout(() => finish({ kind: 'timeout', durationMs: Date.now() - startedAt }), timeoutMs);
     try {
       win.webContents.send('upload:final-request');
     } catch {
-      return finish();
+      return finish({ kind: 'skip-no-snapshot', reason: 'final-request-send-failed' });
     }
-    setTimeout(finish, timeoutMs);
   });
+}
+
+function logFinalOutcome(outcome: UploadOutcome): void {
+  if (outcome.kind === 'success') console.log(`[upload] success duration=${outcome.durationMs}ms -> pending cleared`);
+  else if (outcome.kind === 'pending-clear-failed') console.warn(`[upload] success duration=${outcome.durationMs}ms but pending clear failed -> pending preserved (다음 실행에서 재전송): ${outcome.error}`);
+  else if (outcome.kind === 'timeout') console.warn(`[upload] timeout duration=${outcome.durationMs}ms -> pending preserved`);
+  else if (outcome.kind === 'http-failure') console.warn(`[upload] http failure ${outcome.error} -> pending preserved`);
+  else if (outcome.kind === 'skip-no-dirty') console.log('[upload] skip reason=no-dirty');
+  else console.log(`[upload] skip reason=${outcome.reason}`);
 }
 
 // INFINITAS(bm2dx.exe) 종료 감지 — 떠 있다가 사라지면 마지막 업로드 1회(앱은 계속 유지).
@@ -613,7 +633,7 @@ function startInfinitasWatch(): void {
       const alive = await isInfinitasAlive();
       if (infinitasWasAlive && !alive) {
         console.log('[infinitas] 종료 감지 — 마지막 업로드 요청');
-        void requestFinalUpload();
+        void requestFinalUpload().then(logFinalOutcome);
       }
       infinitasWasAlive = alive;
     })();
@@ -634,6 +654,7 @@ function createWindow(): void {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
       contextIsolation: true,
+      backgroundThrottling: false,
     },
   });
 
@@ -646,24 +667,12 @@ function createWindow(): void {
   mainWindow.on('maximize', emitMaxState);
   mainWindow.on('unmaximize', emitMaxState);
 
-  // 앱 종료(창 닫기) — 창이 파괴되기 전(renderer 생존) 에 마지막 업로드 1회 후 실제 닫기.
-  let closeHandled = false;
+  // X는 즉시 숨기고, 실제 종료 조율은 before-quit에서 renderer를 살린 채 수행한다.
   mainWindow.on('close', (e) => {
-    if (closeHandled) return; // 두 번째 close 는 그대로 진행
+    if (quitFinalizing) return;
     e.preventDefault();
-    closeHandled = true;
-    void (async () => {
-      try {
-        await requestFinalUpload();
-      } catch {
-        /* ignore */
-      }
-      if (infinitasWatchTimer) {
-        clearInterval(infinitasWatchTimer);
-        infinitasWatchTimer = null;
-      }
-      mainWindow?.destroy();
-    })();
+    mainWindow?.hide();
+    app.quit();
   });
 
   if (process.env.ELECTRON_RENDERER_URL) {
@@ -744,12 +753,8 @@ app.on('before-quit', async (e) => {
     clearInterval(infinitasWatchTimer);
     infinitasWatchTimer = null;
   }
-  // 직접 app.quit(OS 종료/메뉴 등) 경로의 마지막 업로드 — renderer 가 살아있을 때만 동작(이미 닫힌 X버튼 경로는 close 핸들러가 처리 → 여기선 no-op).
-  try {
-    await requestFinalUpload();
-  } catch {
-    /* ignore */
-  }
+  const outcome = await requestFinalUpload();
+  logFinalOutcome(outcome);
   if (refluxManager.getState().spawned) {
     try {
       await refluxManager.stop();
@@ -757,5 +762,6 @@ app.on('before-quit', async (e) => {
       /* ignore */
     }
   }
+  mainWindow?.destroy();
   app.exit(0);
 });

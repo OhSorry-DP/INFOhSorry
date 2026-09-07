@@ -2,6 +2,15 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### (미배포) — 업로드 스냅샷·durable pending·종료 lifecycle
+
+- 게임 종료와 IIDX ID 전환에서 `tracker.tsv`/메모리 상태를 비우기 전에 현재 업로드 입력을 `UploadSnapshot`으로 동기 캡처한다. 유저별 pending 파일은 fsync 뒤 rename하는 write-ahead 방식으로 저장하며, 실패한 업로드는 다음 앱 시작 때 현재 로그인 계정과 무관하게 순차 재전송한다.
+- 정기·수동·종료 업로드도 모두 같은 snapshot write-ahead 경로를 사용한다. ID와 TSV 출처 ID가 일치할 때만 캡처해 계정과 점수가 섞이지 않는다.
+- 닫기 요청은 창을 즉시 숨긴 뒤 최대 30초 동안 renderer 업로드를 완료시키고, ack/timeout/실패를 구분해 로그로 남긴 후 Reflux와 창을 종료한다.
+- 업로드 스냅샷의 `tsvMtime`을 ref로 읽어 stale closure를 제거하고, 브라우저 원격에서는 pending API를 호출하지 않도록 차단했다. pending 삭제 실패는 HTTP 실패와 구분해 다음 실행 재전송 대상으로 보존하며, 저장 실패와 잔여 `.tmp` 파일은 best-effort로 정리한다.
+- 🔴 **실기 검증 전이다.** `npm run typecheck` / `npm run build` 만 통과했고, 게임 종료·계정 전환·pending 재전송의 실제 동작은 INFINITAS 환경에서 아직 확인하지 않았다. 릴리즈 전 devtools 콘솔에서 `[guard]` → `[upload] capture` → `[upload] success` 순서와 `userData/upload-pending/` 이 성공 후 비는지 확인할 것.
+- 남은 문제: `app.requestSingleInstanceLock()` 이 없어 창을 숨긴 뒤 최대 30초 종료 대기 중 앱을 재실행하면 두 인스턴스가 될 수 있다(이번 범위 밖).
+
 ### v0.0.114 — 2026-09-06 SP☆12 서열표 데이터 소스를 ohSorryRating 발행 JSON으로 교체
 
 `spTier.ts`가 구글시트 "☆12参考表"를 직접 fetch+파싱하고 있었는데, 태그 경계를 무시한 `<br>` split 때문에 연속된 개인차 곡이 묶여 나올 때 caution 표시가 엉뚱한 곡으로 쏠리는 버그가 있었다(하드 개인차 130곡 중 28곡만 검출 등, 원인 분석·수정은 ohSorryRating 쪽 CHANGELOG 참고). 오소리웹도 같은 데이터를 별도 경로로 쓰고 있어 파서가 두 곳에 중복돼 있던 것도 같이 정리.

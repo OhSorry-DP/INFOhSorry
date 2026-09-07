@@ -169,7 +169,10 @@ declare global {
       };
       upload: {
         onFinalRequest: (cb: () => void) => () => void;
-        finalDone: () => void;
+        finalDone: (outcome: import('../shared/uploadSnapshot').UploadOutcome) => void;
+        savePending?: (snapshot: import('../shared/uploadSnapshot').UploadSnapshot) => Promise<{ ok: boolean; error?: string; path?: string; bytes?: number }>;
+        loadPending?: () => Promise<import('../shared/uploadSnapshot').UploadSnapshot[]>;
+        clearPending?: (iidxId: string) => Promise<{ ok: boolean; error?: string; path?: string }>;
       };
       server: {
         info: () => Promise<{

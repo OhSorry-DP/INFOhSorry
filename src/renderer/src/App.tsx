@@ -58,11 +58,12 @@ import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { QrConnect } from './QrConnect';
 import { ProfileCard } from './ProfileCard';
-import { readIidxIdFresh, useProfile } from './useProfile';
+import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
 import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
+import { SNAPSHOT_VERSION, type SnapshotReason, type UploadOutcome, type UploadSnapshot } from '../../shared/uploadSnapshot';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
 //   buildRecsWithPool / buildWeaknessRecs 의 raw row 를 기존 Recommendations / RecCard 가 쓰는 RecCandidate 로 변환.
@@ -185,6 +186,8 @@ export default function App() {
   //   prev(직전 tick)만 보면 B 도착 시 prev=null 이라 A→B 전환을 놓침(옛 계정 rows·별값 잔존).
   //   null 공백을 건너뛰고 "직전 유효 ID ≠ 새 유효 ID" 로 판정하기 위한 앵커.
   const lastValidIidxIdRef = useRef<string | null>(null);
+  // useProfile가 게임 종료 뒤 null을 발행해도, doReset 직전의 identity/profile payload를 보존한다.
+  const lastValidProfileRef = useRef<ProfileInfo | null>(null);
   // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
   // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
   const initialUploadDoneRef = useRef(false);
@@ -221,6 +224,8 @@ export default function App() {
   // 디스크에서 마지막으로 읽은 tracker.tsv 의 mtime — 같은 mtime 으로 중복 reload 방지
   const lastLoadedMtime = useRef<number>(0);
   const [tsvMtime, setTsvMtime] = useState<number>(0);
+  const tsvMtimeRef = useRef<number>(0);
+  tsvMtimeRef.current = tsvMtime;
 
   // ereter ★ 데이터 캐시 상태 + 갱신 진행 표시 + 실제 데이터
   const [ereterStatus, setEreterStatus] = useState<EreterCacheStatus | null>(null);
@@ -1036,7 +1041,9 @@ export default function App() {
     }
 
     // 공통 정리 — 옛 ID 의 stale rows/tsv 제거 + 출처 ID 태그 reset + 재업로드 활성화.
-    const doReset = (reasonMsg: string): void => {
+    const doReset = (reasonMsg: string, snapshotReason: SnapshotReason, identityProfile: ProfileInfo | null): void => {
+      const snapshot = buildSnapshot(snapshotReason, identityProfile);
+      if (snapshot) void uploadSnapshot(snapshot, snapshotReason);
       if (stuckNullTimerRef.current) {
         clearTimeout(stuckNullTimerRef.current);
         stuckNullTimerRef.current = null;
@@ -1072,12 +1079,15 @@ export default function App() {
     //        새 유효 ID 가 직전 유효 ID 와 다르면 명백한 전환 → null 공백/5초 debounce 무관하게 즉시 정리.
     //        (이게 빠지면 옛 계정 rows·별값이 그대로 남거나, null 이 5초 넘으면 0/빈값으로 남음)
     if (refluxHooked && now && VALID.test(now)) {
+      const prevValidProfile = lastValidProfileRef.current;
       const lastValid = lastValidIidxIdRef.current;
       lastValidIidxIdRef.current = now;
       if (lastValid && VALID.test(lastValid) && lastValid !== now) {
-        doReset(`IIDX ID 전환 감지 (${lastValid} → ${now})`);
+        doReset(`IIDX ID 전환 감지 (${lastValid} → ${now})`, 'id-switch', prevValidProfile);
+        lastValidProfileRef.current = { ...profile };
         return;
       }
+      lastValidProfileRef.current = { ...profile };
     }
 
     // ID 가 다시 잡힘 → pending null debounce 취소
@@ -1095,7 +1105,7 @@ export default function App() {
     // 이미 timer 가 돌고 있으면 그대로 둠.
     if (stuckNullTimerRef.current) return;
     stuckNullTimerRef.current = setTimeout(() => {
-      doReset(`IIDX ID 5초 이상 끊김 (이전: ${prev})`);
+      doReset(`IIDX ID 5초 이상 끊김 (이전: ${prev})`, 'game-exit', lastValidProfileRef.current);
     }, 5000);
   }, [profile.iidxId, refluxState.stage, tsvPath]);
 
@@ -1135,22 +1145,129 @@ export default function App() {
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
   const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts });
   uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts };
+
+  // 캡처는 동기 값 복사만 수행한다. 이후 doReset이 rows/ref를 비워도 snapshot은 변하지 않는다.
+  const buildSnapshot = useCallback((reason: SnapshotReason, identityProfile: ProfileInfo | null): UploadSnapshot | null => {
+    const id = identityProfile?.iidxId;
+    const djName = identityProfile?.djName;
+    const sourceIidxId = rowsSourceIidxIdRef.current;
+    if (!id || !/^[A-Z]\d{12}$/.test(id)) {
+      console.log('[upload] skip reason=invalid-identity');
+      return null;
+    }
+    if (!djName) {
+      console.log('[upload] skip reason=missing-dj-name');
+      return null;
+    }
+    if (sourceIidxId !== id) {
+      console.log(`[upload] skip reason=source-id-mismatch identity=${id} source=${sourceIidxId ?? 'null'}`);
+      return null;
+    }
+    const state = uploadStateRef.current;
+    const snapshot: UploadSnapshot = {
+      v: SNAPSHOT_VERSION,
+      capturedAt: Date.now(),
+      reason,
+      iidxId: id,
+      djName,
+      sourceIidxId,
+      tsvMtime: tsvMtimeRef.current,
+      appVersion: APP_VERSION,
+      profile: { ...identityProfile, iidxId: id, djName },
+      starResult: state.dp12StarResult,
+      rStar: state.userRStar,
+      charts: state.dp12Match?.charts ?? [],
+      unclassifiedCharts: state.dp12Match?.unclassifiedCharts ?? [],
+      spCpi: state.spStarResult?.cpiInt ?? null,
+      spStar: state.spStarResult?.starRounded ?? null,
+      spCharts: state.spAllCharts,
+      dpAllCharts: state.dpAllCharts,
+      allTsvCharts: state.allTsvCharts,
+    };
+    console.log(`[upload] capture reason=${reason} id=${id} tsv_mtime=${snapshot.tsvMtime} charts=${snapshot.allTsvCharts.length}`);
+    return snapshot;
+  }, []);
+
+  const uploadSnapshot = useCallback(async (snapshot: UploadSnapshot, trigger: string): Promise<UploadOutcome> => {
+    if (IS_BROWSER_REMOTE) return { kind: 'skip-no-snapshot', reason: 'browser-remote' };
+    const startedAt = Date.now();
+    const savePending = window.infohsorry.upload.savePending;
+    const saved = typeof savePending === 'function' ? await savePending(snapshot) : { ok: false, error: 'pending save unavailable' };
+    if (!saved.ok) console.warn(`[upload] pending save failure trigger=${trigger}: ${saved.error ?? 'unknown'}`);
+    try {
+      const result = await uploadProfile({
+        appVersion: snapshot.appVersion,
+        profile: snapshot.profile as ProfileInfo,
+        starResult: snapshot.starResult,
+        rStar: snapshot.rStar,
+        charts: snapshot.charts,
+        unclassifiedCharts: snapshot.unclassifiedCharts,
+        spCpi: snapshot.spCpi,
+        spStar: snapshot.spStar,
+        spCharts: snapshot.spCharts,
+        dpAllCharts: snapshot.dpAllCharts,
+        allTsvCharts: snapshot.allTsvCharts,
+      });
+      const durationMs = Date.now() - startedAt;
+      if (!result.ok) {
+        console.warn(`[upload] http failure ${result.error ?? 'unknown'} -> pending preserved`);
+        return { kind: 'http-failure', error: result.error ?? 'upload failed', durationMs };
+      }
+      const clearPending = window.infohsorry.upload.clearPending;
+      const cleared = typeof clearPending === 'function'
+        ? await clearPending(snapshot.iidxId)
+        : { ok: false, error: 'pending clear unavailable' };
+      if (!cleared.ok) {
+        console.warn(`[upload] success duration=${durationMs}ms but pending clear failed -> pending preserved (다음 실행에서 재전송)`);
+        return { kind: 'pending-clear-failed', error: cleared.error ?? 'pending clear failed', durationMs };
+      }
+      console.log(`[upload] success duration=${durationMs}ms -> pending cleared`);
+      return { kind: 'success', durationMs };
+    } catch (e) {
+      const durationMs = Date.now() - startedAt;
+      const error = (e as Error).message;
+      console.warn(`[upload] http failure ${error} -> pending preserved`);
+      return { kind: 'http-failure', error, durationMs };
+    }
+  }, []);
+
+  // pending은 자기 identity를 갖고 있으므로 현재 게임/프로필과 무관하게 앱 준비 후 한 번 순차 재전송한다.
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
+    let cancelled = false;
+    void (async () => {
+      const loadPending = window.infohsorry.upload.loadPending;
+      if (typeof loadPending !== 'function') return;
+      const pending = await loadPending();
+      for (const snapshot of pending) {
+        if (cancelled) return;
+        const ageMs = Date.now() - snapshot.capturedAt;
+        const outcome = await uploadSnapshot(snapshot, 'pending');
+        const age = `${Math.floor(ageMs / 3_600_000)}h${Math.floor((ageMs % 3_600_000) / 60_000)}m`;
+        if (outcome.kind === 'success') console.log(`[upload] retry(pending) id=${snapshot.iidxId} age=${age} -> success`);
+        else console.warn(`[upload] retry(pending) id=${snapshot.iidxId} age=${age} -> ${outcome.kind}${outcome.kind === 'http-failure' ? `(${outcome.error})` : ''}`);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [uploadSnapshot]);
   // Analysis 의 vec 재계산 + supabase upsert 트리거 — 동일 timer 가 star upload 후 증가시킴
   const [vecRecomputeKey, setVecRecomputeKey] = useState(0);
 
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
 
-    const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<void> => {
-      const { profile: p, dp12StarResult: s, userRStar: rs, spStarResult: sp, dp12Match: m, spAllCharts: spAll, dpAllCharts: dpAll, allTsvCharts: allTsv } = uploadStateRef.current;
+    const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<UploadOutcome> => {
+      const { profile: p } = uploadStateRef.current;
       const tag = `[supabase:${trigger}]`;
       if (!p.iidxId || !p.djName) {
         console.log(`${tag} skip: 프로필 미로드`, { iidxId: p.iidxId, djName: p.djName });
-        return;
+        return { kind: 'skip-no-snapshot', reason: 'profile-not-loaded' };
       }
       if (!/^[A-Z]\d{12}$/.test(p.iidxId)) {
         console.log(`${tag} skip: IIDX ID 형식 불일치 —`, p.iidxId);
-        return;
+        return { kind: 'skip-no-snapshot', reason: 'invalid-iidx-id' };
       }
       // 출처 ID 가드 — rows 가 "현재 메모리 유저가 이번 세션에 덤프한 TSV" 임을 보장.
       //   src 가 미확정(null/형식불일치 = 재실행 직후 디스크에 남은 옛 유저 tracker.tsv) 이거나
@@ -1159,7 +1276,7 @@ export default function App() {
       const src = rowsSourceIidxIdRef.current;
       if (!src || !/^[A-Z]\d{12}$/.test(src) || src !== p.iidxId) {
         console.warn(`${tag} skip: rows 출처 ID(${src}) 미확정/불일치 (현재 ${p.iidxId}) — 새 TSV 덤프 대기`);
-        return;
+        return { kind: 'skip-no-snapshot', reason: 'source-id-mismatch' };
       }
       // 메모리 재검증 — 캐시된 profile state 만 믿고 DB 에 쓰지 않는다.
       //   final 은 게임 종료 뒤 호출되므로 재읽기 실패 시 캐시값으로 마지막 업로드를 진행한다.
@@ -1167,37 +1284,19 @@ export default function App() {
       if (fresh.ok && fresh.iidxId) {
         if (fresh.iidxId !== p.iidxId) {
           console.warn(`${tag} skip: 메모리 재검증 불일치 (state=${p.iidxId} memory=${fresh.iidxId})`);
-          return;
+          return { kind: 'skip-no-snapshot', reason: 'fresh-id-mismatch' };
         }
       } else if (trigger !== 'final') {
         console.warn(`${tag} skip: IIDX ID 메모리 재검증 실패 (processMissing=${fresh.processMissing} err=${fresh.error ?? '-'})`);
-        return;
+        return { kind: 'skip-no-snapshot', reason: 'fresh-id-unavailable' };
       } else {
         console.log(`${tag} 메모리 재검증 생략 — 게임 종료 후 마지막 업로드 (캐시 ${p.iidxId} 사용)`);
       }
-      // ★ 추정(s) / dp12Match(m) 가 없어도 — SP 전용·DP 저레벨 전용 유저 — 업로드 진행.
-      //   iidxId + djName 만 있으면(위 가드 통과) users row 등록 + 가진 scores(SP10~12 / DP11~12) 적재.
-      //   star 는 null 로 전송 (uploadProfile 에서 p_star=null 처리).
-      console.log(`${tag} 업로드 시작 → iidxId:`, p.iidxId, 'DP★:', s ? s.star.toFixed(2) : 'null(미산출)',
-        'SP:', sp && sp.cpiInt != null ? `sp_cpi=${sp.cpiInt} sp_star=${sp.starRounded}` : 'null(표본부족→보존)');
-      // (원격모드 본인 카드 setUser 는 아래 별도 effect 가 dp12 재계산 즉시 실시간 push — supabase 업로드 주기와 분리.)
-      await uploadProfile({
-        appVersion: APP_VERSION,
-        profile: p,
-        starResult: s,  // null 가능 (SP 전용·DP 저레벨 전용) → users.star = null
-        rStar: rs,      // null 가능 (표본부족/미산출) → users.r_star 기존값 보존
-        charts: m?.charts ?? [],
-        // 서열표 '미분류' 곡 — charts_json 에만 합쳐 올림 (lamp 통계는 m.charts 만 집계)
-        unclassifiedCharts: m?.unclassifiedCharts ?? [],
-        spCpi: sp?.cpiInt ?? null,    // SP 대표 실력값 — null(표본부족)이면 RPC COALESCE 가 기존값 보존
-        spStar: sp?.starRounded ?? null,
-        spCharts: spAll,   // SP 차트 — 업로더가 gameLevel 10~12 만 play_style:0 으로 적재
-        dpAllCharts: dpAll,   // DP 전 레벨 플레이 채보 — play_style:1 전 레벨 적재 (lv11/12 는 dedup 으로 병합)
-        allTsvCharts: allTsv,   // TSV 전곡 — songs 마스터 곡 등록(플레이 무관)용
-      }).then((r) => {
-        if (r.ok) console.log(`${tag} 업로드 성공`);
-        else console.warn(`${tag} upsert 실패:`, r.error);
-      });
+      const reason: SnapshotReason = trigger === 'final' ? 'app-close' : trigger === 'manual' ? 'manual' : 'periodic';
+      const snapshot = buildSnapshot(reason, p);
+      if (!snapshot) return { kind: 'skip-no-snapshot', reason: 'snapshot-guard' };
+      console.log(`[upload] trigger=${trigger}`);
+      return uploadSnapshot(snapshot, trigger);
     };
 
     // auto 업로드 + 200ms 뒤 vec 재계산 — 스케줄러(초기 3분 → 이후 15분) / 콘솔이 호출.
@@ -1212,9 +1311,9 @@ export default function App() {
     // 앱/INFINITAS 종료 시 main 이 요청하는 "마지막 업로드" — 완료까지 await 후 main 에 done ack.
     const offFinal = window.infohsorry.upload.onFinalRequest(() => {
       void (async () => {
-        await tryUpload('final');
+        const outcome = await tryUpload('final');
         setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
-        window.infohsorry.upload.finalDone();
+        window.infohsorry.upload.finalDone(outcome);
       })();
     });
     console.log(`[supabase] 업로드 활성화 — INF 감지 후 ${INITIAL_UPLOAD_DELAY_MS / 1000}초 뒤 첫 업로드, 이후 ${STAR_REFRESH_INTERVAL_MS / 1000}초 주기. 수동: updateSupabase()`);
