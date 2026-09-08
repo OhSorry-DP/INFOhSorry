@@ -20,6 +20,8 @@ import { request as httpsRequest } from 'https';
 import { EventEmitter } from 'events';
 import { promisify } from 'util';
 import type { RefluxState } from '../shared/types';
+import type { InfinitasSessionState } from '../shared/session';
+import type { TsvChangedEvent } from '../shared/account';
 import { getRemoteOffsets, resolveBuild } from './offsetsRemote';
 
 const execAsync = promisify(exec);
@@ -274,7 +276,8 @@ export class RefluxManager extends EventEmitter {
   // 이전 세션 정리 (tracker.tsv / tracker.db / sessions/) 는 process lifetime 의 첫 spawn 1회만.
   // 이후 재spawn (health check 자동 재시작, 사용자 stop→start, "데이터 불러오기" 재클릭 등) 에서는
   // tsv 보존 — 앱 재시작 시 데이터 매번 비워지는 문제 방지. (사용자 요청)
-  private cleanedUp = false;
+  private getSession: () => InfinitasSessionState = () => ({ pid: null, generation: 0, startedAt: null });
+  attachSession(fn: () => InfinitasSessionState): void { this.getSession = fn; }
 
   getState(): RefluxState {
     // installed 는 디스크 exe 존재 여부로도 결정. 앱 부팅 직후 (state.installed=false 기본값)
@@ -373,6 +376,12 @@ export class RefluxManager extends EventEmitter {
   }
 
   private async healthCheck(): Promise<void> {
+    if (this.getSession().pid == null) {
+      this.addLine('(게임 미실행 — Reflux 재시작 안 함)');
+      this.setState({ spawned: false, stage: 'idle' });
+      this.stopHealthCheck();
+      return;
+    }
     // 사용자가 명시적으로 stop 했으면 (spawned=false) skip
     if (!this.state.spawned) return;
     const alive = await this.isRefluxAlive();
@@ -622,10 +631,7 @@ export class RefluxManager extends EventEmitter {
     // 매 spawn 마다 기존 Reflux kill (file lock 해제 + 깨끗한 새 spawn 준비) — 이건 항상 필요.
     // 세션 잔여물 정리 (tracker.tsv 등) 는 process lifetime 의 첫 spawn 1회만 — 재spawn 시 tsv 보존.
     await this.killAllRefluxProcesses();
-    if (!this.cleanedUp) {
-      this.cleanupPreviousSession();
-      this.cleanedUp = true;
-    }
+    this.cleanupPreviousSession();
 
     // PowerShell Start-Process -WindowStyle Hidden — 콘솔창 작업표시줄에도 안 보임.
     // Reflux 는 hidden 콘솔에서 attach 받음 → Console.Clear 동작.
@@ -677,6 +683,7 @@ export class RefluxManager extends EventEmitter {
                 this.lastTsvMtime = m;
                 this.setState({ stage: 'ready', lastTsvMtime: m });
                 this.transitionHealthCheckToSteady();
+                this.emit('tsvChanged', { tsvPath: tsvPath(), mtime: m, size: st.size, generation: this.getSession().generation, pid: this.getSession().pid } satisfies TsvChangedEvent);
               }
             })
             .catch(() => {
@@ -720,8 +727,20 @@ export class RefluxManager extends EventEmitter {
         resolve();
       });
     });
+    try { rmSync(tsvPath(), { force: true }); } catch { /* ignore */ }
     this.setState({ spawned: false, stage: 'idle', error: undefined });
     this.addLine('(Reflux 종료됨 — 자동 재시작 비활성)');
+  }
+
+  async hardStop(): Promise<void> {
+    this.stopHealthCheck();
+    if (this.tsvWatcher) { this.tsvWatcher.close(); this.tsvWatcher = null; }
+    await this.killAllRefluxProcesses();
+    this.child = null;
+    try { rmSync(tsvPath(), { force: true }); } catch { /* ignore */ }
+    for (const p of [join(workDir(), 'tracker.db'), join(workDir(), 'sessions')]) { try { rmSync(p, { recursive: true, force: true }); } catch { /* ignore */ } }
+    this.lastTsvMtime = 0;
+    this.setState({ spawned: false, stage: 'idle', error: undefined });
   }
 
   // 외부 노출 (renderer 가 tsv 직접 읽을 수 있게)

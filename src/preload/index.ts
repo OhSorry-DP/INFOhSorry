@@ -15,6 +15,8 @@ import type {
   RatingCacheStatus,
   UpdateInfo,
 } from '../shared/types';
+import type { InfinitasSessionState } from '../shared/session';
+import type { AccountMeta, TsvChangedEvent, AccountSnapshotRequest, AccountSnapshotResult } from '../shared/account';
 import type { RemoteProfileMap } from '../shared/profileOffsets';
 
 const api = {
@@ -47,6 +49,18 @@ const api = {
         ipcRenderer.off('reflux:state', listener);
       };
     },
+    onTsvChanged: (cb: (e: TsvChangedEvent) => void): (() => void) => { const l = (_e: unknown, ev: TsvChangedEvent): void => cb(ev); ipcRenderer.on('reflux:tsvChanged', l); return () => ipcRenderer.off('reflux:tsvChanged', l); },
+  },
+  session: {
+    getState: (): Promise<InfinitasSessionState> => ipcRenderer.invoke('session:getState'),
+    onState: (cb: (s: InfinitasSessionState) => void): (() => void) => { const l = (_e: unknown, s: InfinitasSessionState): void => cb(s); ipcRenderer.on('session:state', l); return () => ipcRenderer.off('session:state', l); },
+  },
+  account: {
+    list: (): Promise<AccountMeta[]> => ipcRenderer.invoke('account:list'),
+    readTsv: (iidxId: string): Promise<TsvReadResult> => ipcRenderer.invoke('account:readTsv', iidxId),
+    snapshot: (req: AccountSnapshotRequest): Promise<AccountSnapshotResult> => ipcRenderer.invoke('account:snapshot', req),
+    getLastSelected: (): Promise<string | null> => ipcRenderer.invoke('account:lastSelected:get'),
+    setLastSelected: (iidxId: string): Promise<{ ok: boolean }> => ipcRenderer.invoke('account:lastSelected:set', iidxId),
   },
 
   // ereter.net 데이터 (perlevel ★ 값) 캐시 + 24h TTL

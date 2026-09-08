@@ -20,6 +20,9 @@ import {
   type StringEncoding,
 } from './memory';
 import { RefluxManager, readRefluxOffsets } from './reflux';
+import { InfinitasSessionMonitor } from './infinitasSession';
+import { snapshotTsv, listAccounts, readAccountTsv, getLastSelected, setLastSelected } from './accountTsvStore';
+import type { AccountSnapshotRequest } from '../shared/account';
 import { getRemoteProfileOffsets } from './offsetsRemote';
 import {
   getEreterData,
@@ -39,6 +42,9 @@ import type { UploadOutcome, UploadSnapshot } from '../shared/uploadSnapshot';
 
 let mainWindow: BrowserWindow | null = null;
 const refluxManager = new RefluxManager();
+const sessionMonitor = new InfinitasSessionMonitor();
+refluxManager.attachSession(() => sessionMonitor.getState());
+let sessionOpChain: Promise<void> = Promise.resolve();
 
 // 원격모드(LAN 로컬보드) — renderer 가 계산해 push 한 오소리웹 user 객체(별값 + charts_json) 캐시.
 //   http-server 의 GET /api/me 가 이 값을 노출 → 오소리웹 원격 카드가 supabase 대신 읽음.
@@ -73,6 +79,12 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     return { ok: true };
   },
   'reflux:tsvPath': async () => RefluxManager.tsvFilePath,
+  'session:getState': async () => sessionMonitor.getState(),
+  'account:list': async () => listAccounts(),
+  'account:readTsv': async (...args: never[]) => readAccountTsv(args[0] as string),
+  'account:snapshot': async (...args: never[]) => snapshotTsv(args[0] as AccountSnapshotRequest, { sourceTsvPath: RefluxManager.tsvFilePath, getSession: () => sessionMonitor.getState() }),
+  'account:lastSelected:get': async () => getLastSelected(),
+  'account:lastSelected:set': async (...args: never[]) => { await setLastSelected(args[0] as string); return { ok: true }; },
 
   // Image (캡처)
   'image:save': async (...args: never[]) => {
@@ -699,12 +711,20 @@ function createWindow(): void {
       mainWindow.webContents.send('reflux:state', state);
     }
   });
+  refluxManager.on('tsvChanged', (event) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('reflux:tsvChanged', event); });
 }
+
+async function onSessionStart(): Promise<void> { await refluxManager.hardStop(); remoteUser = null; try { await refluxManager.startAll(); } catch (e) { console.warn('[session] Reflux 시작 실패:', (e as Error).message); } pushSessionState(); }
+async function onSessionEnd(): Promise<void> { void requestFinalUpload().then(logFinalOutcome); await refluxManager.hardStop(); pushSessionState(); }
+function pushSessionState(): void { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('session:state', sessionMonitor.getState()); }
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   createWindow();
-  startInfinitasWatch(); // INFINITAS 종료 감지 → 마지막 업로드
+  sessionMonitor.on('start', () => { sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
+  sessionMonitor.on('end', () => { sessionOpChain = sessionOpChain.then(() => onSessionEnd()); });
+  sessionMonitor.on('state', pushSessionState);
+  sessionMonitor.start();
 
   // 자기 실행 파일이 portable 패턴이면 같은 폴더 내 옛 portable 정리 (자기 패턴만, 안전)
   const cl = cleanupOldPortables();

@@ -16,6 +16,8 @@ import type {
   UpdateInfo,
 } from '../shared/types';
 import type { RemoteProfileMap } from '../shared/profileOffsets';
+import type { InfinitasSessionState } from '../shared/session';
+import type { AccountMeta, TsvChangedEvent, AccountSnapshotRequest, AccountSnapshotResult } from '../shared/account';
 
 declare global {
   interface Window {
@@ -36,6 +38,15 @@ declare global {
           mtime?: number;
         }>;
         onState: (cb: (s: RefluxState) => void) => () => void;
+        onTsvChanged: (cb: (e: TsvChangedEvent) => void) => () => void;
+      };
+      session: { getState: () => Promise<InfinitasSessionState>; onState: (cb: (s: InfinitasSessionState) => void) => () => void };
+      account: {
+        list: () => Promise<AccountMeta[]>;
+        readTsv: (iidxId: string) => Promise<TsvReadResult>;
+        snapshot: (req: AccountSnapshotRequest) => Promise<AccountSnapshotResult>;
+        getLastSelected: () => Promise<string | null>;
+        setLastSelected: (iidxId: string) => Promise<{ ok: boolean }>;
       };
       ereter: {
         get: (force?: boolean) => Promise<EreterGetResult>;
