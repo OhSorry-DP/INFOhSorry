@@ -64,6 +64,8 @@ import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, 
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
 import { SNAPSHOT_VERSION, type SnapshotReason, type UploadOutcome, type UploadSnapshot } from '../../shared/uploadSnapshot';
+import type { AccountMeta, TsvChangedEvent } from '../../shared/account';
+import type { InfinitasSessionState } from '../../shared/session';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
 //   buildRecsWithPool / buildWeaknessRecs 의 raw row 를 기존 Recommendations / RecCard 가 쓰는 RecCandidate 로 변환.
@@ -139,6 +141,18 @@ const STAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 정기 업로드 — 15분
 const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비) 후 첫 업로드까지 대기 — 3분
 
 type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
+const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
+type ViewerBridge = {
+  session: { getState: () => Promise<InfinitasSessionState>; onState: (cb: (s: InfinitasSessionState) => void) => () => void };
+  account: {
+    list: () => Promise<AccountMeta[]>;
+    readTsv: (iidxId: string) => Promise<{ ok: boolean; rows?: SongRow[]; mtime?: number; error?: string }>;
+    snapshot: (req: import('../../shared/account').AccountSnapshotRequest) => Promise<import('../../shared/account').AccountSnapshotResult>;
+    getLastSelected: () => Promise<string | null>;
+    setLastSelected: (iidxId: string) => Promise<{ ok: boolean }>;
+  };
+  reflux: { onTsvChanged: (cb: (e: TsvChangedEvent) => void) => () => void };
+};
 
 // "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
 function formatRelativeTime(epochMs: number): string {
@@ -164,6 +178,26 @@ export default function App() {
     spawned: false,
   });
   const [rows, setRows] = useState<SongRow[]>([]);
+  const [session, setSession] = useState<InfinitasSessionState>({ pid: null, generation: 0, startedAt: null });
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+  const [selectedViewerId, setSelectedViewerId] = useState<string | null>(null);
+  const selectedViewerIdRef = useRef<string | null>(null);
+  selectedViewerIdRef.current = selectedViewerId;
+  const [accounts, setAccounts] = useState<AccountMeta[]>([]);
+  const loadViewerAccount = useCallback(async (id: string): Promise<void> => {
+    if (!id || !VALID_IIDX_ID.test(id)) return;
+    setSelectedViewerId(id);
+    const viewer = window.infohsorry as unknown as ViewerBridge;
+    void viewer.account.setLastSelected(id);
+    const t = await viewer.account.readTsv(id);
+    if (t.ok) {
+      setRows(t.rows ?? []);
+      setTsvMtime(t.mtime ?? 0);
+    } else {
+      console.warn('[viewer] account.readTsv failed:', t.error);
+    }
+  }, []);
   const [tab, setTab] = useState<Tab>('playdata');
   // 추천곡 클릭 → DP 탭 + 해당 row 로 스크롤 타깃
   const [scrollTarget, setScrollTarget] = useState<{ title: string; slot: string; gameLevel?: number | null } | null>(null);
@@ -171,23 +205,18 @@ export default function App() {
   const [playDataTarget, setPlayDataTarget] = useState<{ title: string; slot: string } | null>(null);
   // 옛 ID 의 tsv 가 메모리에 남아 새 ID 로 잘못 업로드되는 사고 방지용 — 옛 IIDX ID 추적.
   // truthy → null transition (= 게임 종료 / 다른 ID 로 로그인 전 단계) 감지 시 tsv 비우기 + 로딩 데이터 reset.
-  const prevIidxIdRef = useRef<string | null>(null);
   // "세션 중 한 번이라도 유효한 IIDX ID 가 잡힌 적 있는지" 추적 — false-positive 방어.
   //   INFINITAS 미실행 / 메모리 잡음으로 잠깐 truthy 가 잡혔다 사라지는 케이스에선 transit 인식 X.
   //   유효 조건: Reflux 가 hooked/ready 상태 + iidx_id 형식 매칭 (^[A-Z]\d{12}$).
-  const everHadValidIidxIdRef = useRef(false);
   // null 상태 debounce timer — null 이 5초 이상 *지속* 되어야 진짜 transit 으로 판정.
   //   "데이터 불러오기" 클릭 / health-check 자동 재시작 시 stage='starting' / 'hooking' 거치는 동안
   //   useProfile 이 iidxId 를 null 로 잠깐 reset 함 → 5초 안에 ready 가 되어 다시 잡히면 cancel.
   //   INFINITAS 진짜 종료 시는 null 이 계속 유지되어 5초 후 cleanup 발동.
-  const stuckNullTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   // 마지막으로 잡힌 "유효" IIDX ID — 계정 전환을 직전 tick(prev)이 아니라 이 값 대비로 감지.
   //   게임 재시작 시 useProfile 이 iidxId 를 잠깐 null 로 리셋 → 시퀀스가 A→null→B 가 되는데,
   //   prev(직전 tick)만 보면 B 도착 시 prev=null 이라 A→B 전환을 놓침(옛 계정 rows·별값 잔존).
   //   null 공백을 건너뛰고 "직전 유효 ID ≠ 새 유효 ID" 로 판정하기 위한 앵커.
-  const lastValidIidxIdRef = useRef<string | null>(null);
   // useProfile가 게임 종료 뒤 null을 발행해도, doReset 직전의 identity/profile payload를 보존한다.
-  const lastValidProfileRef = useRef<ProfileInfo | null>(null);
   // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
   // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
   const initialUploadDoneRef = useRef(false);
@@ -195,13 +224,11 @@ export default function App() {
   const schedTimersRef = useRef<{ initial: number | null; interval: number | null }>({ initial: null, interval: null });
   // 현재 rows(TSV 점수) 가 어느 IIDX ID 의 덤프에서 온 것인지 — TSV read 성공 시 그 시점 live ID 로 태깅.
   //   업로드 직전 현재 ID 와 비교해, ID 가 바뀐 뒤 옛 rows 가 새 ID 로 잘못 올라가는 것을 차단(이중 안전장치).
-  const rowsSourceIidxIdRef = useRef<string | null>(null);
   // spawn 직후 최초 read 한 디스크 tracker.tsv 의 mtime("세션 baseline"). 이 값 이하의 read = 디스크 잔존
   //   옛 유저 TSV(cross-restart stale)일 수 있어 표시 전용. 이 값을 "초과"하는 read 만 = 이번 세션 새 덤프 →
   //   업로드 출처로 승격(HOLE 2 차단). null = baseline 미설정(빈 파일로 시작 등) → 첫 실데이터를 fresh 로 인정.
-  const spawnTsvBaselineRef = useRef<number | null>(null);
   // 매 렌더마다 갱신되는 현재 live IIDX ID — profile 선언(아래쪽) 보다 위에 정의된 loadTsv / 초기 read 에서 참조용.
-  const liveIidxIdRef = useRef<string | null>(null);
+  const lastSnapshotRef = useRef<{ iidxId: string; generation: number; tsvMtime: number } | null>(null);
   const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);   // 폰 연결 QR 모달
   // 개발 모드 — 호스트 (Electron) 에서만 콘솔에 startdev() 노출. PC2 (브라우저 원격) 에선 비활성.
@@ -270,7 +297,35 @@ export default function App() {
   //
   // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 이후 tsv 변경마다 실시간 갱신.
   // (옛 동작: 마운트 즉시 옛 tsv 표시 → race condition 으로 stale 데이터 영구 노출 가능했음)
-  const prevSpawnedRef = useRef(false);
+  const tsvChangedDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  useEffect(() => {
+    const offReflux = window.infohsorry.reflux.onState(setRefluxState);
+    const viewer = window.infohsorry as unknown as ViewerBridge;
+    const offSession = viewer.session.onState(setSession);
+    const offTsvChanged = viewer.reflux.onTsvChanged((e: TsvChangedEvent) => {
+      if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current);
+      tsvChangedDebounceRef.current = window.setTimeout(() => void (async () => {
+        const fresh = await readIidxIdFresh();
+        if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) return console.warn('[snapshot] skip: fresh id unavailable', fresh);
+        const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect: { generation: e.generation, pid: e.pid, mtime: e.mtime, size: e.size } });
+        if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) return console.warn('[snapshot] rejected:', res.reason);
+        lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
+        void viewer.account.list().then(setAccounts);
+        if (selectedViewerIdRef.current === res.iidxId) {
+          const t = await viewer.account.readTsv(res.iidxId);
+          if (t.ok) { setRows(t.rows ?? []); setTsvMtime(t.mtime ?? 0); }
+        }
+      })(), 400);
+    });
+    void (async () => {
+      const [s, path, list, lastSelected] = await Promise.all([viewer.session.getState(), window.infohsorry.reflux.getTsvPath(), viewer.account.list(), viewer.account.getLastSelected()]);
+      setSession(s); setRefluxState(await window.infohsorry.reflux.getState()); setTsvPath(path); setAccounts(list);
+      if (s.pid == null && lastSelected) void loadViewerAccount(lastSelected);
+    })();
+    return () => { offReflux(); offSession(); offTsvChanged(); if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current); };
+  }, [loadViewerAccount]);
+
+  /* 이전 Reflux 원본 TSV 구독 경로. 계정 스냅샷 IPC가 이를 대체한다.
   useEffect(() => {
     const off = window.infohsorry.reflux.onState((s) => {
       setRefluxState(s);
@@ -310,6 +365,7 @@ export default function App() {
   }, []);
 
   // 마운트 시 ereter 상태 확인 — 24h 지났거나 데이터 없으면 자동 갱신
+  */
   useEffect(() => {
     void (async () => {
       const status = await window.infohsorry.ereter.status();
@@ -426,6 +482,7 @@ export default function App() {
   //   debounce 400ms — 메모리 덤프가 짧은 간격으로 연속 갱신될 때 loadTsv 폭주 방지.
   //   (0.0.41~0.0.75 에선 race 우려로 이 이벤트 reload 를 끄고 timer 로만 읽었으나, 실시간성 위해 부활.
   //    옛 ID 잘못 업로드 사고는 loadTsv 의 rowsSourceIidxIdRef 태깅 + 업로드 가드가 별도로 막음.)
+  /* Reflux 원본 경로는 계정 저장본 뷰어로 대체됨.
   const liveReloadRef = useRef({ loadTsv: (_p: string): Promise<void> => Promise.resolve(), tsvPath });
   const reloadDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   useEffect(() => {
@@ -467,6 +524,7 @@ export default function App() {
   liveReloadRef.current = { loadTsv, tsvPath };
 
   // "데이터 불러오기" 버튼 — Reflux 설치 + 실행 한 번에
+  */
   async function startReflux(): Promise<void> {
     setBusy(true);
     setError(null);
@@ -1013,8 +1071,30 @@ export default function App() {
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
+  const liveIidxId = session.pid != null && profile.iidxId && VALID_IIDX_ID.test(profile.iidxId) ? profile.iidxId : null;
+  const clearLiveSessionState = useCallback(() => {
+    lastSnapshotRef.current = null;
+    osrAccumRef.current.clear();
+    setRStarFloor(null);
+    initialUploadDoneRef.current = false;
+    if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
+    if (schedTimersRef.current.interval != null) window.clearInterval(schedTimersRef.current.interval);
+    schedTimersRef.current = { initial: null, interval: null };
+  }, []);
+  const prevSessionRef = useRef<InfinitasSessionState | null>(null);
+  useEffect(() => {
+    const prev = prevSessionRef.current;
+    if (prev && ((session.pid != null && (prev.pid == null || prev.generation !== session.generation)) || (session.pid == null && prev.pid != null))) {
+      clearLiveSessionState();
+      void (window.infohsorry as unknown as ViewerBridge).account.list().then(setAccounts);
+    }
+    prevSessionRef.current = session;
+  }, [session, clearLiveSessionState]);
+  useEffect(() => {
+    if (liveIidxId && selectedViewerIdRef.current !== liveIidxId) void loadViewerAccount(liveIidxId);
+  }, [liveIidxId, loadViewerAccount]);
   // 현재 live IIDX ID 를 ref 로 추적 — loadTsv / 초기 read 에서 "이 TSV 가 어느 ID 것인지" 태깅에 사용.
-  liveIidxIdRef.current = profile.iidxId;
+  /* 이전 identity poll 기반 reset 경로는 session 전이가 대체한다.
 
   // IIDX ID transition 감지 — 옛 ID 의 tsv 가 메모리에 남아 새 ID 로 잘못 업로드되는 사고 방지.
   //   (1) A → B 직접 전환: INF오소리 켜둔 채 게임만 다른 계정으로 다시 켠 경우 → 즉시 정리.
@@ -1112,6 +1192,7 @@ export default function App() {
   // 유저 공개 정보 (DP 노트레이더 + SP/DP 단위) — supabase 에서 iidxId 감지 시 1회 fetch.
   // 메모리 리딩이 단위를 못 가져오는 케이스가 있어 supabase 저장값 (getInfRadar.js 가 eagate djdata 에서 채움) 으로 보강.
   // 데이터 없는 필드는 ProfileCard 가 영역 자체 숨김.
+  */
   const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
   useEffect(() => {
     if (!profile.iidxId || !/^[A-Z]\d{12}$/.test(profile.iidxId)) {
@@ -1146,21 +1227,33 @@ export default function App() {
   const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts });
   uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts };
 
+  function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
+    const p = uploadStateRef.current.profile;
+    const snap = lastSnapshotRef.current;
+    const s = sessionRef.current;
+    if (!snap) return { ok: false, reason: 'no-snapshot-provenance' };
+    if (!snap.iidxId || !VALID_IIDX_ID.test(snap.iidxId)) return { ok: false, reason: 'bad-provenance-id' };
+    if (s.generation !== snap.generation) return { ok: false, reason: 'generation-advanced' };
+    if (trigger === 'final') {
+      if (!p.iidxId || p.iidxId !== snap.iidxId) return { ok: false, reason: 'final-id-mismatch' };
+      return { ok: true, id: snap.iidxId };
+    }
+    if (s.pid == null) return { ok: false, reason: 'game-off' };
+    if (!p.iidxId || !VALID_IIDX_ID.test(p.iidxId) || p.iidxId !== snap.iidxId) return { ok: false, reason: 'live-id-mismatch' };
+    return { ok: true, id: snap.iidxId };
+  }
+
   // 캡처는 동기 값 복사만 수행한다. 이후 doReset이 rows/ref를 비워도 snapshot은 변하지 않는다.
   const buildSnapshot = useCallback((reason: SnapshotReason, identityProfile: ProfileInfo | null): UploadSnapshot | null => {
     const id = identityProfile?.iidxId;
     const djName = identityProfile?.djName;
-    const sourceIidxId = rowsSourceIidxIdRef.current;
+    const sourceIidxId: string = lastSnapshotRef.current?.iidxId ?? id!;
     if (!id || !/^[A-Z]\d{12}$/.test(id)) {
       console.log('[upload] skip reason=invalid-identity');
       return null;
     }
     if (!djName) {
       console.log('[upload] skip reason=missing-dj-name');
-      return null;
-    }
-    if (sourceIidxId !== id) {
-      console.log(`[upload] skip reason=source-id-mismatch identity=${id} source=${sourceIidxId ?? 'null'}`);
       return null;
     }
     const state = uploadStateRef.current;
@@ -1171,7 +1264,7 @@ export default function App() {
       iidxId: id,
       djName,
       sourceIidxId,
-      tsvMtime: tsvMtimeRef.current,
+      tsvMtime: lastSnapshotRef.current?.tsvMtime ?? tsvMtimeRef.current,
       appVersion: APP_VERSION,
       profile: { ...identityProfile, iidxId: id, djName },
       starResult: state.dp12StarResult,
@@ -1257,6 +1350,30 @@ export default function App() {
 
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
+    const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<UploadOutcome> => {
+      const gate = uploadIdentityOk(trigger);
+      if (!gate.ok) return { kind: 'skip-no-snapshot', reason: gate.reason };
+      if (trigger !== 'final') {
+        const fresh = await readIidxIdFresh();
+        if (!fresh.ok || fresh.iidxId !== gate.id) return { kind: 'skip-no-snapshot', reason: 'fresh-id-mismatch' };
+      }
+      const snapshot = buildSnapshot(trigger === 'final' ? 'app-close' : trigger === 'manual' ? 'manual' : 'periodic', { ...uploadStateRef.current.profile, iidxId: gate.id });
+      return snapshot ? uploadSnapshot(snapshot, trigger) : { kind: 'skip-no-snapshot', reason: 'snapshot-guard' };
+    };
+    const runAuto = (): void => { void tryUpload('auto'); setTimeout(() => setVecRecomputeKey((k) => k + 1), 200); };
+    (window as unknown as { updateSupabase: () => void }).updateSupabase = () => void tryUpload('manual');
+    (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto = runAuto;
+    const offFinal = window.infohsorry.upload.onFinalRequest(() => void (async () => {
+      const outcome = await tryUpload('final');
+      setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
+      window.infohsorry.upload.finalDone(outcome);
+    })());
+    return () => { offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto; };
+  }, []);
+
+  /* 이전 rowsSource 기반 업로드 경로
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
 
     const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<UploadOutcome> => {
       const { profile: p } = uploadStateRef.current;
@@ -1332,12 +1449,13 @@ export default function App() {
   // (initialUploadDoneRef 는 옛 ID transition cleanup 이 false 로 리셋 → 유저 전환 시 3분 딜레이로 재무장.)
   //   rows 가 차야 spAllCharts/dpAllCharts 까지 채워져 가진 scores 가 함께 적재됨(users 만 빈 업로드 방지).
   //   dp12(★) 는 안 기다림 — DP12 안 친 유저도 인식되며, 늦게 준비돼도 다음 주기 틱이 보강.
+  */
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
     if (initialUploadDoneRef.current) return;
-    if (!profile.iidxId || !profile.djName) return;
-    if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return;
+    if (!liveIidxId) return;
     if (rows.length === 0) return;
+    if (lastSnapshotRef.current?.iidxId !== liveIidxId) return;
     initialUploadDoneRef.current = true;
     // 이전 유저 스케줄(있으면) 정리 후 재무장
     if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
@@ -1353,7 +1471,7 @@ export default function App() {
       schedTimersRef.current.interval = window.setInterval(runAuto, STAR_REFRESH_INTERVAL_MS);
     }, INITIAL_UPLOAD_DELAY_MS);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, rows]);
+  }, [liveIidxId, rows.length, session.generation]);
 
   // 원격모드 본인 카드 — 실시간 push. TSV 변경으로 dp12(별값/매칭)가 재계산될 때마다 /api/me 를 갱신하고,
   //   main 이 SSE me:update 를 broadcast → PC2(오소리웹 ?remote)가 보고 있는 본인 카드를 조용히 다시 그림.
@@ -1374,12 +1492,14 @@ export default function App() {
       console.log('[setUser진단]', msg);
     };
     if (IS_BROWSER_REMOTE) return dbg('skip: browser-remote');
+    if (session.pid == null) return dbg('skip: game-off');
     if (!profile.iidxId || !profile.djName) return dbg(`skip: profile 없음 (id=${profile.iidxId} dj=${profile.djName})`);
     if (!/^[A-Z]\d{12}$/.test(profile.iidxId)) return dbg(`skip: iidx 형식 불일치 (${profile.iidxId})`);
     // rows 출처 ID 가드 — 업로드 가드와 동일 정책. src 미확정(null/형식불일치)이거나 불일치면 push 금지.
     //   (null && 비교로 우회되던 구멍 차단 — 옛 유저 TSV 로 만든 카드를 새 유저로 push 하지 않게.)
-    if (!rowsSourceIidxIdRef.current || !/^[A-Z]\d{12}$/.test(rowsSourceIidxIdRef.current) || rowsSourceIidxIdRef.current !== profile.iidxId)
-      return dbg(`skip: 출처ID 미확정/불일치 (rows=${rowsSourceIidxIdRef.current} != profile=${profile.iidxId})`);
+    const gate = uploadIdentityOk('me');
+    if (!gate.ok || gate.id !== profile.iidxId)
+      return dbg(`skip: provenance gate (${gate.ok ? 'id-mismatch' : gate.reason})`);
     if (!dp12StarResult || !dp12Match) return dbg(`skip: dp12 미준비 (star=${!!dp12StarResult} match=${!!dp12Match})`);
     // tsv 값 변동 감지 — 모든 차트(rated DP + unclassified DP + SP)의 exScore 합 + lamp 합.
     //   exScore 든 lamp 든 한 곳이라도 바뀌면 sig 변경 → push. (미플레이→플레이, fail, 클리어 등 전부 포함.)
@@ -1414,7 +1534,7 @@ export default function App() {
     void window.infohsorry.remote.setUser(
       buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined),
     );
-  }, [profile, dp12StarResult, userRStar, dp12Match, spAllCharts, spTierData, spStarResult, textageByTitle]);
+  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, spAllCharts, spTierData, spStarResult, textageByTitle]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:
@@ -1955,7 +2075,10 @@ export default function App() {
           </button>
         </div>
       )}
-      {rows.length === 0 && <RefluxLog state={refluxState} />}
+      {rows.length === 0 && session.pid != null && <RefluxLog state={refluxState} />}
+      {rows.length === 0 && selectedViewerId && session.pid == null && (
+        <div className="empty-state"><p>저장된 기록이 없거나 불러오는 중입니다.</p></div>
+      )}
 
       {error && !/ENOENT|no such file/i.test(error) && <div className="error">에러: {error}</div>}
 
@@ -1970,6 +2093,8 @@ export default function App() {
 
       {rows.length > 0 && (
         <>
+          {/* TODO(W3): AccountSelector 연결 대기 */}
+          {accounts.length > 0 && null}
           <ProfileCard
             profile={profile}
             starResult={dp12StarResult}
@@ -1983,7 +2108,7 @@ export default function App() {
             dpRank={cardDpRank}
             onStarClick={IS_BROWSER_REMOTE ? undefined : () => {
               // tsv 재로드 → rows → dp12StarResult + Analysis vec 모두 재계산. DB upload 없음.
-              if (tsvPath) void loadTsv(tsvPath);
+              if (selectedViewerId) void loadViewerAccount(selectedViewerId);
             }}
           />
           <nav className="tabs">
