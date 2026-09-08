@@ -58,6 +58,7 @@ import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { QrConnect } from './QrConnect';
 import { ProfileCard } from './ProfileCard';
+import AccountSelector from './AccountSelector';
 import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
 import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
@@ -142,18 +143,6 @@ const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비)
 
 type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
 const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
-type ViewerBridge = {
-  session: { getState: () => Promise<InfinitasSessionState>; onState: (cb: (s: InfinitasSessionState) => void) => () => void };
-  account: {
-    list: () => Promise<AccountMeta[]>;
-    readTsv: (iidxId: string) => Promise<{ ok: boolean; rows?: SongRow[]; mtime?: number; error?: string }>;
-    snapshot: (req: import('../../shared/account').AccountSnapshotRequest) => Promise<import('../../shared/account').AccountSnapshotResult>;
-    getLastSelected: () => Promise<string | null>;
-    setLastSelected: (iidxId: string) => Promise<{ ok: boolean }>;
-  };
-  reflux: { onTsvChanged: (cb: (e: TsvChangedEvent) => void) => () => void };
-};
-
 // "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
 function formatRelativeTime(epochMs: number): string {
   const diffSec = Math.max(0, (Date.now() - epochMs) / 1000);
@@ -188,7 +177,7 @@ export default function App() {
   const loadViewerAccount = useCallback(async (id: string): Promise<void> => {
     if (!id || !VALID_IIDX_ID.test(id)) return;
     setSelectedViewerId(id);
-    const viewer = window.infohsorry as unknown as ViewerBridge;
+    const viewer = window.infohsorry;
     void viewer.account.setLastSelected(id);
     const t = await viewer.account.readTsv(id);
     if (t.ok) {
@@ -227,7 +216,6 @@ export default function App() {
   // spawn 직후 최초 read 한 디스크 tracker.tsv 의 mtime("세션 baseline"). 이 값 이하의 read = 디스크 잔존
   //   옛 유저 TSV(cross-restart stale)일 수 있어 표시 전용. 이 값을 "초과"하는 read 만 = 이번 세션 새 덤프 →
   //   업로드 출처로 승격(HOLE 2 차단). null = baseline 미설정(빈 파일로 시작 등) → 첫 실데이터를 fresh 로 인정.
-  // 매 렌더마다 갱신되는 현재 live IIDX ID — profile 선언(아래쪽) 보다 위에 정의된 loadTsv / 초기 read 에서 참조용.
   const lastSnapshotRef = useRef<{ iidxId: string; generation: number; tsvMtime: number } | null>(null);
   const [memoryScannerOpen, setMemoryScannerOpen] = useState(false);
   const [qrOpen, setQrOpen] = useState(false);   // 폰 연결 QR 모달
@@ -300,9 +288,10 @@ export default function App() {
   const tsvChangedDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   useEffect(() => {
     const offReflux = window.infohsorry.reflux.onState(setRefluxState);
-    const viewer = window.infohsorry as unknown as ViewerBridge;
+    const viewer = window.infohsorry;
     const offSession = viewer.session.onState(setSession);
     const offTsvChanged = viewer.reflux.onTsvChanged((e: TsvChangedEvent) => {
+      if (IS_BROWSER_REMOTE) return;
       if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current);
       tsvChangedDebounceRef.current = window.setTimeout(() => void (async () => {
         const fresh = await readIidxIdFresh();
@@ -325,47 +314,7 @@ export default function App() {
     return () => { offReflux(); offSession(); offTsvChanged(); if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current); };
   }, [loadViewerAccount]);
 
-  /* 이전 Reflux 원본 TSV 구독 경로. 계정 스냅샷 IPC가 이를 대체한다.
-  useEffect(() => {
-    const off = window.infohsorry.reflux.onState((s) => {
-      setRefluxState(s);
-      // spawn false → true transit 감지 → readTsv 1회 자동 호출
-      if (!prevSpawnedRef.current && s.spawned) {
-        void (async () => {
-          const path = await window.infohsorry.reflux.getTsvPath();
-          const r = await window.infohsorry.readTsv(path);
-          if (r.ok && r.rows && r.rows.length > 0) {
-            setRows(r.rows);
-            // ⚠️ spawn 직후 최초 read = 디스크에 남은 옛 유저 tracker.tsv 일 수 있음(cross-restart stale).
-            //   → 표시/분석 전용. 업로드 출처로 인정하지 않음(src=null → 업로드 가드가 막음). 이 mtime 을
-            //   세션 baseline 으로 기록 → 이후 baseline 초과(=이번 세션 새 덤프) reload 만 업로드 출처로 승격.
-            rowsSourceIidxIdRef.current = null;
-            spawnTsvBaselineRef.current = r.mtime ?? null;
-            if (r.mtime) {
-              lastLoadedMtime.current = r.mtime;
-              setTsvMtime(r.mtime);
-            }
-          }
-        })();
-      }
-      prevSpawnedRef.current = s.spawned;
-    });
-    void (async () => {
-      const path = await window.infohsorry.reflux.getTsvPath();
-      setTsvPath(path);
-      const state = await window.infohsorry.reflux.getState();
-      setRefluxState(state);
-      prevSpawnedRef.current = state.spawned;
-      if (!state.spawned) {
-        // Reflux 미spawn 상태면 자동 시작. 미설치면 startAll 안에서 자동 다운로드 + 설치 후 spawn.
-        void window.infohsorry.reflux.start();
-      }
-    })();
-    return off;
-  }, []);
 
-  // 마운트 시 ereter 상태 확인 — 24h 지났거나 데이터 없으면 자동 갱신
-  */
   useEffect(() => {
     void (async () => {
       const status = await window.infohsorry.ereter.status();
@@ -479,52 +428,8 @@ export default function App() {
 
   // tracker.tsv 실시간 재읽기 — Reflux 가 mtime 변경을 감지하면(watchTsv → onState) 즉시 reload.
   //   "읽기는 실시간, Supabase 업로드는 주기적" 분리 정책. 업로드/vec 는 아래 스케줄 timer(초기 3분→15분) 가 담당.
-  //   debounce 400ms — 메모리 덤프가 짧은 간격으로 연속 갱신될 때 loadTsv 폭주 방지.
   //   (0.0.41~0.0.75 에선 race 우려로 이 이벤트 reload 를 끄고 timer 로만 읽었으나, 실시간성 위해 부활.
-  //    옛 ID 잘못 업로드 사고는 loadTsv 의 rowsSourceIidxIdRef 태깅 + 업로드 가드가 별도로 막음.)
-  /* Reflux 원본 경로는 계정 저장본 뷰어로 대체됨.
-  const liveReloadRef = useRef({ loadTsv: (_p: string): Promise<void> => Promise.resolve(), tsvPath });
-  const reloadDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  useEffect(() => {
-    if (IS_BROWSER_REMOTE) return;                  // 원격(PC2)은 호스트가 읽어 push — 중복 방지
-    const mtime = refluxState.lastTsvMtime;
-    if (!mtime) return;
-    const { loadTsv: lt, tsvPath: path } = liveReloadRef.current;
-    if (!path) return;
-    if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
-    reloadDebounceRef.current = window.setTimeout(() => { void lt(path); }, 400);
-    return () => {
-      if (reloadDebounceRef.current) clearTimeout(reloadDebounceRef.current);
-    };
-  }, [refluxState.lastTsvMtime]);
 
-  async function loadTsv(path: string): Promise<void> {
-    setError(null);
-    try {
-      const r = await window.infohsorry.readTsv(path);
-      if (!r.ok) {
-        setError(r.error || '읽기 실패');
-      } else {
-        setRows(r.rows || []);
-        // 출처 ID 태깅 — "이번 세션에 새로 생성/갱신된 덤프"(mtime 이 spawn baseline 초과) + 유효 ID 일 때만
-        //   업로드 출처로 인정. spawn baseline 이하 re-read(디스크 잔존 옛 TSV)는 표시 전용(src=null)
-        //   → cross-restart stale 업로드 차단(HOLE 2). baseline=null(빈 파일 시작)이면 첫 실데이터를 fresh 로 인정.
-        { const liveId = liveIidxIdRef.current;
-          const baseline = spawnTsvBaselineRef.current;
-          const isFreshDump = r.mtime != null && (baseline == null || r.mtime > baseline);
-          rowsSourceIidxIdRef.current =
-            (isFreshDump && liveId && /^[A-Z]\d{12}$/.test(liveId)) ? liveId : null; }
-        if (r.mtime) setTsvMtime(r.mtime);
-      }
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  }
-  // 실시간 reload effect 가 최신 loadTsv / tsvPath 를 참조하도록 매 렌더 갱신 (위 useEffect 의 dep 최소화용).
-  liveReloadRef.current = { loadTsv, tsvPath };
-
-  // "데이터 불러오기" 버튼 — Reflux 설치 + 실행 한 번에
-  */
   async function startReflux(): Promise<void> {
     setBusy(true);
     setError(null);
@@ -1086,113 +991,14 @@ export default function App() {
     const prev = prevSessionRef.current;
     if (prev && ((session.pid != null && (prev.pid == null || prev.generation !== session.generation)) || (session.pid == null && prev.pid != null))) {
       clearLiveSessionState();
-      void (window.infohsorry as unknown as ViewerBridge).account.list().then(setAccounts);
+      void window.infohsorry.account.list().then(setAccounts);
     }
     prevSessionRef.current = session;
   }, [session, clearLiveSessionState]);
   useEffect(() => {
     if (liveIidxId && selectedViewerIdRef.current !== liveIidxId) void loadViewerAccount(liveIidxId);
   }, [liveIidxId, loadViewerAccount]);
-  // 현재 live IIDX ID 를 ref 로 추적 — loadTsv / 초기 read 에서 "이 TSV 가 어느 ID 것인지" 태깅에 사용.
-  /* 이전 identity poll 기반 reset 경로는 session 전이가 대체한다.
 
-  // IIDX ID transition 감지 — 옛 ID 의 tsv 가 메모리에 남아 새 ID 로 잘못 업로드되는 사고 방지.
-  //   (1) A → B 직접 전환: INF오소리 켜둔 채 게임만 다른 계정으로 다시 켠 경우 → 즉시 정리.
-  //   (2) truthy → null: 게임 종료 / INFINITAS 죽음 → null 5초 지속 시 정리.
-  // 옛 ID 의 tsv 가 메모리에 남으면 다음 interval upload 가 옛 데이터 + 새 IIDX ID 조합으로
-  // 잘못 업로드 가능 → transit 시:
-  //   1) tracker.tsv 내용 비우기 (truncate 0 bytes — 파일은 유지, Reflux watch 끊김 없음)
-  //   2) rows / tsvMtime / lastLoadedMtime / initialUploadDoneRef 모두 reset (메모리 stale 제거)
-  //
-  // 가드 조건 (false-positive 방어):
-  //   - 세션 중 한 번이라도 Reflux 후킹 + 유효 ID 형식 잡힌 적 있어야 함 (everHadValidIidxIdRef)
-  //   - null 상태가 5초 *지속* 되어야 transit 으로 판정 (debounce) — "데이터 불러오기" 재시작 중
-  //     stage='starting' / 'hooking' 거치는 동안 잠깐 null 이 되는 false-positive 회피
-  // PC2 (브라우저 원격) 에선 main 측 clearTsv IPC 가 없을 수 있어 skip.
-  useEffect(() => {
-    const VALID = /^[A-Z]\d{12}$/;
-    const prev = prevIidxIdRef.current;
-    const now = profile.iidxId;
-    prevIidxIdRef.current = now;
-    // 유효 마킹 — Reflux 가 INFINITAS 에 후킹된 상태 + iidx_id 형식 정확히 통과한 경우만.
-    const refluxHooked = refluxState.stage === 'hooked' || refluxState.stage === 'ready';
-    if (refluxHooked && now && VALID.test(now)) {
-      everHadValidIidxIdRef.current = true;
-    }
-
-    // 공통 정리 — 옛 ID 의 stale rows/tsv 제거 + 출처 ID 태그 reset + 재업로드 활성화.
-    const doReset = (reasonMsg: string, snapshotReason: SnapshotReason, identityProfile: ProfileInfo | null): void => {
-      const snapshot = buildSnapshot(snapshotReason, identityProfile);
-      if (snapshot) void uploadSnapshot(snapshot, snapshotReason);
-      if (stuckNullTimerRef.current) {
-        clearTimeout(stuckNullTimerRef.current);
-        stuckNullTimerRef.current = null;
-      }
-      console.warn(`[guard] ${reasonMsg} — tsv 내용 비우기 + 로딩 데이터 reset`);
-      setRows([]);
-      setTsvMtime(0);
-      lastLoadedMtime.current = 0;
-      rowsSourceIidxIdRef.current = null;
-      spawnTsvBaselineRef.current = null;   // baseline 리셋 — 정리 후 tracker.tsv truncate → 다음 새 덤프를 fresh 로 인정
-      osrAccumRef.current.clear();          // 별값 누적 리셋 — 유저 전환 시 이전 유저 클리어가 섞이지 않게
-      setRStarFloor(null);                  // r★ 래칫도 계정별 값 — 이전 유저 하한이 섞이지 않게
-      initialUploadDoneRef.current = false;
-      if (!IS_BROWSER_REMOTE && tsvPath) {
-        void (async () => {
-          try {
-            const r = await window.infohsorry.clearTsv(tsvPath);
-            if (r.ok) {
-              console.log(`[guard] tsv clear ${r.cleared ? '완료' : '(파일 없음)'}: ${tsvPath}`);
-            } else {
-              console.warn(`[guard] tsv clear 실패: ${r.error}`);
-            }
-          } catch (e) {
-            console.warn(`[guard] tsv clear 예외:`, (e as Error).message);
-          }
-        })();
-      }
-    };
-
-    // (1) 계정 전환 — INF오소리는 켜둔 채 게임만 끄고 다른 계정으로 다시 켠 경우.
-    //     ★ 직전 tick(prev)이 아니라 "마지막 유효 ID"(lastValid) 대비로 비교 —
-    //        게임 재시작 시 A→null→B 로 null 이 끼면 prev=null 이라 A→B 를 놓치던 버그 수정.
-    //        새 유효 ID 가 직전 유효 ID 와 다르면 명백한 전환 → null 공백/5초 debounce 무관하게 즉시 정리.
-    //        (이게 빠지면 옛 계정 rows·별값이 그대로 남거나, null 이 5초 넘으면 0/빈값으로 남음)
-    if (refluxHooked && now && VALID.test(now)) {
-      const prevValidProfile = lastValidProfileRef.current;
-      const lastValid = lastValidIidxIdRef.current;
-      lastValidIidxIdRef.current = now;
-      if (lastValid && VALID.test(lastValid) && lastValid !== now) {
-        doReset(`IIDX ID 전환 감지 (${lastValid} → ${now})`, 'id-switch', prevValidProfile);
-        lastValidProfileRef.current = { ...profile };
-        return;
-      }
-      lastValidProfileRef.current = { ...profile };
-    }
-
-    // ID 가 다시 잡힘 → pending null debounce 취소
-    if (now) {
-      if (stuckNullTimerRef.current) {
-        clearTimeout(stuckNullTimerRef.current);
-        stuckNullTimerRef.current = null;
-      }
-      return;
-    }
-    // (2) truthy → null transition — 게임 종료 / INFINITAS 죽음.
-    if (!prev) return;                          // 직전 tick 도 null — 그냥 idle
-    if (!everHadValidIidxIdRef.current) return; // 한 번도 유효 ID 잡힌 적 없음 — false-positive
-    // null 이 5초 *지속* 되어야 진짜 transit 으로 판정 (재시작 중 잠깐 null 되는 false-positive 회피).
-    // 이미 timer 가 돌고 있으면 그대로 둠.
-    if (stuckNullTimerRef.current) return;
-    stuckNullTimerRef.current = setTimeout(() => {
-      doReset(`IIDX ID 5초 이상 끊김 (이전: ${prev})`, 'game-exit', lastValidProfileRef.current);
-    }, 5000);
-  }, [profile.iidxId, refluxState.stage, tsvPath]);
-
-  // 유저 공개 정보 (DP 노트레이더 + SP/DP 단위) — supabase 에서 iidxId 감지 시 1회 fetch.
-  // 메모리 리딩이 단위를 못 가져오는 케이스가 있어 supabase 저장값 (getInfRadar.js 가 eagate djdata 에서 채움) 으로 보강.
-  // 데이터 없는 필드는 ProfileCard 가 영역 자체 숨김.
-  */
   const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
   useEffect(() => {
     if (!profile.iidxId || !/^[A-Z]\d{12}$/.test(profile.iidxId)) {
@@ -1371,85 +1177,7 @@ export default function App() {
     return () => { offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto; };
   }, []);
 
-  /* 이전 rowsSource 기반 업로드 경로
-  useEffect(() => {
-    if (IS_BROWSER_REMOTE) return;
 
-    const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<UploadOutcome> => {
-      const { profile: p } = uploadStateRef.current;
-      const tag = `[supabase:${trigger}]`;
-      if (!p.iidxId || !p.djName) {
-        console.log(`${tag} skip: 프로필 미로드`, { iidxId: p.iidxId, djName: p.djName });
-        return { kind: 'skip-no-snapshot', reason: 'profile-not-loaded' };
-      }
-      if (!/^[A-Z]\d{12}$/.test(p.iidxId)) {
-        console.log(`${tag} skip: IIDX ID 형식 불일치 —`, p.iidxId);
-        return { kind: 'skip-no-snapshot', reason: 'invalid-iidx-id' };
-      }
-      // 출처 ID 가드 — rows 가 "현재 메모리 유저가 이번 세션에 덤프한 TSV" 임을 보장.
-      //   src 가 미확정(null/형식불일치 = 재실행 직후 디스크에 남은 옛 유저 tracker.tsv) 이거나
-      //   현재 ID 와 다르면 업로드 금지. (옛 src && 비교 → null 이면 우회되던 구멍을 막음: 이전 유저 데이터 오염 방지.)
-      //   유효 ID 로 태깅된 새 덤프가 들어올 때까지 대기.
-      const src = rowsSourceIidxIdRef.current;
-      if (!src || !/^[A-Z]\d{12}$/.test(src) || src !== p.iidxId) {
-        console.warn(`${tag} skip: rows 출처 ID(${src}) 미확정/불일치 (현재 ${p.iidxId}) — 새 TSV 덤프 대기`);
-        return { kind: 'skip-no-snapshot', reason: 'source-id-mismatch' };
-      }
-      // 메모리 재검증 — 캐시된 profile state 만 믿고 DB 에 쓰지 않는다.
-      //   final 은 게임 종료 뒤 호출되므로 재읽기 실패 시 캐시값으로 마지막 업로드를 진행한다.
-      const fresh = await readIidxIdFresh();
-      if (fresh.ok && fresh.iidxId) {
-        if (fresh.iidxId !== p.iidxId) {
-          console.warn(`${tag} skip: 메모리 재검증 불일치 (state=${p.iidxId} memory=${fresh.iidxId})`);
-          return { kind: 'skip-no-snapshot', reason: 'fresh-id-mismatch' };
-        }
-      } else if (trigger !== 'final') {
-        console.warn(`${tag} skip: IIDX ID 메모리 재검증 실패 (processMissing=${fresh.processMissing} err=${fresh.error ?? '-'})`);
-        return { kind: 'skip-no-snapshot', reason: 'fresh-id-unavailable' };
-      } else {
-        console.log(`${tag} 메모리 재검증 생략 — 게임 종료 후 마지막 업로드 (캐시 ${p.iidxId} 사용)`);
-      }
-      const reason: SnapshotReason = trigger === 'final' ? 'app-close' : trigger === 'manual' ? 'manual' : 'periodic';
-      const snapshot = buildSnapshot(reason, p);
-      if (!snapshot) return { kind: 'skip-no-snapshot', reason: 'snapshot-guard' };
-      console.log(`[upload] trigger=${trigger}`);
-      return uploadSnapshot(snapshot, trigger);
-    };
-
-    // auto 업로드 + 200ms 뒤 vec 재계산 — 스케줄러(초기 3분 → 이후 15분) / 콘솔이 호출.
-    const runAuto = (): void => {
-      void tryUpload('auto');
-      setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
-    };
-    // 노출 — 콘솔 수동(updateSupabase) + 스케줄러(__tryUploadAuto, 아래 스케줄 effect 가 호출).
-    (window as unknown as { updateSupabase: () => void }).updateSupabase = (): void => void tryUpload('manual');
-    (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto = runAuto;
-
-    // 앱/INFINITAS 종료 시 main 이 요청하는 "마지막 업로드" — 완료까지 await 후 main 에 done ack.
-    const offFinal = window.infohsorry.upload.onFinalRequest(() => {
-      void (async () => {
-        const outcome = await tryUpload('final');
-        setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
-        window.infohsorry.upload.finalDone(outcome);
-      })();
-    });
-    console.log(`[supabase] 업로드 활성화 — INF 감지 후 ${INITIAL_UPLOAD_DELAY_MS / 1000}초 뒤 첫 업로드, 이후 ${STAR_REFRESH_INTERVAL_MS / 1000}초 주기. 수동: updateSupabase()`);
-
-    return (): void => {
-      offFinal();
-      if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
-      if (schedTimersRef.current.interval != null) window.clearInterval(schedTimersRef.current.interval);
-      delete (window as unknown as { updateSupabase?: () => void }).updateSupabase;
-      delete (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto;
-    };
-  }, []);
-
-  // 업로드 스케줄 — profile + TSV(rows) 최초 준비(=INF/데이터 감지) 시 1회 무장:
-  //   3분(INITIAL_UPLOAD_DELAY_MS) 뒤 첫 업로드 → 이후 15분(STAR_REFRESH_INTERVAL_MS) 주기.
-  // (initialUploadDoneRef 는 옛 ID transition cleanup 이 false 로 리셋 → 유저 전환 시 3분 딜레이로 재무장.)
-  //   rows 가 차야 spAllCharts/dpAllCharts 까지 채워져 가진 scores 가 함께 적재됨(users 만 빈 업로드 방지).
-  //   dp12(★) 는 안 기다림 — DP12 안 친 유저도 인식되며, 늦게 준비돼도 다음 주기 틱이 보강.
-  */
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
     if (initialUploadDoneRef.current) return;
@@ -2076,6 +1804,9 @@ export default function App() {
         </div>
       )}
       {rows.length === 0 && session.pid != null && <RefluxLog state={refluxState} />}
+      {rows.length === 0 && accounts.length > 0 && session.pid == null && !selectedViewerId && (
+        <AccountSelector accounts={accounts} selectedId={null} liveId={liveIidxId} onSelect={(id) => void loadViewerAccount(id)} />
+      )}
       {rows.length === 0 && selectedViewerId && session.pid == null && (
         <div className="empty-state"><p>저장된 기록이 없거나 불러오는 중입니다.</p></div>
       )}
@@ -2093,8 +1824,15 @@ export default function App() {
 
       {rows.length > 0 && (
         <>
-          {/* TODO(W3): AccountSelector 연결 대기 */}
-          {accounts.length > 0 && null}
+          {/* 저장 계정 selector — 게임 ON 이면 live 계정 고정(LIVE), OFF 면 저장본 전환 */}
+          {(accounts.length > 0 || liveIidxId) && (
+            <AccountSelector
+              accounts={accounts}
+              selectedId={selectedViewerId}
+              liveId={liveIidxId}
+              onSelect={(id) => void loadViewerAccount(id)}
+            />
+          )}
           <ProfileCard
             profile={profile}
             starResult={dp12StarResult}
@@ -3070,3 +2808,6 @@ function StageSpinner({ state }: { state: RefluxState }): JSX.Element | null {
     </span>
   );
 }
+
+
+

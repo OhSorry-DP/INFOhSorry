@@ -2,6 +2,7 @@ import { app } from 'electron';
 import { promises as fsp } from 'fs';
 import { join } from 'path';
 import { readTsv } from './tsv';
+import { findProcessId } from './memory';
 import type { AccountMeta, AccountSnapshotRequest, AccountSnapshotResult } from '../shared/account';
 import type { InfinitasSessionState } from '../shared/session';
 import type { TsvReadResult } from '../shared/types';
@@ -23,6 +24,7 @@ export async function snapshotTsv(req: AccountSnapshotRequest, deps: { sourceTsv
   if (s.pid == null) return { ok: false, reason: 'no-live-session' };
   if (s.generation !== req.expect.generation) return { ok: false, reason: 'generation-changed' };
   if (s.pid !== req.expect.pid) return { ok: false, reason: 'pid-mismatch' };
+  if (findProcessId('bm2dx.exe') !== req.expect.pid) return { ok: false, reason: 'pid-mismatch' };
   const dir = accountDir(req.iidxId); const tmp = join(dir, 'tracker.tsv.tmp'); const finalPath = join(dir, 'tracker.tsv');
   try {
     const st = await fsp.stat(deps.sourceTsvPath);
@@ -35,6 +37,9 @@ export async function snapshotTsv(req: AccountSnapshotRequest, deps: { sourceTsv
     const s2 = deps.getSession();
     if (s2.pid == null || s2.generation !== req.expect.generation) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'generation-changed' }; }
     if (s2.pid !== req.expect.pid) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'pid-mismatch' }; }
+    // rename 직전 라이브 PID 최종 확인 — 폴링 캐시(getSession)가 아직 못 본 A→B 전환을 즉시 차단.
+    //   tmp 는 위 st2 검증을 이미 통과한 안정 사본이므로 재복사하지 않는다.
+    if (findProcessId('bm2dx.exe') !== req.expect.pid) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'pid-mismatch' }; }
     await fsp.rename(tmp, finalPath); await writeMeta(req.iidxId, req.djName);
     return { ok: true, iidxId: req.iidxId, tsvMtime: st.mtimeMs, generation: s.generation };
   } catch (e) {

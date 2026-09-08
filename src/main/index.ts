@@ -1,10 +1,7 @@
 import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron';
 import { join } from 'path';
-import { exec } from 'child_process';
-import { promisify } from 'util';
 import { readTsv } from './tsv';
 
-const execAsync = promisify(exec);
 import {
   findInfinitas,
   closeHandle,
@@ -625,33 +622,6 @@ function logFinalOutcome(outcome: UploadOutcome): void {
 
 // INFINITAS(bm2dx.exe) 종료 감지 — 떠 있다가 사라지면 마지막 업로드 1회(앱은 계속 유지).
 //   (직접적 INF 생명주기 신호가 없어 tasklist 폴링. 놓쳐도 다음 정기 틱이 보강하므로 실패는 alive 로 간주.)
-let infinitasWasAlive = false;
-let infinitasWatchTimer: ReturnType<typeof setInterval> | null = null;
-async function isInfinitasAlive(): Promise<boolean> {
-  if (process.platform !== 'win32') return false;
-  try {
-    const winDir = process.env.SystemRoot || process.env.WINDIR || 'C:\\Windows';
-    const tasklistExe = `${winDir}\\System32\\tasklist.exe`;
-    const { stdout } = await execAsync(`"${tasklistExe}" /FI "IMAGENAME eq bm2dx.exe" /NH`);
-    return stdout.toLowerCase().includes('bm2dx.exe');
-  } catch {
-    return infinitasWasAlive; // tasklist 실패 시 상태 유지 — 거짓 "종료" 전환 방지
-  }
-}
-function startInfinitasWatch(): void {
-  if (process.platform !== 'win32' || infinitasWatchTimer) return;
-  infinitasWatchTimer = setInterval(() => {
-    void (async () => {
-      const alive = await isInfinitasAlive();
-      if (infinitasWasAlive && !alive) {
-        console.log('[infinitas] 종료 감지 — 마지막 업로드 요청');
-        void requestFinalUpload().then(logFinalOutcome);
-      }
-      infinitasWasAlive = alive;
-    })();
-  }, 30 * 1000);
-}
-
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1280,
@@ -715,15 +685,21 @@ function createWindow(): void {
 }
 
 async function onSessionStart(): Promise<void> { await refluxManager.hardStop(); remoteUser = null; try { await refluxManager.startAll(); } catch (e) { console.warn('[session] Reflux 시작 실패:', (e as Error).message); } pushSessionState(); }
-async function onSessionEnd(): Promise<void> { void requestFinalUpload().then(logFinalOutcome); await refluxManager.hardStop(); pushSessionState(); }
+async function onSessionEnd(): Promise<void> {
+  const outcome = await requestFinalUpload();
+  logFinalOutcome(outcome);
+  await refluxManager.hardStop();
+  pushSessionState();
+}
 function pushSessionState(): void { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('session:state', sessionMonitor.getState()); }
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   createWindow();
-  sessionMonitor.on('start', () => { sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
+  // start 는 pid!=null 을 즉시 통보(뷰어가 "게임 ON" 을 빨리 인지) — Reflux 기동은 chain 에서 이어짐.
+  sessionMonitor.on('start', () => { pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
+  // end 는 즉시 통보하지 않는다 — onSessionEnd 가 final upload 를 끝낸 뒤 pid=null 을 push(provenance 유실 방지).
   sessionMonitor.on('end', () => { sessionOpChain = sessionOpChain.then(() => onSessionEnd()); });
-  sessionMonitor.on('state', pushSessionState);
   sessionMonitor.start();
 
   // 자기 실행 파일이 portable 패턴이면 같은 폴더 내 옛 portable 정리 (자기 패턴만, 안전)
@@ -769,10 +745,7 @@ app.on('before-quit', async (e) => {
   if (quitFinalizing) return;
   e.preventDefault();
   quitFinalizing = true;
-  if (infinitasWatchTimer) {
-    clearInterval(infinitasWatchTimer);
-    infinitasWatchTimer = null;
-  }
+  sessionMonitor.stop();
   const outcome = await requestFinalUpload();
   logFinalOutcome(outcome);
   if (refluxManager.getState().spawned) {
@@ -785,3 +758,4 @@ app.on('before-quit', async (e) => {
   mainWindow?.destroy();
   app.exit(0);
 });
+

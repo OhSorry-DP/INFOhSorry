@@ -1,6 +1,8 @@
 // LAN 원격 모드 — window.infohsorry 가 없으면 (= browser 환경) HTTP RPC bridge 로 자동 patch.
 // 그 결과 App.tsx 등은 환경 분기 없이 window.infohsorry.* 그대로 호출 가능.
 import type { ProbeResult, RefluxState, TsvReadResult } from '../../shared/types';
+import type { AccountMeta, AccountSnapshotRequest, AccountSnapshotResult, TsvChangedEvent } from '../../shared/account';
+import type { InfinitasSessionState } from '../../shared/session';
 
 const IS_HOST = typeof window !== 'undefined' && typeof window.infohsorry !== 'undefined';
 
@@ -96,6 +98,24 @@ function makeRefluxStatePoller(): (cb: (s: RefluxState) => void) => () => void {
   };
 }
 
+function makeSessionStatePoller(): (cb: (s: InfinitasSessionState) => void) => () => void {
+  return (cb) => {
+    let alive = true;
+    let last = '';
+    const tick = async (): Promise<void> => {
+      if (!alive) return;
+      try {
+        const s = (await callIpc('session:getState')) as InfinitasSessionState;
+        const json = JSON.stringify(s);
+        if (json !== last) { last = json; cb(s); }
+      } catch { /* 일시적인 원격 IPC 오류는 다음 polling에서 재시도 */ }
+    };
+    void tick();
+    const timer = window.setInterval(() => { void tick(); }, 3000);
+    return () => { alive = false; window.clearInterval(timer); };
+  };
+}
+
 // Browser 에서 saveImage — PC2 의 Chrome 자체 다운로드로 (a 태그 download). PC1 IPC 안 거침.
 async function browserDownloadPng(
   data: ArrayBuffer | string,
@@ -131,6 +151,7 @@ if (!IS_HOST) {
   // CSS 에서 PC2 모드 분기용 (e.g. WindowControls 자리 padding 제거)
   document.documentElement.classList.add('browser-remote');
   const onState = makeRefluxStatePoller();
+  const onSessionState = makeSessionStatePoller();
   const bridge: Window['infohsorry'] = {
     readTsv: (path: string) => callIpc('tsv:read', path) as Promise<TsvReadResult>,
     clearTsv: (path: string) =>
@@ -142,6 +163,18 @@ if (!IS_HOST) {
       getTsvPath: () => callIpc('reflux:tsvPath') as Promise<string>,
       getOffsets: () => callIpc('reflux:offsets') as ReturnType<Window['infohsorry']['reflux']['getOffsets']>,
       onState,
+      onTsvChanged: (_cb: (e: TsvChangedEvent) => void) => () => {},
+    },
+    session: {
+      getState: () => callIpc('session:getState') as Promise<InfinitasSessionState>,
+      onState: onSessionState,
+    },
+    account: {
+      list: () => callIpc('account:list') as Promise<AccountMeta[]>,
+      readTsv: (iidxId: string) => callIpc('account:readTsv', iidxId) as Promise<TsvReadResult>,
+      snapshot: (req: AccountSnapshotRequest) => callIpc('account:snapshot', req) as Promise<AccountSnapshotResult>,
+      getLastSelected: () => callIpc('account:lastSelected:get') as Promise<string | null>,
+      setLastSelected: (iidxId: string) => callIpc('account:lastSelected:set', iidxId) as Promise<{ ok: boolean }>,
     },
     ereter: {
       get: (force?: boolean) =>

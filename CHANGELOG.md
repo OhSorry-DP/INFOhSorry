@@ -2,6 +2,19 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### (미배포) — 2026-09-09 계정별 TSV 격리 + INFINITAS 세션 lifecycle + 다계정 오프라인 뷰어
+
+A 계정으로 플레이 후 INFOhSorry 를 켜둔 채 B 계정으로 게임을 재실행하면, B 의 IIDX ID 가 감지되는데 Reflux `tracker.tsv` 에는 A 데이터가 남아 **B ID 로 A 계정 기록이 업로드되던** 사고를 구조적으로 차단했다. 사후 태깅(`rowsSourceIidxIdRef`) 대신 TSV 소유권 자체를 IIDX ID 별 디스크 저장소로 분리한다.
+
+- **세션 = INFINITAS 프로세스.** `src/main/infinitasSession.ts` 신설 — `bm2dx.exe` PID 를 1초 폴링해 세션 시작/종료/전환(PID 교체)을 감지하고 generation 카운터로 세대를 추적한다. `PID 1234 → 5678` 처럼 폴링 사이 공백을 놓쳐도 새 세션으로 인식한다. 기존 30초 `tasklist` boolean 감시는 제거.
+- **Reflux 는 게임이 켜져 있을 때만.** 세션 시작 시 `RefluxManager.hardStop()`(kill + `tracker.tsv` 삭제) 후 재기동, 세션 종료 시 마지막 업로드 1회 → hardStop. health check 는 유효 PID 가 있을 때만 재시작한다. `tracker.tsv` 는 세션 시작마다 비우고 종료 시 삭제하는 임시 입력 버퍼로 격하.
+- **정본 = `%APPDATA%/infohsorry/users/{IIDX_ID}/tracker.tsv` (+ `meta.json`).** `src/main/accountTsvStore.ts` 신설 — Reflux TSV 변경 시 renderer 가 `readIidxIdFresh()` 로 그 순간 IIDX ID 를 재확인하고, main 이 복사 전·후로 generation·PID(폴링 캐시 + 라이브 `findProcessId` 이중)·source mtime/size 를 재검증해 하나라도 어긋나면 fail-closed(`.tmp` 폐기, 기존 저장본 보존). 계정 폴더는 어떤 경로로도 삭제하지 않는다.
+- **live identity 와 viewer identity 분리.** `liveIidxId`(실행 중인 게임 메모리 — 업로드 전용) ↔ `selectedViewerId`(화면에 보여줄 저장 계정 — 뷰어 전용)를 완전히 분리. 게임이 꺼져도 `rows` 를 비우지 않고 마지막 저장본을 계속 보여준다. 앱을 게임 없이 재실행해도 마지막 선택 계정(`viewer-state.json`)을 복원한다.
+- **다계정 selector** (`src/renderer/src/AccountSelector.tsx` 신설) — 게임 OFF 에서 저장 계정을 전환, 게임 ON 에서는 live 계정으로 고정(LIVE 표시).
+- **업로드 게이트 재설계.** `uploadIdentityOk()` — 게임 실행 중(`session.pid != null`) + live IIDX ID + 현재 generation 이 마지막 스냅샷 provenance 와 일치할 때만 허용. 게임 OFF = 전면 금지(세션 종료 순간의 final 1회만 예외). `selectedViewerId` 는 업로드 판단에 절대 참조하지 않는다. 3분/15분 업로드 cadence 는 유지.
+- PC2 브라우저 원격 브리지(`api.ts`)에 `session`/`account` API 를 추가(원격 payload 결손 방지).
+- 🔴 **실기 검증 없이 정리한 상태.** `npm run typecheck` / `npm run build` 만 통과. INFINITAS 환경에서 세션 종료·계정 전환·PC2 동작·고속 A→B 전환은 확인하지 않았다.
+
 ### v0.0.115 — 2026-09-07 기록 갱신 누락 수정 (업로드 스냅샷·durable pending·종료 lifecycle)
 
 "가끔 기록 갱신이 안 된다"는 제보의 원인은 종료 시 타임아웃이 아니라 **identity 가드가 마지막 업로드보다 먼저 돌아 업로드에 필요한 상태를 스스로 파괴한 것**이었다. 게임 종료 5초 뒤 `useProfile` 이 DJ NAME / IIDX ID 를 null 로 발행하고, 다시 5초 뒤 `doReset` 이 rows 를 비우고 `tracker.tsv` 를 truncate 하는데, 종료 감지 폴링은 30초 주기라 마지막 업로드 요청이 언제나 그 뒤에 도착했다. 유저가 게임을 먼저 끄고 앱을 끄는 흔한 순서에서는 마지막 주기분이 통째로 유실됐고, 계정 전환 시에도 직전 계정의 마지막 기록이 버려지고 있었다.

@@ -10,7 +10,7 @@ export class InfinitasSessionMonitor extends EventEmitter {
 
   start(): void {
     if (this.timer) return;
-    this.timer = setInterval(() => this.poll(), 2000);
+    this.timer = setInterval(() => this.poll(), 1000);
     this.poll();
   }
 
