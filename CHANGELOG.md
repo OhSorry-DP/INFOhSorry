@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### (미배포) — 2026-09-09 계정별 TSV 격리 + INFINITAS 세션 lifecycle + 다계정 오프라인 뷰어
+### v0.0.116 — 2026-09-09 계정별 TSV 격리 + INFINITAS 세션 lifecycle + 다계정 오프라인 뷰어
 
 A 계정으로 플레이 후 INFOhSorry 를 켜둔 채 B 계정으로 게임을 재실행하면, B 의 IIDX ID 가 감지되는데 Reflux `tracker.tsv` 에는 A 데이터가 남아 **B ID 로 A 계정 기록이 업로드되던** 사고를 구조적으로 차단했다. 사후 태깅(`rowsSourceIidxIdRef`) 대신 TSV 소유권 자체를 IIDX ID 별 디스크 저장소로 분리한다.
 

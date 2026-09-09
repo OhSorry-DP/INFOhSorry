@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.115.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.115-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.116.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.116-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -65,7 +65,9 @@ PC2 의 화면이 PC1 과 같고, 모든 버튼 (데이터 불러오기 / ereter
 
 | 항목 | 위치 |
 |---|---|
-| Reflux 작업 폴더 (Reflux.exe / config / tracker.tsv / sessions) | `%APPDATA%\infohsorry\Reflux\` |
+| Reflux 작업 폴더 (Reflux.exe / config / tracker.tsv — 게임 실행 중에만) | `%APPDATA%\infohsorry\Reflux\` |
+| 계정별 기록 정본 (tracker.tsv / meta.json — IIDX ID 별) | `%APPDATA%\infohsorry\users\{IIDX_ID}\` |
+| 마지막으로 본 저장 계정 | `%APPDATA%\infohsorry\viewer-state.json` |
 | ereter-data.json | `%APPDATA%\infohsorry\ereter-data.json` |
 | 캡처 PNG | `%USERPROFILE%\Downloads\` |
 
