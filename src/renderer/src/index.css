@@ -368,6 +368,24 @@ body {
 .updated-at {
   color: var(--text-faint);
 }
+.manual-upload-btn {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border: 1px solid var(--border-dashed);
+  border-radius: 3px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+.manual-upload-btn:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+.manual-upload-btn:disabled {
+  color: var(--text-faint);
+  cursor: wait;
+}
 
 /* ----- ereter ★ 데이터 상태 띠 (DP RECOMMEND 의 모델 내부 안) ----- */
 .ereter-bar {

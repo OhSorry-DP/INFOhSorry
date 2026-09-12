@@ -131,10 +131,10 @@
 | recommend lib | `loadRecLibs()` | `App.tsx:981-992` |
 | INF 차트 판정기 | `getInfChartChecker()` (Supabase songs) | `App.tsx:996-1007` |
 | tsv 실시간 reload | `refluxState.lastTsvMtime` 변경 감지 → debounce 400ms → `loadTsv` (host 전용) | `App.tsx` |
-| Supabase 업로드 스케줄 | INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 15분 주기 (읽기 없음, host 전용) | `App.tsx:1025-1126` |
+| Supabase 업로드 스케줄 | INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 10분 주기 (읽기 없음, host 전용) | `App.tsx:1025-1126` |
 | 마지막 업로드 수신 | `upload.onFinalRequest` — 앱/INFINITAS 종료 시 main 요청 받아 1회 업로드 후 `finalDone` ack | `App.tsx:1082-1088` |
 
-> tsv 읽기 정책: 마운트 즉시 readTsv 하지 않습니다. Reflux spawn 완료 시점에 1회 + 이후 **`tracker.tsv` 변경마다 실시간 reload**(debounce 400ms). 부팅 직후 잠깐 빈 화면 → spawn(10~30초) 후 채워짐. Supabase 업로드는 별도 스케줄(감지 후 3분 → 15분 주기 + 종료 시 1회, v0.0.100). 데이터 흐름 상세는 [data-flow.md](data-flow.md).
+> tsv 읽기 정책: 마운트 즉시 readTsv 하지 않습니다. Reflux spawn 완료 시점에 1회 + 이후 **`tracker.tsv` 변경마다 실시간 reload**(debounce 400ms). 부팅 직후 잠깐 빈 화면 → spawn(10~30초) 후 채워짐. Supabase 업로드는 별도 스케줄(감지 후 3분 → 10분 주기 + 종료 시 1회, v0.0.121). 데이터 흐름 상세는 [data-flow.md](data-flow.md).
 
 ---
 

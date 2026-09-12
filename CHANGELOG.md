@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.121 — 2026-09-12 업로드 주기 15분 → 10분 + 수동 업로드 버튼
+
+- `STAR_REFRESH_INTERVAL_MS` 를 15분 → 10분으로 단축 ([src/renderer/src/App.tsx](src/renderer/src/App.tsx)). 첫 업로드 지연(`INITIAL_UPLOAD_DELAY_MS` 3분)과 종료 시 마지막 1회 업로드는 변경 없음.
+- 문서 동기화 — `docs/data-flow.md` · `docs/architecture.md` · `docs/README.md` · `docs/sp.md` 의 주기 표기 갱신.
+- 탭 바에 5분 쿨다운의 수동 업로드 버튼을 추가. 성공한 업로드 뒤에만 다시 잠기며, 업로드 중에는 진행 상태를 표시.
+- 게임 OFF 상태에서도 선택한 계정의 저장 TSV와 계정 메타(DJ NAME)를 같은 IIDX ID로 수동 업로드할 수 있게 했다. 선택 계정·메타·표시 기록이 모두 있을 때만 허용한다.
+
 ### v0.0.120 — 2026-09-12 주기 업로드 skip/실패를 Reflux 로그 패널에 표시
 
 15분 주기 자동 업로드가 "에러 없이 조용히 안 됨" 제보 조사 중 발견 — `tryUpload()` 의 identity 게이트(`uploadIdentityOk`)가 실패해도 콘솔/화면 어디에도 로그를 남기지 않아, 매 주기 조용히 skip 되고 있어도 사용자가 알 방법이 없었다.

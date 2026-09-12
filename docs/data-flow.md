@@ -17,7 +17,7 @@
    gist 코어(renderer fetch+eval) ──> recommendCore / 별값 lib ──> 추천/별값/분석
                                                                     │
                                             ┌───────────────────────┤
-                                  ▼ (감지+3분 → 15분 주기 + 종료시, host 전용) ▼
+                                  ▼ (감지+3분 → 10분 주기 + 종료시, host 전용) ▼
                                      Supabase scores            Supabase user_ohsorry_radars
                                      + users (upsert_user)      (upsert_user_feature_score)
 ```
@@ -113,12 +113,12 @@ ohSorry 와 같은 Supabase 프로젝트 `cvxpeecxiawddmrzbdvn`(Tokyo) 공유. `
 
 ### 읽기/업로드 분리 — 실시간 reload + 주기/종료 업로드
 
-**TSV 읽기는 실시간, Supabase 업로드는 주기적**으로 분리돼 있습니다. 업로드 주기는 v0.0.100 에서 egress/DB 부하 절감을 위해 **"INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 15분 주기 + 앱/INFINITAS 종료 시 마지막 1회"** 로 바뀌었습니다(이전엔 즉시 + 3분 interval).
+**TSV 읽기는 실시간, Supabase 업로드는 주기적**으로 분리돼 있습니다. 업로드 주기는 v0.0.100 에서 egress/DB 부하 절감을 위해 **"INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 15분 주기 + 앱/INFINITAS 종료 시 마지막 1회"** 로 바뀌었습니다(이전엔 즉시 + 3분 interval). v0.0.121에서 이후 주기를 10분으로 단축했습니다.
 
-**① 실시간 reload (`App.tsx`)** — Reflux 의 `watchTsv` 가 `tracker.tsv` mtime 변경을 감지하면 `setState({stage:'ready', lastTsvMtime})`(`reflux.ts:599`) → `onState` → renderer `refluxState.lastTsvMtime` 갱신. 이를 dep 으로 한 effect 가 **debounce 400ms** 후 `loadTsv(tsvPath)` 호출 → rows 갱신 → `dp12StarResult` 자동 재계산. host 전용(`IS_BROWSER_REMOTE` skip). debounce 는 메모리 덤프 연속 갱신 시 폭주 방지. **이 실시간 reload 는 업로드 타이머와 완전히 무관** — 주기를 15분으로 늘려도 화면 반영은 플레이 즉시(아래 ③·④도 동일).
+**① 실시간 reload (`App.tsx`)** — Reflux 의 `watchTsv` 가 `tracker.tsv` mtime 변경을 감지하면 `setState({stage:'ready', lastTsvMtime})`(`reflux.ts:599`) → `onState` → renderer `refluxState.lastTsvMtime` 갱신. 이를 dep 으로 한 effect 가 **debounce 400ms** 후 `loadTsv(tsvPath)` 호출 → rows 갱신 → `dp12StarResult` 자동 재계산. host 전용(`IS_BROWSER_REMOTE` skip). debounce 는 메모리 덤프 연속 갱신 시 폭주 방지. **이 실시간 reload 는 업로드 타이머와 완전히 무관** — 주기를 15분으로 늘려도(현재는 10분) 화면 반영은 플레이 즉시(아래 ③·④도 동일).
 
-**② 업로드 스케줄 (`App.tsx`)** — 상수 `INITIAL_UPLOAD_DELAY_MS = 3분` / `STAR_REFRESH_INTERVAL_MS = 15분`(`App.tsx:109-110`). host 전용. 두 effect 로 구성:
-- **무장 effect (`App.tsx:1105-1126`)** — `profile.iidxId`(+djName, 형식 통과) **그리고** `rows.length > 0`(=INF/데이터 감지)이 처음 모두 충족될 때 1회 무장: `setTimeout(INITIAL_UPLOAD_DELAY_MS)` → 첫 업로드 → 그 안에서 `setInterval(STAR_REFRESH_INTERVAL_MS)` 로 15분 주기 시작. rows 가 차야 `spAllCharts`/`dpAllCharts` 까지 채워져 가진 scores 가 함께 적재됨(users 만 빈 업로드 방지). dp12(★)는 안 기다림 — DP12 안 친 유저도 인식되고 늦으면 다음 틱이 보강. 타이머 핸들은 `schedTimersRef`(initial/interval) 로 추적해 ID 전환 재무장/언마운트 시 정리.
+**② 업로드 스케줄 (`App.tsx`)** — 상수 `INITIAL_UPLOAD_DELAY_MS = 3분` / `STAR_REFRESH_INTERVAL_MS = 10분`(`App.tsx:109-110`). host 전용. 두 effect 로 구성:
+- **무장 effect (`App.tsx:1105-1126`)** — `profile.iidxId`(+djName, 형식 통과) **그리고** `rows.length > 0`(=INF/데이터 감지)이 처음 모두 충족될 때 1회 무장: `setTimeout(INITIAL_UPLOAD_DELAY_MS)` → 첫 업로드 → 그 안에서 `setInterval(STAR_REFRESH_INTERVAL_MS)` 로 10분 주기 시작. rows 가 차야 `spAllCharts`/`dpAllCharts` 까지 채워져 가진 scores 가 함께 적재됨(users 만 빈 업로드 방지). dp12(★)는 안 기다림 — DP12 안 친 유저도 인식되고 늦으면 다음 틱이 보강. 타이머 핸들은 `schedTimersRef`(initial/interval) 로 추적해 ID 전환 재무장/언마운트 시 정리.
 - **업로드 effect (`App.tsx:1025-1098`)** — `tryUpload(trigger)` 정의 + 노출. 스케줄러가 호출하는 `runAuto`(=`tryUpload('auto')` + 200ms 후 vec 재계산 트리거)를 `window.__tryUploadAuto` 로 노출하고, 무장 effect 가 이를 setTimeout/setInterval 에서 호출.
 1. `tryUpload('auto')` — 별값 + scores upload.
 2. 200ms 후 `setVecRecomputeKey(k=>k+1)` — Analysis 의 패턴 vec 재계산 + `user_ohsorry_radars` upsert 트리거.
@@ -130,9 +130,10 @@ ohSorry 와 같은 Supabase 프로젝트 `cvxpeecxiawddmrzbdvn`(Tokyo) 공유. `
 
 > v0.0.41~0.0.75 는 mtime 이벤트 reload 를 끄고 timer 가 `loadTsv`+업로드를 함께 했었음(race 우려). 옛 ID 잘못 업로드 방어는 `loadTsv` 의 `rowsSourceIidxIdRef` 태깅 + `tryUpload` 가드가 담당하므로, 읽기만 실시간으로 되살림.
 
-> **④ 리모트 실시간 푸시는 이 타이머와 무관(불변)** — 원격모드 본인 카드(`me:update` SSE)·TSV reload·프로필 메모리 폴링은 별도 effect 라 업로드 주기 변경(3분→15분)의 영향을 전혀 받지 않습니다. TSV 값이 하나라도 바뀌면 `remote.setUser` → main `notifyMeUpdate()` 로 PC2 카드를 플레이 즉시 다시 그립니다(`App.tsx:1128~` 주석). 즉 **화면 반영은 실시간, DB 부하만 주기적/종료시**.
+> **④ 리모트 실시간 푸시는 이 타이머와 무관(불변)** — 원격모드 본인 카드(`me:update` SSE)·TSV reload·프로필 메모리 폴링은 별도 effect 라 업로드 주기 변경(3분→15분)의 영향을 전혀 받지 않습니다(현재 주기는 10분). TSV 값이 하나라도 바뀌면 `remote.setUser` → main `notifyMeUpdate()` 로 PC2 카드를 플레이 즉시 다시 그립니다(`App.tsx:1128~` 주석). 즉 **화면 반영은 실시간, DB 부하만 주기적/종료시**.
 
-수동 호출: 콘솔 `window.updateSupabase()`(=`tryUpload('manual')`, `App.tsx:1078`).
+수동 호출: 탭 바 우측의 **수동 업로드 버튼**(host 전용, `MANUAL_UPLOAD_COOLDOWN_MS = 5분`) — 마지막으로 **성공한** 업로드에서 5분이 지나야 활성화되고 누르면 `tryUpload('manual')` 1회 실행(v0.0.121). 콘솔에서는 `window.updateSupabase()` 로 같은 경로를 호출.
+게임이 꺼져 있을 때는 `tryUpload('snapshot')` 경로로 갈아탑니다 — 선택한 계정의 `account.readTsv(id)` 저장본과 `accounts` 메타의 DJ NAME 을 **같은 IIDX ID 로 묶어** 올리므로 소유권이 어긋나지 않습니다. 선택 계정·계정 메타·표시 중인 기록이 모두 있을 때만 허용하고, 메모리 재확인(`readIidxIdFresh`)은 게임이 꺼져 읽을 수 없으므로 건너뜁니다. 게임이 켜져 있으면 이 경로는 `game-on` 으로 거부되고 기존 `manual` 경로를 씁니다.
 
 업로드 가드(`tryUpload`, `App.tsx:1028-1070`): `iidxId`/`djName` 있고 `^[A-Z]\d{12}$` 형식이고, rows 출처 ID 가 현재 ID 와 일치할 때만. star/match 가 null 이어도(SP 전용·DP 저레벨 전용 유저) 진행 — `users` row 등록 + 가진 scores 적재(`star`/`sp_*`=null 은 RPC COALESCE 가 기존값 보존).
 

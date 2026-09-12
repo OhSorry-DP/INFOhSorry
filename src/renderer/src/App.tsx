@@ -135,12 +135,13 @@ function recRowToCandidate(r: any, stage: CardStage): RecCandidate {
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
 // 실력값 추정 + Supabase 업로드 주기.
-// INF(데이터) 감지 후 첫 업로드는 INITIAL_UPLOAD_DELAY_MS(3분) 뒤 1회, 이후 STAR_REFRESH_INTERVAL_MS(15분) 주기.
+// INF(데이터) 감지 후 첫 업로드는 INITIAL_UPLOAD_DELAY_MS(3분) 뒤 1회, 이후 STAR_REFRESH_INTERVAL_MS(10분) 주기.
 //   추가로 앱 종료 / INFINITAS 종료 감지 시 main 이 마지막 업로드를 1회 요청(upload.onFinalRequest).
 //   ※ 리모트 실시간 푸시(me:update SSE) / TSV reload 는 이 타이머와 무관(별도 effect) — 주기 변경에 영향 없음.
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
-const STAR_REFRESH_INTERVAL_MS = 15 * 60 * 1000; // 정기 업로드 — 15분
+const STAR_REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 정기 업로드 — 10분
 const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비) 후 첫 업로드까지 대기 — 3분
+const MANUAL_UPLOAD_COOLDOWN_MS = 5 * 60 * 1000;
 
 type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
 const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
@@ -159,6 +160,10 @@ function snapshotReasonLabel(reason: SnapshotReason | string | undefined): strin
 // 업로드 skip/실패 사유 — Reflux 로그 패널 표시용
 function uploadReasonLabel(reason: string | undefined): string {
   switch (reason) {
+    case 'game-on': return '게임이 켜진 상태';
+    case 'no-selected-account': return '선택한 계정 없음';
+    case 'no-account-meta': return '선택한 계정 정보 없음';
+    case 'snapshot-empty': return '선택한 계정에 기록 없음';
     case 'no-snapshot-provenance': return '계정 스냅샷이 아직 없음(기록 인식 대기 중)';
     case 'bad-provenance-id': return '스냅샷 ID 형식 이상';
     case 'generation-advanced': return '게임 세션이 바뀜(재시작 감지)';
@@ -197,6 +202,8 @@ export default function App() {
   const [diagLines, setDiagLines] = useState<string[]>(() => getDiagLines());
   useEffect(() => subscribeDiagLog(() => setDiagLines(getDiagLines())), []);
   const [rows, setRows] = useState<SongRow[]>([]);
+  const rowsRef = useRef<SongRow[]>([]);
+  rowsRef.current = rows;
   const [session, setSession] = useState<InfinitasSessionState>({ pid: null, generation: 0, startedAt: null });
   const sessionRef = useRef(session);
   sessionRef.current = session;
@@ -204,6 +211,8 @@ export default function App() {
   const selectedViewerIdRef = useRef<string | null>(null);
   selectedViewerIdRef.current = selectedViewerId;
   const [accounts, setAccounts] = useState<AccountMeta[]>([]);
+  const accountsRef = useRef<AccountMeta[]>([]);
+  accountsRef.current = accounts;
   const loadViewerAccount = useCallback(async (id: string): Promise<void> => {
     if (!id || !VALID_IIDX_ID.test(id)) return;
     setSelectedViewerId(id);
@@ -272,6 +281,17 @@ export default function App() {
   const [tsvMtime, setTsvMtime] = useState<number>(0);
   const tsvMtimeRef = useRef<number>(0);
   tsvMtimeRef.current = tsvMtime;
+  const [lastUploadAt, setLastUploadAt] = useState(0);
+  const lastUploadAtRef = useRef(0);
+  const [manualUploadBusy, setManualUploadBusy] = useState(false);
+  const manualUploadBusyRef = useRef(false);
+  const [manualUploadNow, setManualUploadNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
+    const tick = window.setInterval(() => setManualUploadNow(Date.now()), 10_000);
+    return () => window.clearInterval(tick);
+  }, []);
 
   // ereter ★ 데이터 캐시 상태 + 갱신 진행 표시 + 실제 데이터
   const [ereterStatus, setEreterStatus] = useState<EreterCacheStatus | null>(null);
@@ -322,26 +342,33 @@ export default function App() {
     const viewer = window.infohsorry;
     const offSession = viewer.session.onState(setSession);
     const offTsvChanged = viewer.reflux.onTsvChanged((e: TsvChangedEvent) => {
+      console.log(`[tsvChanged] event mtime=${e.mtime} size=${e.size} generation=${e.generation} pid=${e.pid} browserRemote=${IS_BROWSER_REMOTE}`);
       if (IS_BROWSER_REMOTE) return;
       if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current);
       tsvChangedDebounceRef.current = window.setTimeout(() => void (async () => {
-        const fresh = await readIidxIdFresh();
-        if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) {
-          console.warn('[snapshot] skip: fresh id unavailable', fresh);
-          addDiagLine('스냅샷 보류: IIDX ID 를 메모리에서 다시 확인하지 못함');
-          return;
-        }
-        const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect: { generation: e.generation, pid: e.pid } });
-        if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) {
-          console.warn('[snapshot] rejected:', res.reason);
-          addDiagLine(`스냅샷 거부: ${snapshotReasonLabel(res.reason)}`);
-          return;
-        }
-        lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
-        void viewer.account.list().then(setAccounts);
-        if (selectedViewerIdRef.current === res.iidxId) {
-          const t = await viewer.account.readTsv(res.iidxId);
-          if (t.ok) { setRows(t.rows ?? []); setTsvMtime(t.mtime ?? 0); }
+        try {
+          const fresh = await readIidxIdFresh();
+          if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) {
+            console.warn('[snapshot] skip: fresh id unavailable', fresh);
+            addDiagLine('스냅샷 보류: IIDX ID 를 메모리에서 다시 확인하지 못함');
+            return;
+          }
+          const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect: { generation: e.generation, pid: e.pid } });
+          if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) {
+            console.warn('[snapshot] rejected:', res.reason);
+            addDiagLine(`스냅샷 거부: ${snapshotReasonLabel(res.reason)}`);
+            return;
+          }
+          console.log(`[snapshot] captured id=${res.iidxId} generation=${res.generation} tsvMtime=${res.tsvMtime}`);
+          lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
+          void viewer.account.list().then(setAccounts);
+          if (selectedViewerIdRef.current === res.iidxId) {
+            const t = await viewer.account.readTsv(res.iidxId);
+            if (t.ok) { setRows(t.rows ?? []); setTsvMtime(t.mtime ?? 0); }
+          }
+        } catch (err) {
+          console.warn('[snapshot] exception:', (err as Error).message);
+          addDiagLine(`스냅샷 처리 중 오류: ${(err as Error).message}`);
         }
       })(), 400);
     });
@@ -1076,6 +1103,15 @@ export default function App() {
     const p = uploadStateRef.current.profile;
     const snap = lastSnapshotRef.current;
     const s = sessionRef.current;
+    if (trigger === 'snapshot') {
+      if (s.pid != null) return { ok: false, reason: 'game-on' };
+      const id = selectedViewerIdRef.current;
+      if (!id || !VALID_IIDX_ID.test(id)) return { ok: false, reason: 'no-selected-account' };
+      const account = accountsRef.current.find((entry) => entry.iidxId === id);
+      if (!account || !account.djName) return { ok: false, reason: 'no-account-meta' };
+      if (rowsRef.current.length === 0) return { ok: false, reason: 'snapshot-empty' };
+      return { ok: true, id };
+    }
     if (!snap) return { ok: false, reason: 'no-snapshot-provenance' };
     if (!snap.iidxId || !VALID_IIDX_ID.test(snap.iidxId)) return { ok: false, reason: 'bad-provenance-id' };
     if (s.generation !== snap.generation) return { ok: false, reason: 'generation-advanced' };
@@ -1198,14 +1234,14 @@ export default function App() {
 
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
-    const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<UploadOutcome> => {
+    const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final' | 'snapshot'): Promise<UploadOutcome> => {
       const gate = uploadIdentityOk(trigger);
       if (!gate.ok) {
         console.warn(`[upload] skip trigger=${trigger} reason=${gate.reason}`);
         if (trigger !== 'final') addDiagLine(`업로드 건너뜀: ${uploadReasonLabel(gate.reason)}`);
         return { kind: 'skip-no-snapshot', reason: gate.reason };
       }
-      if (trigger !== 'final') {
+      if (trigger !== 'final' && trigger !== 'snapshot') {
         const fresh = await readIidxIdFresh();
         if (!fresh.ok || fresh.iidxId !== gate.id) {
           console.warn(`[upload] skip trigger=${trigger} reason=fresh-id-mismatch fresh=${fresh.ok ? fresh.iidxId : `err:${fresh.ok === false ? 'read-failed' : ''}`} gate=${gate.id}`);
@@ -1213,31 +1249,55 @@ export default function App() {
           return { kind: 'skip-no-snapshot', reason: 'fresh-id-mismatch' };
         }
       }
-      const snapshot = buildSnapshot(trigger === 'final' ? 'app-close' : trigger === 'manual' ? 'manual' : 'periodic', { ...uploadStateRef.current.profile, iidxId: gate.id });
+      const identityProfile = trigger === 'snapshot'
+        ? { ...uploadStateRef.current.profile, iidxId: gate.id, djName: accountsRef.current.find((entry) => entry.iidxId === gate.id)?.djName ?? null }
+        : { ...uploadStateRef.current.profile, iidxId: gate.id };
+      const snapshot = buildSnapshot(trigger === 'final' ? 'app-close' : trigger === 'manual' || trigger === 'snapshot' ? 'manual' : 'periodic', identityProfile);
       if (!snapshot) {
         console.warn(`[upload] skip trigger=${trigger} reason=snapshot-guard`);
         if (trigger !== 'final') addDiagLine(`업로드 건너뜀: ${uploadReasonLabel('snapshot-guard')}`);
       }
-      return snapshot ? uploadSnapshot(snapshot, trigger) : { kind: 'skip-no-snapshot', reason: 'snapshot-guard' };
+      const outcome = snapshot
+        ? await uploadSnapshot(snapshot, trigger)
+        : { kind: 'skip-no-snapshot' as const, reason: 'snapshot-guard' };
+      if (outcome.kind === 'success') {
+        const uploadedAt = Date.now();
+        lastUploadAtRef.current = uploadedAt;
+        setLastUploadAt(uploadedAt);
+      }
+      return outcome;
     };
     const runAuto = (): void => { void tryUpload('auto'); setTimeout(() => setVecRecomputeKey((k) => k + 1), 200); };
-    (window as unknown as { updateSupabase: () => void }).updateSupabase = () => void tryUpload('manual');
+    const runManual = (): void => {
+      if (manualUploadBusyRef.current || Date.now() - lastUploadAtRef.current < MANUAL_UPLOAD_COOLDOWN_MS) return;
+      manualUploadBusyRef.current = true;
+      setManualUploadBusy(true);
+      void tryUpload(sessionRef.current.pid != null ? 'manual' : 'snapshot').finally(() => {
+        manualUploadBusyRef.current = false;
+        setManualUploadBusy(false);
+      });
+    };
+    (window as unknown as { updateSupabase: () => void }).updateSupabase = runManual;
+    (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual = runManual;
     (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto = runAuto;
     const offFinal = window.infohsorry.upload.onFinalRequest(() => void (async () => {
       const outcome = await tryUpload('final');
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
       window.infohsorry.upload.finalDone(outcome);
     })());
-    return () => { offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto; };
+    return () => { offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto; };
   }, []);
 
 
   useEffect(() => {
     if (IS_BROWSER_REMOTE) return;
     if (initialUploadDoneRef.current) return;
-    if (!liveIidxId) return;
-    if (rows.length === 0) return;
-    if (lastSnapshotRef.current?.iidxId !== liveIidxId) return;
+    if (!liveIidxId) { console.log('[sched] arm skip: liveIidxId 없음'); return; }
+    if (rows.length === 0) { console.log('[sched] arm skip: rows 비어있음'); return; }
+    if (lastSnapshotRef.current?.iidxId !== liveIidxId) {
+      console.log(`[sched] arm skip: 스냅샷 미획득 (snap=${lastSnapshotRef.current?.iidxId ?? 'null'} live=${liveIidxId})`);
+      return;
+    }
     initialUploadDoneRef.current = true;
     // 이전 유저 스케줄(있으면) 정리 후 재무장
     if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
@@ -1967,6 +2027,26 @@ export default function App() {
                   · 갱신 {formatRelativeTime(tsvMtime)}
                 </span>
               )}
+              {!IS_BROWSER_REMOTE && (() => {
+                const remainingMs = Math.max(0, lastUploadAt + MANUAL_UPLOAD_COOLDOWN_MS - manualUploadNow);
+                const cooldownMinutes = Math.ceil(remainingMs / 60_000);
+                const disabled = manualUploadBusy || remainingMs > 0 || (session.pid == null && (!selectedViewerId || rows.length === 0));
+                const label = manualUploadBusy
+                  ? '...'
+                  : remainingMs > 0
+                    ? `업로드 (${cooldownMinutes}분 뒤)`
+                    : '지금 업로드';
+                return (
+                  <button
+                    type="button"
+                    className="manual-upload-btn"
+                    onClick={() => (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual?.()}
+                    disabled={disabled}
+                  >
+                    {label}
+                  </button>
+                );
+              })()}
             </span>
             <StageSpinner state={refluxState} />
           </nav>
