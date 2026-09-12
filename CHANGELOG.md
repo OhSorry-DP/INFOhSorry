@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.119 — 2026-09-12 스냅샷 거부 로그 오탐 정리 (기능은 v0.0.118 부터 정상 동작)
+
+v0.0.118 로 정수/float mtime 불일치는 고쳤지만, "스냅샷은 성공해 tsv 는 정상 로드되는데 거부 로그만 간헐적으로 계속 쌓인다"는 제보가 이어졌다. Reflux(D:\work\Reflux, 별도 리포)가 곡선택 화면에 머무는 동안 내용 변화가 없어도 2초 폴링마다 `tracker.tsv` 를 통째로 재작성하는데(`Program.cs` 메인루프 → `Tracker.cs SaveTrackerData` → `File.WriteAllText`), `account.snapshot()` 승인 로직이 renderer 가 수백ms~1초 전에 관측한 `expect.mtime/size` 와 main 이 지금 막 stat 한 값을 정확히 일치시켜야 통과시키는 하드 게이트였던 게 원인 — 정상적인 재작성마저 "변경됨"으로 오탐 거부했다.
+
+- `AccountSnapshotRequest.expect` 에서 `mtime`/`size` 를 제거. identity 검증(`generation`/`pid`, 폴링 캐시 + 라이브 `findProcessId` 이중 확인)은 그대로 유지.
+- 진짜 half-write(복사 도중 파일이 바뀌는 경우) 가드는 `snapshotTsv()` 내부에서 **복사 시작 직전 stat**과 **복사 직후 stat**을 서로 비교하는 방식으로 대체 — renderer 의 과거 관측값과 비교하지 않는다.
+- 🔴 실기 검증 없이 릴리즈. typecheck/build 만 통과.
+
 ### v0.0.118 — 2026-09-12 🔴 계정 스냅샷이 전원에게 항상 실패하던 치명적 버그 수정
 
 v0.0.116(계정별 TSV 격리) 배포 이후 v0.0.117 에서 추가한 진단 로그로 사용자 제보를 확인한 결과, **계정 스냅샷이 간헐적이 아니라 매번 100% `source-changed` 로 거부**되고 있었다 — 즉 이 기능이 배포 시점부터 사실상 전원에게 작동 불가능한 상태였다.

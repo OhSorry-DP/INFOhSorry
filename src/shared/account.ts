@@ -15,7 +15,7 @@ export interface TsvChangedEvent {
 export interface AccountSnapshotRequest {
   iidxId: string;
   djName: string | null;
-  expect: { generation: number; pid: number | null; mtime: number; size: number };
+  expect: { generation: number; pid: number | null };
 }
 
 export interface AccountSnapshotResult {

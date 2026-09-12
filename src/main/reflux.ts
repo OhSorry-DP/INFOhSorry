@@ -694,9 +694,7 @@ export class RefluxManager extends EventEmitter {
           fsp
             .stat(tsvPath())
             .then((st) => {
-              // st.mtimeMs 사용 (float, NTFS 100ns 단위) — accountTsvStore.snapshotTsv 가 재확인 시 뜬
-              //   fsp.stat().mtimeMs 와 정확히 같은 단위여야 한다. st.mtime.getTime() 은 정수 ms 로
-              //   잘려서 항상 달라 보여 snapshot 이 매번 'source-changed' 로 거부되는 버그였다(2026-09-12).
+              // account snapshot은 이 값을 이벤트 관측 정보로만 쓰고, 승인은 main 내부 복사 전후 stat 쌍으로 한다.
               const m = st.mtimeMs;
               if (m !== this.lastTsvMtime) {
                 this.lastTsvMtime = m;

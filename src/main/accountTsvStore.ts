@@ -29,11 +29,10 @@ export async function snapshotTsv(req: AccountSnapshotRequest, deps: { sourceTsv
   try {
     const st = await fsp.stat(deps.sourceTsvPath);
     if (st.size === 0) return { ok: false, reason: 'source-empty' };
-    if (st.mtimeMs !== req.expect.mtime || st.size !== req.expect.size) return { ok: false, reason: 'source-changed' };
     await fsp.mkdir(dir, { recursive: true });
     await fsp.copyFile(deps.sourceTsvPath, tmp);
     const st2 = await fsp.stat(deps.sourceTsvPath);
-    if (st2.mtimeMs !== req.expect.mtime || st2.size !== req.expect.size) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'source-changed' }; }
+    if (st2.mtimeMs !== st.mtimeMs || st2.size !== st.size) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'source-changed' }; }
     const s2 = deps.getSession();
     if (s2.pid == null || s2.generation !== req.expect.generation) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'generation-changed' }; }
     if (s2.pid !== req.expect.pid) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'pid-mismatch' }; }

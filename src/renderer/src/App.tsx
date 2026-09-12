@@ -316,7 +316,7 @@ export default function App() {
           addDiagLine('스냅샷 보류: IIDX ID 를 메모리에서 다시 확인하지 못함');
           return;
         }
-        const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect: { generation: e.generation, pid: e.pid, mtime: e.mtime, size: e.size } });
+        const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect: { generation: e.generation, pid: e.pid } });
         if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) {
           console.warn('[snapshot] rejected:', res.reason);
           addDiagLine(`스냅샷 거부: ${snapshotReasonLabel(res.reason)}`);
