@@ -156,6 +156,21 @@ function snapshotReasonLabel(reason: SnapshotReason | string | undefined): strin
     default: return `알 수 없는 스냅샷 사유(${reason ?? '없음'})`;
   }
 }
+// 업로드 skip/실패 사유 — Reflux 로그 패널 표시용
+function uploadReasonLabel(reason: string | undefined): string {
+  switch (reason) {
+    case 'no-snapshot-provenance': return '계정 스냅샷이 아직 없음(기록 인식 대기 중)';
+    case 'bad-provenance-id': return '스냅샷 ID 형식 이상';
+    case 'generation-advanced': return '게임 세션이 바뀜(재시작 감지)';
+    case 'game-off': return '게임이 꺼진 상태';
+    case 'live-id-mismatch': return '현재 로그인 계정 정보 불일치';
+    case 'final-id-mismatch': return '종료 시점 계정 정보 불일치';
+    case 'fresh-id-mismatch': return '메모리 재확인 ID 불일치';
+    case 'snapshot-guard': return '프로필 정보 부족(닉네임/ID 미확인)';
+    case 'browser-remote': return '원격 뷰어라 업로드 대상 아님';
+    default: return `알 수 없는 업로드 skip 사유(${reason ?? '없음'})`;
+  }
+}
 // "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
 function formatRelativeTime(epochMs: number): string {
   const diffSec = Math.max(0, (Date.now() - epochMs) / 1000);
@@ -1134,6 +1149,7 @@ export default function App() {
       const durationMs = Date.now() - startedAt;
       if (!result.ok) {
         console.warn(`[upload] http failure ${result.error ?? 'unknown'} -> pending preserved`);
+        addDiagLine(`업로드 실패: 서버 전송 오류(${result.error ?? '알 수 없는 오류'}) — 다음 시도에서 재전송`);
         return { kind: 'http-failure', error: result.error ?? 'upload failed', durationMs };
       }
       const clearPending = window.infohsorry.upload.clearPending;
@@ -1142,6 +1158,7 @@ export default function App() {
         : { ok: false, error: 'pending clear unavailable' };
       if (!cleared.ok) {
         console.warn(`[upload] success duration=${durationMs}ms but pending clear failed -> pending preserved (다음 실행에서 재전송)`);
+        addDiagLine(`업로드 성공했지만 대기 기록 정리 실패(${cleared.error ?? '알 수 없는 오류'}) — 다음 시도에서 재전송`);
         return { kind: 'pending-clear-failed', error: cleared.error ?? 'pending clear failed', durationMs };
       }
       console.log(`[upload] success duration=${durationMs}ms -> pending cleared`);
@@ -1150,6 +1167,7 @@ export default function App() {
       const durationMs = Date.now() - startedAt;
       const error = (e as Error).message;
       console.warn(`[upload] http failure ${error} -> pending preserved`);
+      addDiagLine(`업로드 실패: 서버 전송 오류(${error}) — 다음 시도에서 재전송`);
       return { kind: 'http-failure', error, durationMs };
     }
   }, []);
@@ -1182,12 +1200,24 @@ export default function App() {
     if (IS_BROWSER_REMOTE) return;
     const tryUpload = async (trigger: 'auto' | 'manual' | 'initial' | 'final'): Promise<UploadOutcome> => {
       const gate = uploadIdentityOk(trigger);
-      if (!gate.ok) return { kind: 'skip-no-snapshot', reason: gate.reason };
+      if (!gate.ok) {
+        console.warn(`[upload] skip trigger=${trigger} reason=${gate.reason}`);
+        if (trigger !== 'final') addDiagLine(`업로드 건너뜀: ${uploadReasonLabel(gate.reason)}`);
+        return { kind: 'skip-no-snapshot', reason: gate.reason };
+      }
       if (trigger !== 'final') {
         const fresh = await readIidxIdFresh();
-        if (!fresh.ok || fresh.iidxId !== gate.id) return { kind: 'skip-no-snapshot', reason: 'fresh-id-mismatch' };
+        if (!fresh.ok || fresh.iidxId !== gate.id) {
+          console.warn(`[upload] skip trigger=${trigger} reason=fresh-id-mismatch fresh=${fresh.ok ? fresh.iidxId : `err:${fresh.ok === false ? 'read-failed' : ''}`} gate=${gate.id}`);
+          addDiagLine(`업로드 건너뜀: ${uploadReasonLabel('fresh-id-mismatch')}`);
+          return { kind: 'skip-no-snapshot', reason: 'fresh-id-mismatch' };
+        }
       }
       const snapshot = buildSnapshot(trigger === 'final' ? 'app-close' : trigger === 'manual' ? 'manual' : 'periodic', { ...uploadStateRef.current.profile, iidxId: gate.id });
+      if (!snapshot) {
+        console.warn(`[upload] skip trigger=${trigger} reason=snapshot-guard`);
+        if (trigger !== 'final') addDiagLine(`업로드 건너뜀: ${uploadReasonLabel('snapshot-guard')}`);
+      }
       return snapshot ? uploadSnapshot(snapshot, trigger) : { kind: 'skip-no-snapshot', reason: 'snapshot-guard' };
     };
     const runAuto = (): void => { void tryUpload('auto'); setTimeout(() => setVecRecomputeKey((k) => k + 1), 200); };

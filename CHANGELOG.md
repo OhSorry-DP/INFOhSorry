@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.120 — 2026-09-12 주기 업로드 skip/실패를 Reflux 로그 패널에 표시
+
+15분 주기 자동 업로드가 "에러 없이 조용히 안 됨" 제보 조사 중 발견 — `tryUpload()` 의 identity 게이트(`uploadIdentityOk`)가 실패해도 콘솔/화면 어디에도 로그를 남기지 않아, 매 주기 조용히 skip 되고 있어도 사용자가 알 방법이 없었다.
+
+- `tryUpload` 게이트 실패(`no-snapshot-provenance`/`generation-advanced`/`game-off`/`live-id-mismatch`/`fresh-id-mismatch`/`snapshot-guard`)와 실제 서버 전송 실패(`http-failure`/`pending-clear-failed`) 를 Reflux 로그 패널에 `업로드 건너뜀: ...` / `업로드 실패: ...` 로 노출
+- 콘솔에도 `[upload] skip trigger=... reason=...` 로 남도록 보강
+- 🔴 실기 검증 없이 릴리즈. typecheck 만 통과.
+
 ### v0.0.119 — 2026-09-12 스냅샷 거부 로그 오탐 정리 (기능은 v0.0.118 부터 정상 동작)
 
 v0.0.118 로 정수/float mtime 불일치는 고쳤지만, "스냅샷은 성공해 tsv 는 정상 로드되는데 거부 로그만 간헐적으로 계속 쌓인다"는 제보가 이어졌다. Reflux(D:\work\Reflux, 별도 리포)가 곡선택 화면에 머무는 동안 내용 변화가 없어도 2초 폴링마다 `tracker.tsv` 를 통째로 재작성하는데(`Program.cs` 메인루프 → `Tracker.cs SaveTrackerData` → `File.WriteAllText`), `account.snapshot()` 승인 로직이 renderer 가 수백ms~1초 전에 관측한 `expect.mtime/size` 와 main 이 지금 막 stat 한 값을 정확히 일치시켜야 통과시키는 하드 게이트였던 게 원인 — 정상적인 재작성마저 "변경됨"으로 오탐 거부했다.
