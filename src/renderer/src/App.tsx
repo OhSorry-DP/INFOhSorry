@@ -67,6 +67,7 @@ import { IS_BROWSER_REMOTE } from './api';
 import { SNAPSHOT_VERSION, type SnapshotReason, type UploadOutcome, type UploadSnapshot } from '../../shared/uploadSnapshot';
 import type { AccountMeta, TsvChangedEvent } from '../../shared/account';
 import type { InfinitasSessionState } from '../../shared/session';
+import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
 //   buildRecsWithPool / buildWeaknessRecs 의 raw row 를 기존 Recommendations / RecCard 가 쓰는 RecCandidate 로 변환.
@@ -143,6 +144,18 @@ const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비)
 
 type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
 const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
+function snapshotReasonLabel(reason: SnapshotReason | string | undefined): string {
+  switch (reason) {
+    case 'source-empty': return 'Reflux tracker.tsv 가 비어있음';
+    case 'generation-changed':
+    case 'pid-mismatch': return '게임 세션이 바뀌는 중이라 건너뜀';
+    case 'source-changed': return 'tracker.tsv 가 쓰는 도중이라 건너뜀(다음 시도에서 재시도됨)';
+    case 'write-failed': return '파일 쓰기 실패';
+    case 'id-format': return 'IIDX ID 형식이 이상함';
+    case 'no-live-session': return '게임이 꺼진 상태';
+    default: return `알 수 없는 스냅샷 사유(${reason ?? '없음'})`;
+  }
+}
 // "방금 전" / "5분 전" / "1시간 전" / "어제 14:32" / "2026-05-08 14:32" 같은 상대 시간
 function formatRelativeTime(epochMs: number): string {
   const diffSec = Math.max(0, (Date.now() - epochMs) / 1000);
@@ -166,6 +179,8 @@ export default function App() {
     installed: false,
     spawned: false,
   });
+  const [diagLines, setDiagLines] = useState<string[]>(() => getDiagLines());
+  useEffect(() => subscribeDiagLog(() => setDiagLines(getDiagLines())), []);
   const [rows, setRows] = useState<SongRow[]>([]);
   const [session, setSession] = useState<InfinitasSessionState>({ pid: null, generation: 0, startedAt: null });
   const sessionRef = useRef(session);
@@ -185,6 +200,7 @@ export default function App() {
       setTsvMtime(t.mtime ?? 0);
     } else {
       console.warn('[viewer] account.readTsv failed:', t.error);
+      addDiagLine(`저장된 기록(${id}) 읽기 실패: ${t.error ?? '알 수 없는 오류'}`);
     }
   }, []);
   const [tab, setTab] = useState<Tab>('playdata');
@@ -295,9 +311,17 @@ export default function App() {
       if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current);
       tsvChangedDebounceRef.current = window.setTimeout(() => void (async () => {
         const fresh = await readIidxIdFresh();
-        if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) return console.warn('[snapshot] skip: fresh id unavailable', fresh);
+        if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) {
+          console.warn('[snapshot] skip: fresh id unavailable', fresh);
+          addDiagLine('스냅샷 보류: IIDX ID 를 메모리에서 다시 확인하지 못함');
+          return;
+        }
         const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect: { generation: e.generation, pid: e.pid, mtime: e.mtime, size: e.size } });
-        if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) return console.warn('[snapshot] rejected:', res.reason);
+        if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) {
+          console.warn('[snapshot] rejected:', res.reason);
+          addDiagLine(`스냅샷 거부: ${snapshotReasonLabel(res.reason)}`);
+          return;
+        }
         lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
         void viewer.account.list().then(setAccounts);
         if (selectedViewerIdRef.current === res.iidxId) {
@@ -1607,6 +1631,9 @@ export default function App() {
     return { total, attempted, cleared, hard, exhard, fc };
   }, [dp12Charts]);
 
+  const showProcessLog = rows.length === 0 && session.pid != null;
+  const showRefluxLog = showProcessLog || diagLines.length > 0;
+
   return (
     <div className="app">
       <header className="app-header">
@@ -1803,7 +1830,9 @@ export default function App() {
           </button>
         </div>
       )}
-      {rows.length === 0 && session.pid != null && <RefluxLog state={refluxState} />}
+      {showRefluxLog && (
+        <RefluxLog state={refluxState} diagLines={diagLines} showProcessLines={showProcessLog} />
+      )}
       {rows.length === 0 && accounts.length > 0 && session.pid == null && !selectedViewerId && (
         <AccountSelector accounts={accounts} selectedId={null} liveId={liveIidxId} onSelect={(id) => void loadViewerAccount(id)} />
       )}
@@ -2759,15 +2788,29 @@ function EreterBar({
 // ============================================================
 // Reflux 의 최근 stdout/stderr 라인 표시 (접을 수 있음, 디버깅용)
 // ============================================================
-function RefluxLog({ state }: { state: RefluxState }): JSX.Element | null {
-  const lines = state.recentLines;
-  if (!lines || lines.length === 0) return null;
+function RefluxLog({ state, diagLines, showProcessLines }: { state: RefluxState; diagLines: string[]; showProcessLines: boolean }): JSX.Element | null {
+  const lines = showProcessLines ? (state.recentLines ?? []) : [];
+  const hasProcessLines = lines.length > 0;
+  const hasDiagLines = diagLines.length > 0;
+  if (!hasProcessLines && !hasDiagLines) return null;
+  const lastLine = hasDiagLines ? diagLines[diagLines.length - 1] : lines[lines.length - 1];
   return (
     <details className="reflux-log">
       <summary>
-        Reflux 로그 (최근 {lines.length}줄) — 마지막: <code>{lines[lines.length - 1]}</code>
+        Reflux 로그 — 마지막: <code>{lastLine}</code>
       </summary>
-      <pre>{lines.join('\n')}</pre>
+      {hasProcessLines && (
+        <section>
+          <h4>Reflux 프로세스</h4>
+          <pre>{lines.join('\n')}</pre>
+        </section>
+      )}
+      {hasDiagLines && (
+        <section>
+          <h4>계정 인식·스냅샷·뷰어</h4>
+          <pre>{diagLines.join('\n')}</pre>
+        </section>
+      )}
     </details>
   );
 }

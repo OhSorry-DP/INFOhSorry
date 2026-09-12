@@ -2,6 +2,17 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.117 — 2026-09-12 TSV 인식 실패 진단 로그
+
+v0.0.116(계정별 TSV 격리) 배포 후 일부 사용자가 "기록을 못 읽는다"고 제보했는데, 파이프라인 어느 단계에서 막혔는지 알 방법이 없었다. 4개 실패 지점을 화면의 기존 "Reflux 로그" 패널에서 바로 확인할 수 있게 진단 로그를 추가했다.
+
+- **DJ NAME / IIDX ID 메모리 read 실패** — 게임은 켜져 있는데 이 필드만 못 읽으면 진단 로그(같은 오류 반복 억제, 5초 폴링 스팸 방지).
+- **Reflux 가 tracker.tsv 를 못 만드는 경우** — Reflux spawn 후 45초 안에 tracker.tsv 가 감지되지 않으면 "INFINITAS 후킹 확인 필요" 경고.
+- **tracker.tsv 는 생기는데 계정 폴더로 스냅샷이 안 되는 경우** — `account:snapshot` 거부 사유(`generation-changed`/`pid-mismatch`/`source-changed`/`source-empty`/`write-failed`/`id-format`/`no-live-session`)를 한국어로 매핑해 표시.
+- **`users/{IIDXID}/tracker.tsv` 는 있는데 뷰어가 못 읽는 경우** — 계정 ID·에러 메시지 포함해 표시.
+- 진단 로그가 하나라도 있으면 rows 유무·게임 실행 여부와 무관하게 "Reflux 로그" 패널이 노출된다(기존엔 rows 가 비어있고 게임 ON 일 때만 보였음).
+- 🔴 실기(INFINITAS 실행) 검증 없이 릴리즈. 45초 타이머·실제 TSV 감지 동작은 확인되지 않았다.
+
 ### v0.0.116 — 2026-09-09 계정별 TSV 격리 + INFINITAS 세션 lifecycle + 다계정 오프라인 뷰어
 
 A 계정으로 플레이 후 INFOhSorry 를 켜둔 채 B 계정으로 게임을 재실행하면, B 의 IIDX ID 가 감지되는데 Reflux `tracker.tsv` 에는 A 데이터가 남아 **B ID 로 A 계정 기록이 업로드되던** 사고를 구조적으로 차단했다. 사후 태깅(`rowsSourceIidxIdRef`) 대신 TSV 소유권 자체를 IIDX ID 별 디스크 저장소로 분리한다.

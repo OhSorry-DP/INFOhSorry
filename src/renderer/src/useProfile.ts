@@ -20,6 +20,7 @@ import {
 } from '../../shared/profileOffsets';
 import type { RadarValues } from './NotesRadar';
 import type { RefluxState } from '../../shared/types';
+import { addDiagLine } from './diagLog';
 
 // gist offsets.json 의 profile 부분 (main IPC offsets:getProfile). 없으면 null → 코드 상수 fallback.
 //   값이 null 인 필드 = "이 게임 빌드에서는 그 주소를 아직 모른다". 키가 아예 없는 것(정보 없음)과
@@ -262,6 +263,7 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
     null,
   );
   const radarJsonRef = useRef<string>('null');
+  const lastReadErrorRef = useRef<{ djName: string | null; iidxId: string | null }>({ djName: null, iidxId: null });
 
   // gist offsets.json 의 profile offset — 마운트 1회 fetch. ref 라 polling tick 이 항상 최신값 참조.
   const remoteRef = useRef<RemoteProfile>(null);
@@ -322,9 +324,27 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
         if (!alive) return;
         // stale closure 방지 — 이 effect 는 deps 가 [refluxState.stage] 뿐이라 djName 등 state 를
         //   생성 시점 값으로 캡처한다. 원시값의 동일 setState 는 React 가 bailout 한다.
-        if (djR.status === 'fulfilled') setDjName(djR.value.value);
+        if (djR.status === 'fulfilled') {
+          if (djR.value.value == null && djR.value.error && !djR.value.processMissing) {
+            const message = `DJ NAME 읽기 실패: ${djR.value.error}`;
+            if (lastReadErrorRef.current.djName !== message) {
+              lastReadErrorRef.current.djName = message;
+              addDiagLine(message);
+            }
+          }
+          setDjName(djR.value.value);
+        }
         else console.warn('[useProfile] djName 읽기 실패:', djR.reason);
-        if (idR.status === 'fulfilled') setIidxId(idR.value.value);
+        if (idR.status === 'fulfilled') {
+          if (idR.value.value == null && idR.value.error && !idR.value.processMissing) {
+            const message = `IIDX ID 읽기 실패: ${idR.value.error}`;
+            if (lastReadErrorRef.current.iidxId !== message) {
+              lastReadErrorRef.current.iidxId = message;
+              addDiagLine(message);
+            }
+          }
+          setIidxId(idR.value.value);
+        }
         else console.warn('[useProfile] iidxId 읽기 실패:', idR.reason);
         if (danR.status === 'fulfilled') {
           const dan = parseDanBlock(danR.value);

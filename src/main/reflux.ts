@@ -270,6 +270,7 @@ export class RefluxManager extends EventEmitter {
   // tsv 첫 로드 (= IIDX hook 성공) 전까지는 짧은 간격 (30초) — IIDX 가 늦게 떴을 때 빠른 회복.
   // 첫 로드 후엔 긴 간격 (5분) — 정상 동작 중 polling 부담 최소.
   private healthCheckTimer: NodeJS.Timeout | null = null;
+  private trackerReadyTimer: NodeJS.Timeout | null = null;
   private healthCheckInitial = true;  // tsv 첫 로드 전까지 true → INITIAL 간격
   private static readonly HEALTH_CHECK_INITIAL_MS = 30 * 1000;
   private static readonly HEALTH_CHECK_STEADY_MS = 5 * 60 * 1000;
@@ -354,6 +355,13 @@ export class RefluxManager extends EventEmitter {
     if (this.healthCheckTimer) {
       clearInterval(this.healthCheckTimer);
       this.healthCheckTimer = null;
+    }
+  }
+
+  private clearTrackerReadyTimer(): void {
+    if (this.trackerReadyTimer) {
+      clearTimeout(this.trackerReadyTimer);
+      this.trackerReadyTimer = null;
     }
   }
 
@@ -626,6 +634,7 @@ export class RefluxManager extends EventEmitter {
 
   private async spawnReflux(): Promise<void> {
     if (this.child) return;
+    this.clearTrackerReadyTimer();
     this.setState({ stage: 'starting', spawned: false });
 
     // 매 spawn 마다 기존 Reflux kill (file lock 해제 + 깨끗한 새 spawn 준비) — 이건 항상 필요.
@@ -655,6 +664,12 @@ export class RefluxManager extends EventEmitter {
     this.child = child;
     // cmd 가 곧 종료 → spawned=true 는 사용자가 뭔가 떠 있다는 신호. Reflux 는 별도로 살아있음.
     this.setState({ spawned: true, stage: 'hooking' });
+    this.trackerReadyTimer = setTimeout(() => {
+      this.trackerReadyTimer = null;
+      if (this.state.stage !== 'ready') {
+        this.addLine('(Reflux 실행 중이지만 45초째 tracker.tsv 생성 안 됨 — INFINITAS 후킹 확인 필요)');
+      }
+    }, 45 * 1000);
 
     // cmd 종료는 무시 (Reflux 본체는 별도 프로세스로 떠 있음)
     child.on('exit', () => {
@@ -663,6 +678,7 @@ export class RefluxManager extends EventEmitter {
     });
     child.on('error', (e) => {
       this.child = null;
+      this.clearTrackerReadyTimer();
       this.addLine(`(spawn 에러: ${e.message})`);
       this.setState({ spawned: false, stage: 'error', error: e.message });
     });
@@ -681,6 +697,7 @@ export class RefluxManager extends EventEmitter {
               const m = st.mtime.getTime();
               if (m !== this.lastTsvMtime) {
                 this.lastTsvMtime = m;
+                this.clearTrackerReadyTimer();
                 this.setState({ stage: 'ready', lastTsvMtime: m });
                 this.transitionHealthCheckToSteady();
                 this.emit('tsvChanged', { tsvPath: tsvPath(), mtime: m, size: st.size, generation: this.getSession().generation, pid: this.getSession().pid } satisfies TsvChangedEvent);
@@ -703,6 +720,7 @@ export class RefluxManager extends EventEmitter {
   // - taskkill /F /IM Reflux.exe /T (모든 Reflux.exe 인스턴스 종료)
   // - state 를 idle 로 → UI 가 "꺼짐" 으로 표시
   async stop(): Promise<void> {
+    this.clearTrackerReadyTimer();
     this.stopHealthCheck();
     if (this.tsvWatcher) {
       this.tsvWatcher.close();
@@ -733,6 +751,7 @@ export class RefluxManager extends EventEmitter {
   }
 
   async hardStop(): Promise<void> {
+    this.clearTrackerReadyTimer();
     this.stopHealthCheck();
     if (this.tsvWatcher) { this.tsvWatcher.close(); this.tsvWatcher = null; }
     await this.killAllRefluxProcesses();
