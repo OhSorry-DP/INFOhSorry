@@ -115,6 +115,8 @@ ohSorry 와 같은 Supabase 프로젝트 `cvxpeecxiawddmrzbdvn`(Tokyo) 공유. `
 
 **TSV 읽기는 실시간, Supabase 업로드는 주기적**으로 분리돼 있습니다. 업로드 주기는 v0.0.100 에서 egress/DB 부하 절감을 위해 **"INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 15분 주기 + 앱/INFINITAS 종료 시 마지막 1회"** 로 바뀌었습니다(이전엔 즉시 + 3분 interval). v0.0.121에서 이후 주기를 10분으로 단축했습니다.
 
+TSV 변경 시 메모리 IIDX ID 재확인이 일시 실패해 provenance 스냅샷이 없으면, 게임 실행 중이고 rows가 있을 때만 15초 간격으로 다시 읽어 스냅샷을 확보합니다. 폴링 프로필 값으로 대체하지 않으며, 확보 즉시 재시도를 멈춥니다.
+
 **① 실시간 reload (`App.tsx`)** — Reflux 의 `watchTsv` 가 `tracker.tsv` mtime 변경을 감지하면 `setState({stage:'ready', lastTsvMtime})`(`reflux.ts:599`) → `onState` → renderer `refluxState.lastTsvMtime` 갱신. 이를 dep 으로 한 effect 가 **debounce 400ms** 후 `loadTsv(tsvPath)` 호출 → rows 갱신 → `dp12StarResult` 자동 재계산. host 전용(`IS_BROWSER_REMOTE` skip). debounce 는 메모리 덤프 연속 갱신 시 폭주 방지. **이 실시간 reload 는 업로드 타이머와 완전히 무관** — 주기를 15분으로 늘려도(현재는 10분) 화면 반영은 플레이 즉시(아래 ③·④도 동일).
 
 **② 업로드 스케줄 (`App.tsx`)** — 상수 `INITIAL_UPLOAD_DELAY_MS = 3분` / `STAR_REFRESH_INTERVAL_MS = 10분`(`App.tsx:109-110`). host 전용. 두 effect 로 구성:

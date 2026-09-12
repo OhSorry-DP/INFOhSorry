@@ -142,9 +142,16 @@ const APP_VERSION = __APP_VERSION__;
 const STAR_REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 정기 업로드 — 10분
 const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비) 후 첫 업로드까지 대기 — 3분
 const MANUAL_UPLOAD_COOLDOWN_MS = 5 * 60 * 1000;
+const SNAPSHOT_RETRY_INTERVAL_MS = 15 * 1000;
+const SNAPSHOT_RETRY_REPORT_AFTER = 4;
 
 type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
 const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
+type SnapshotCaptureResult =
+  | { ok: true; iidxId: string; generation: number; tsvMtime: number }
+  | { ok: false; reason: 'fresh-id-unavailable'; fresh: { processMissing: boolean; error: string | null; iidxId: string | null } }
+  | { ok: false; reason: 'snapshot-rejected'; snapshotReason: SnapshotReason | string | undefined }
+  | { ok: false; reason: 'exception'; error: string };
 function snapshotReasonLabel(reason: SnapshotReason | string | undefined): string {
   switch (reason) {
     case 'source-empty': return 'Reflux tracker.tsv 가 비어있음';
@@ -251,6 +258,10 @@ export default function App() {
   const initialUploadDoneRef = useRef(false);
   // 업로드 스케줄 타이머 핸들 — 초기 3분 setTimeout + 이후 15분 setInterval. ID 전환 재무장/언마운트 시 정리.
   const schedTimersRef = useRef<{ initial: number | null; interval: number | null }>({ initial: null, interval: null });
+  const snapshotRetryTimerRef = useRef<number | null>(null);
+  const snapshotRetryFailuresRef = useRef(0);
+  const lastSnapshotRetryReportRef = useRef<string | null>(null);
+  const snapshotRetrySessionRef = useRef<{ pid: number | null; generation: number } | null>(null);
   // 현재 rows(TSV 점수) 가 어느 IIDX ID 의 덤프에서 온 것인지 — TSV read 성공 시 그 시점 live ID 로 태깅.
   //   업로드 직전 현재 ID 와 비교해, ID 가 바뀐 뒤 옛 rows 가 새 ID 로 잘못 올라가는 것을 차단(이중 안전장치).
   // spawn 직후 최초 read 한 디스크 tracker.tsv 의 mtime("세션 baseline"). 이 값 이하의 read = 디스크 잔존
@@ -337,6 +348,47 @@ export default function App() {
   // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 이후 tsv 변경마다 실시간 갱신.
   // (옛 동작: 마운트 즉시 옛 tsv 표시 → race condition 으로 stale 데이터 영구 노출 가능했음)
   const tsvChangedDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const captureSnapshot = useCallback(async (
+    expect: { generation: number; pid: number | null },
+    source: 'tsv-changed' | 'retry',
+  ): Promise<SnapshotCaptureResult> => {
+    try {
+      const fresh = await readIidxIdFresh();
+      if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) {
+        console.warn('[snapshot] skip: fresh id unavailable', fresh);
+        if (source === 'tsv-changed') addDiagLine('스냅샷 보류: IIDX ID 를 메모리에서 다시 확인하지 못함');
+        return {
+          ok: false,
+          reason: 'fresh-id-unavailable',
+          fresh: { processMissing: fresh.processMissing, error: fresh.error ?? null, iidxId: fresh.iidxId ?? null },
+        };
+      }
+      const viewer = window.infohsorry;
+      const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect });
+      if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) {
+        console.warn('[snapshot] rejected:', res.reason);
+        if (source === 'tsv-changed') addDiagLine(`스냅샷 거부: ${snapshotReasonLabel(res.reason)}`);
+        return { ok: false, reason: 'snapshot-rejected', snapshotReason: res.reason };
+      }
+      console.log(`[snapshot] captured id=${res.iidxId} generation=${res.generation} tsvMtime=${res.tsvMtime}`);
+      lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
+      if (snapshotRetryTimerRef.current != null) {
+        window.clearInterval(snapshotRetryTimerRef.current);
+        snapshotRetryTimerRef.current = null;
+      }
+      void viewer.account.list().then(setAccounts);
+      if (selectedViewerIdRef.current === res.iidxId) {
+        const t = await viewer.account.readTsv(res.iidxId);
+        if (t.ok) { setRows(t.rows ?? []); setTsvMtime(t.mtime ?? 0); }
+      }
+      return { ok: true, iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
+    } catch (err) {
+      const error = (err as Error).message;
+      console.warn('[snapshot] exception:', error);
+      if (source === 'tsv-changed') addDiagLine(`스냅샷 처리 중 오류: ${error}`);
+      return { ok: false, reason: 'exception', error };
+    }
+  }, []);
   useEffect(() => {
     const offReflux = window.infohsorry.reflux.onState(setRefluxState);
     const viewer = window.infohsorry;
@@ -345,32 +397,10 @@ export default function App() {
       console.log(`[tsvChanged] event mtime=${e.mtime} size=${e.size} generation=${e.generation} pid=${e.pid} browserRemote=${IS_BROWSER_REMOTE}`);
       if (IS_BROWSER_REMOTE) return;
       if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current);
-      tsvChangedDebounceRef.current = window.setTimeout(() => void (async () => {
-        try {
-          const fresh = await readIidxIdFresh();
-          if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) {
-            console.warn('[snapshot] skip: fresh id unavailable', fresh);
-            addDiagLine('스냅샷 보류: IIDX ID 를 메모리에서 다시 확인하지 못함');
-            return;
-          }
-          const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect: { generation: e.generation, pid: e.pid } });
-          if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) {
-            console.warn('[snapshot] rejected:', res.reason);
-            addDiagLine(`스냅샷 거부: ${snapshotReasonLabel(res.reason)}`);
-            return;
-          }
-          console.log(`[snapshot] captured id=${res.iidxId} generation=${res.generation} tsvMtime=${res.tsvMtime}`);
-          lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
-          void viewer.account.list().then(setAccounts);
-          if (selectedViewerIdRef.current === res.iidxId) {
-            const t = await viewer.account.readTsv(res.iidxId);
-            if (t.ok) { setRows(t.rows ?? []); setTsvMtime(t.mtime ?? 0); }
-          }
-        } catch (err) {
-          console.warn('[snapshot] exception:', (err as Error).message);
-          addDiagLine(`스냅샷 처리 중 오류: ${(err as Error).message}`);
-        }
-      })(), 400);
+      tsvChangedDebounceRef.current = window.setTimeout(() => void captureSnapshot(
+        { generation: e.generation, pid: e.pid },
+        'tsv-changed',
+      ), 400);
     });
     void (async () => {
       const [s, path, list, lastSelected] = await Promise.all([viewer.session.getState(), window.infohsorry.reflux.getTsvPath(), viewer.account.list(), viewer.account.getLastSelected()]);
@@ -378,7 +408,7 @@ export default function App() {
       if (s.pid == null && lastSelected) void loadViewerAccount(lastSelected);
     })();
     return () => { offReflux(); offSession(); offTsvChanged(); if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current); };
-  }, [loadViewerAccount]);
+  }, [captureSnapshot, loadViewerAccount]);
 
 
   useEffect(() => {
@@ -1061,6 +1091,64 @@ export default function App() {
     }
     prevSessionRef.current = session;
   }, [session, clearLiveSessionState]);
+  useEffect(() => {
+    const stopRetryTimer = (): void => {
+      if (snapshotRetryTimerRef.current != null) {
+        window.clearInterval(snapshotRetryTimerRef.current);
+        snapshotRetryTimerRef.current = null;
+      }
+    };
+    const currentSession = sessionRef.current;
+    if (IS_BROWSER_REMOTE || currentSession.pid == null || rowsRef.current.length === 0 || lastSnapshotRef.current) {
+      stopRetryTimer();
+      return;
+    }
+    const previousRetrySession = snapshotRetrySessionRef.current;
+    if (!previousRetrySession || previousRetrySession.pid !== currentSession.pid || previousRetrySession.generation !== currentSession.generation) {
+      snapshotRetrySessionRef.current = { pid: currentSession.pid, generation: currentSession.generation };
+      snapshotRetryFailuresRef.current = 0;
+      lastSnapshotRetryReportRef.current = null;
+    }
+    const retry = async (): Promise<void> => {
+      const retrySession = sessionRef.current;
+      if (retrySession.pid == null || rowsRef.current.length === 0 || lastSnapshotRef.current) {
+        stopRetryTimer();
+        return;
+      }
+      const result = await captureSnapshot({ generation: retrySession.generation, pid: retrySession.pid }, 'retry');
+      const liveSession = sessionRef.current;
+      if (liveSession.pid !== retrySession.pid || liveSession.generation !== retrySession.generation) return;
+      if (result.ok) {
+        const retryCount = snapshotRetryFailuresRef.current + 1;
+        snapshotRetryFailuresRef.current = 0;
+        lastSnapshotRetryReportRef.current = null;
+        addDiagLine(`업로드 준비 완료 — 스냅샷 확보(재시도 ${retryCount}회)`);
+        stopRetryTimer();
+        return;
+      }
+      snapshotRetryFailuresRef.current += 1;
+      if (snapshotRetryFailuresRef.current < SNAPSHOT_RETRY_REPORT_AFTER) return;
+      let detail: string;
+      if (result.reason === 'fresh-id-unavailable') {
+        const parts = [
+          result.fresh.processMissing ? '게임 프로세스 미검출' : '',
+          result.fresh.error ? `error=${result.fresh.error}` : '',
+          !result.fresh.iidxId ? 'IIDX ID 없음' : !VALID_IIDX_ID.test(result.fresh.iidxId) ? `IIDX ID 형식 오류(${result.fresh.iidxId})` : '',
+        ].filter(Boolean);
+        detail = parts.join(' / ') || 'IIDX ID 를 메모리에서 다시 확인하지 못함';
+      } else if (result.reason === 'snapshot-rejected') {
+        detail = `스냅샷 거부: ${snapshotReasonLabel(result.snapshotReason)}`;
+      } else {
+        detail = `스냅샷 처리 중 오류: ${result.error}`;
+      }
+      const reportKey = `${detail} / pid=${retrySession.pid} gen=${retrySession.generation}`;
+      if (lastSnapshotRetryReportRef.current === reportKey) return;
+      lastSnapshotRetryReportRef.current = reportKey;
+      addDiagLine(`업로드 준비 실패(${snapshotRetryFailuresRef.current}회) — ${reportKey}`);
+    };
+    snapshotRetryTimerRef.current = window.setInterval(() => void retry(), SNAPSHOT_RETRY_INTERVAL_MS);
+    return stopRetryTimer;
+  }, [captureSnapshot, session.pid, session.generation, rows.length]);
   useEffect(() => {
     if (liveIidxId && selectedViewerIdRef.current !== liveIidxId) void loadViewerAccount(liveIidxId);
   }, [liveIidxId, loadViewerAccount]);

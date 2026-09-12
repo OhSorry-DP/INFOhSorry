@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.122 — 2026-09-12 스냅샷 provenance 재시도 안전망
+
+"스냅샷 보류" 로그가 뜨면서 자동 업로드만 안 된다(화면에는 DJ NAME/IIDX ID 가 LIVE 로 정상 표시, 게임 OFF 수동 업로드는 성공)는 제보 조사 중 발견 — **일시적인 메모리 읽기 실패가 세션 전체의 자동 업로드를 잠그는 구조**였다. `tsvChanged` 핸들러가 `readIidxIdFresh()` 실패 시 `return` 해 `lastSnapshotRef` 가 null 로 남고, 그러면 `uploadIdentityOk()` 는 `no-snapshot-provenance` 로 전부 막고 스케줄 무장 effect 자체도 `return` 한다. 계정 스냅샷 도입(v0.0.116) 전에는 이 승격이 없어 실패한 1회만 건너뛰고 다음 주기가 메웠다. 이번 변경은 **업로드 조건을 푸는 게 아니라 실패했을 때 다시 시도하게** 하는 것이다 — `uploadIdentityOk()` 는 변경하지 않았다.
+
+- TSV 변경 시점의 메모리 IIDX ID 재확인이 일시 실패해도, 게임 실행 중이고 표시 기록이 있을 때 15초 간격으로 스냅샷 확보를 재시도합니다. 매 시도는 폴링 상태가 아닌 새 메모리 읽기로 신원을 다시 검증합니다.
+- 4회 연속 실패 시 원인을 Reflux 로그에 한 번 표시하고, 재시도로 확보되면 완료 로그를 남깁니다.
+
 ### v0.0.121 — 2026-09-12 업로드 주기 15분 → 10분 + 수동 업로드 버튼
 
 - `STAR_REFRESH_INTERVAL_MS` 를 15분 → 10분으로 단축 ([src/renderer/src/App.tsx](src/renderer/src/App.tsx)). 첫 업로드 지연(`INITIAL_UPLOAD_DELAY_MS` 3분)과 종료 시 마지막 1회 업로드는 변경 없음.
