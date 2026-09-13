@@ -152,6 +152,15 @@ type SnapshotCaptureResult =
   | { ok: false; reason: 'fresh-id-unavailable'; fresh: { processMissing: boolean; error: string | null; iidxId: string | null } }
   | { ok: false; reason: 'snapshot-rejected'; snapshotReason: SnapshotReason | string | undefined }
   | { ok: false; reason: 'exception'; error: string };
+
+function freshIdFailureDetail(fresh: { processMissing: boolean; error?: string | null; iidxId: string | null }): string {
+  const parts = [
+    fresh.processMissing ? '게임 프로세스 미검출' : '',
+    fresh.error ? `error=${fresh.error}` : '',
+    !fresh.iidxId ? 'IIDX ID 없음' : !VALID_IIDX_ID.test(fresh.iidxId) ? `IIDX ID 형식 오류(${fresh.iidxId})` : '',
+  ].filter(Boolean);
+  return parts.join(' / ') || 'IIDX ID 를 메모리에서 다시 확인하지 못함';
+}
 function snapshotReasonLabel(reason: SnapshotReason | string | undefined): string {
   switch (reason) {
     case 'source-empty': return 'Reflux tracker.tsv 가 비어있음';
@@ -262,6 +271,7 @@ export default function App() {
   const snapshotRetryFailuresRef = useRef(0);
   const lastSnapshotRetryReportRef = useRef<string | null>(null);
   const snapshotRetrySessionRef = useRef<{ pid: number | null; generation: number } | null>(null);
+  const lastSnapshotFreshFailureRef = useRef<string | null>(null);
   // 현재 rows(TSV 점수) 가 어느 IIDX ID 의 덤프에서 온 것인지 — TSV read 성공 시 그 시점 live ID 로 태깅.
   //   업로드 직전 현재 ID 와 비교해, ID 가 바뀐 뒤 옛 rows 가 새 ID 로 잘못 올라가는 것을 차단(이중 안전장치).
   // spawn 직후 최초 read 한 디스크 tracker.tsv 의 mtime("세션 baseline"). 이 값 이하의 read = 디스크 잔존
@@ -356,7 +366,13 @@ export default function App() {
       const fresh = await readIidxIdFresh();
       if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) {
         console.warn('[snapshot] skip: fresh id unavailable', fresh);
-        if (source === 'tsv-changed') addDiagLine('스냅샷 보류: IIDX ID 를 메모리에서 다시 확인하지 못함');
+        if (source === 'tsv-changed') {
+          const reportKey = `${freshIdFailureDetail(fresh)} / pid=${expect.pid} gen=${expect.generation}`;
+          if (lastSnapshotFreshFailureRef.current !== reportKey) {
+            lastSnapshotFreshFailureRef.current = reportKey;
+            addDiagLine(`스냅샷 보류: ${reportKey}`);
+          }
+        }
         return {
           ok: false,
           reason: 'fresh-id-unavailable',
@@ -372,6 +388,7 @@ export default function App() {
       }
       console.log(`[snapshot] captured id=${res.iidxId} generation=${res.generation} tsvMtime=${res.tsvMtime}`);
       lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
+      lastSnapshotFreshFailureRef.current = null;
       if (snapshotRetryTimerRef.current != null) {
         window.clearInterval(snapshotRetryTimerRef.current);
         snapshotRetryTimerRef.current = null;
@@ -1099,7 +1116,7 @@ export default function App() {
       }
     };
     const currentSession = sessionRef.current;
-    if (IS_BROWSER_REMOTE || currentSession.pid == null || rowsRef.current.length === 0 || lastSnapshotRef.current) {
+    if (IS_BROWSER_REMOTE || currentSession.pid == null || rowsRef.current.length === 0 || (lastSnapshotRef.current != null && lastSnapshotRef.current.generation === currentSession.generation)) {
       stopRetryTimer();
       return;
     }
@@ -1111,7 +1128,7 @@ export default function App() {
     }
     const retry = async (): Promise<void> => {
       const retrySession = sessionRef.current;
-      if (retrySession.pid == null || rowsRef.current.length === 0 || lastSnapshotRef.current) {
+      if (retrySession.pid == null || rowsRef.current.length === 0 || (lastSnapshotRef.current != null && lastSnapshotRef.current.generation === retrySession.generation)) {
         stopRetryTimer();
         return;
       }
@@ -1130,12 +1147,7 @@ export default function App() {
       if (snapshotRetryFailuresRef.current < SNAPSHOT_RETRY_REPORT_AFTER) return;
       let detail: string;
       if (result.reason === 'fresh-id-unavailable') {
-        const parts = [
-          result.fresh.processMissing ? '게임 프로세스 미검출' : '',
-          result.fresh.error ? `error=${result.fresh.error}` : '',
-          !result.fresh.iidxId ? 'IIDX ID 없음' : !VALID_IIDX_ID.test(result.fresh.iidxId) ? `IIDX ID 형식 오류(${result.fresh.iidxId})` : '',
-        ].filter(Boolean);
-        detail = parts.join(' / ') || 'IIDX ID 를 메모리에서 다시 확인하지 못함';
+        detail = freshIdFailureDetail(result.fresh);
       } else if (result.reason === 'snapshot-rejected') {
         detail = `스냅샷 거부: ${snapshotReasonLabel(result.snapshotReason)}`;
       } else {
