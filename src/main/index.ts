@@ -36,6 +36,7 @@ import { startHttpServer } from './http-server';
 import { createRecommendBridge } from './recommendBridge';
 import { clearPending, loadAllPending, savePending } from './uploadPending';
 import type { UploadOutcome, UploadSnapshot } from '../shared/uploadSnapshot';
+import { appendDiagLine, appStartMarkerLine, diagLogPath } from './diagLogStore';
 
 let mainWindow: BrowserWindow | null = null;
 const refluxManager = new RefluxManager();
@@ -120,6 +121,8 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   },
   'ereter:status': async () => getEreterCacheStatus(),
   'ereter:dataPath': async () => getEreterDataPath(),
+  // 진단 로그 파일 절대경로 — RefluxLog 패널 하단 표시용. PC2 에서도 호출 가능(읽기 전용, ereter:dataPath 와 동일 패턴).
+  'diag:logPath': async () => diagLogPath(),
 
   // ohSorryRating (ereter 미등록 lv11/lv12 차트 추정값 — 추천 풀 fallback)
   'rating:get': async (...args: never[]) => {
@@ -582,6 +585,12 @@ ipcMain.handle('portable:run', async (_e, filePath: string) => {
 // 추천 브릿지 — renderer(useRecommendBridge)가 recCtx 계산 결과를 이 채널로 돌려준다.
 ipcMain.on('recommend:response', (_e, payload) => recommendBridge.handleResponse(payload));
 
+// 진단 로그 — renderer(addDiagLine)가 fire-and-forget 으로 보낸 줄을 파일에 append.
+//   invoke 아니라 send — 실패해도 renderer 를 블로킹하면 안 되는 로그 전용 채널이라 on/send 관례를 따름.
+ipcMain.on('diag:append', (_e, line: unknown) => {
+  if (typeof line === 'string') appendDiagLine(line);
+});
+
 const FINAL_UPLOAD_TIMEOUT_MS = 30_000;
 
 // 앱(창 닫힘)/INFINITAS 종료 시 renderer 에 "마지막 업로드 1회" 를 요청하고 ack/timeout을 구분해 대기.
@@ -695,6 +704,7 @@ function pushSessionState(): void { if (mainWindow && !mainWindow.isDestroyed())
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
+  appendDiagLine(appStartMarkerLine(app.getVersion()));
   createWindow();
   // start 는 pid!=null 을 즉시 통보(뷰어가 "게임 ON" 을 빨리 인지) — Reflux 기동은 chain 에서 이어짐.
   sessionMonitor.on('start', () => { pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });

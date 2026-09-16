@@ -217,6 +217,12 @@ export default function App() {
   });
   const [diagLines, setDiagLines] = useState<string[]>(() => getDiagLines());
   useEffect(() => subscribeDiagLog(() => setDiagLines(getDiagLines())), []);
+  const [diagLogPath, setDiagLogPath] = useState<string | null>(null);
+  useEffect(() => {
+    let alive = true;
+    window.infohsorry?.diag?.logPath().then((p) => { if (alive) setDiagLogPath(p); }).catch(() => {});
+    return () => { alive = false; };
+  }, []);
   const [rows, setRows] = useState<SongRow[]>([]);
   const rowsRef = useRef<SongRow[]>([]);
   rowsRef.current = rows;
@@ -2021,7 +2027,7 @@ export default function App() {
         </div>
       )}
       {showRefluxLog && (
-        <RefluxLog state={refluxState} diagLines={diagLines} showProcessLines={showProcessLog} />
+        <RefluxLog state={refluxState} diagLines={diagLines} showProcessLines={showProcessLog} logPath={diagLogPath} />
       )}
       {rows.length === 0 && accounts.length > 0 && session.pid == null && !selectedViewerId && (
         <AccountSelector accounts={accounts} selectedId={null} liveId={liveIidxId} onSelect={(id) => void loadViewerAccount(id)} />
@@ -2998,7 +3004,7 @@ function EreterBar({
 // ============================================================
 // Reflux 의 최근 stdout/stderr 라인 표시 (접을 수 있음, 디버깅용)
 // ============================================================
-function RefluxLog({ state, diagLines, showProcessLines }: { state: RefluxState; diagLines: string[]; showProcessLines: boolean }): JSX.Element | null {
+function RefluxLog({ state, diagLines, showProcessLines, logPath }: { state: RefluxState; diagLines: string[]; showProcessLines: boolean; logPath: string | null }): JSX.Element | null {
   const lines = showProcessLines ? (state.recentLines ?? []) : [];
   const hasProcessLines = lines.length > 0;
   const hasDiagLines = diagLines.length > 0;
@@ -3020,6 +3026,9 @@ function RefluxLog({ state, diagLines, showProcessLines }: { state: RefluxState;
           <h4>계정 인식·스냅샷·뷰어</h4>
           <pre>{diagLines.join('\n')}</pre>
         </section>
+      )}
+      {logPath && (
+        <div style={{ fontSize: 11, opacity: 0.6, marginTop: 4 }}>{logPath}</div>
       )}
     </details>
   );

@@ -265,6 +265,12 @@ const api = {
     clearPending: (iidxId: string) => ipcRenderer.invoke('upload:clearPending', iidxId),
   },
 
+  // 진단 로그 — addDiagLine 이 파일에도 append 하도록 IPC 로 전달(fire-and-forget). PC2 에선 no-op(src/renderer/src/api.ts 참고).
+  diag: {
+    append: (line: string): void => ipcRenderer.send('diag:append', line),
+    logPath: (): Promise<string> => ipcRenderer.invoke('diag:logPath'),
+  },
+
   // LAN 접속정보 — 폰 QR/주소 표시용. http-server 미시작(dev)이면 null.
   server: {
     info: (): Promise<unknown> => ipcRenderer.invoke('server:info'),

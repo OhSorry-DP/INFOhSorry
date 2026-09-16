@@ -291,6 +291,11 @@ if (!IS_HOST) {
       onFinalRequest: () => (): void => {},
       finalDone: (): void => {},
     },
+    // PC2(브라우저 원격)는 파일시스템에 못 쓴다 — 로그 append 는 no-op. logPath 는 읽기 전용이라 그대로 HTTP bridge 태움.
+    diag: {
+      append: (): void => {},
+      logPath: () => callIpc('diag:logPath') as Promise<string>,
+    },
     server: {
       info: () => callIpc('server:info') as ReturnType<Window['infohsorry']['server']['info']>,
     },

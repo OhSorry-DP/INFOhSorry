@@ -185,6 +185,10 @@ declare global {
         loadPending?: () => Promise<import('../shared/uploadSnapshot').UploadSnapshot[]>;
         clearPending?: (iidxId: string) => Promise<{ ok: boolean; error?: string; path?: string }>;
       };
+      diag: {
+        append: (line: string) => void;
+        logPath: () => Promise<string>;
+      };
       server: {
         info: () => Promise<{
           ip: string | null;
