@@ -1,4 +1,4 @@
-// normTitle.js — 곡명 정규화 통합 모듈 (v0.0.5, UMD)
+// normTitle.js — 곡명 정규화 통합 모듈 (v0.0.6, UMD)
 //
 // BEMANI (IIDX) 곡명 매칭용 강한 norm.
 //
@@ -88,8 +88,11 @@
       .replace(/[?？¿]/g, '?')      // ¿ (U+00BF inverted)
       .replace(/[(（]/g, '(')
       .replace(/[)）]/g, ')')
-      // 더블 쿼터 변종
-      .replace(/[“”„‟〝〞〟]/g, '"')
+      // 더블 쿼터 — 변종 통일 후 제거.
+      //   eagate 계열 소스가 곡명의 " 를 통째로 빼고 준다 (예: textage 'type "Forza"-' → eagate 'typeForza-').
+      //   남겨두면 norm 키가 갈라져 기존 곡에 매칭 실패 → ensure_song 이 series_no=99 중복행을 만든다 (2026-09-16, 9곡).
+      //   textage 전곡 검사 결과 " 제거로 늘어나는 norm 충돌 없음 (충돌 그룹 10 → 10).
+      .replace(/["“”„‟〝〞〟]/g, '')
       // 싱글 쿼터 변종
       .replace(/[‘’‚‛`´ʼˈˊˋ]/g, "'")
       // 라틴 확장
