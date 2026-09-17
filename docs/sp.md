@@ -1,6 +1,6 @@
 # SP(싱글플레이) 데이터 — INFOhSorry
 
-> **한 줄 요약**: INF 앱이 Reflux 메모리에서 읽은 **SP 채보 기록**을 두 경로로 내보낸다 — ① Supabase `scores` 에 SP10~12 만 `play_style:0` 으로 10분 주기 적재(게스트 웹용), ② 원격모드(`/api/me`)로 본인 SP 전곡을 실시간 노출(로컬보드 오소리웹 카드용). (2026-06-14, v0.0.78 /api/me SP, v0.0.81 supabase SP 적재)
+> **한 줄 요약**: INF 앱이 Reflux 메모리에서 읽은 **SP 채보 기록**을 두 경로로 내보낸다 — ① Supabase `scores` 에 SP10~12 만 `play_style:0` 으로 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격)로 적재(게스트 웹용), ② 원격모드(`/api/me`)로 본인 SP 전곡을 실시간 노출(로컬보드 오소리웹 카드용). (2026-06-14, v0.0.78 /api/me SP, v0.0.81 supabase SP 적재, v0.0.125 TSV 디바운스 업로드)
 
 이 문서는 INF 앱의 **SP 데이터 흐름**만 다룹니다. 메모리 리딩 일반은 [memory-reading.md](memory-reading.md), 데이터 흐름 전반은 [data-flow.md](data-flow.md), IPC 는 [ipc-reference.md](ipc-reference.md) 를 보세요.
 
@@ -31,7 +31,7 @@
 | **play_style** | `0` (DP 행은 `1`) — `scores.play_style` int 컬럼, 0=SP |
 | **dedup PK** | `${songId}|${iidxIdNorm}|${diffInt}|${PLAYED_VERSION_INF}|0` (끝 `0`=play_style) |
 | **신곡 skip** | `songs` 미등록(songId==null)이면 skip(`ensure_song` 안 부름) |
-| **타이밍** | 10분 주기 업로드 effect 에서 `uploadStateRef.current.spAllCharts` 참조 |
+| **타이밍** | 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격, v0.0.125) 업로드 effect 에서 `uploadStateRef.current.spAllCharts` 참조 |
 
 > Supabase `scores` 는 SP/DP 를 같은 테이블에 저장하고 `play_style` 로 구분(본체 dbConn 의 PK 분리와 동일 규약 — [../../ohSorry/docs/sp.md](../../ohSorry/docs/sp.md) §3). `played_version` 은 INFINITAS(0).
 
@@ -78,7 +78,7 @@ profile 이 매 렌더 새 객체라 setUser·SSE 폭주 → 카드 무한 재�
 
 | 경로 | 갱신 주기 | 대상 | 레벨 |
 |------|----------|------|------|
-| ① Supabase | 10분 주기 | 게스트 웹(타인 조회) | SP10~12 |
+| ① Supabase | 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격) | 게스트 웹(타인 조회) | SP10~12 |
 | ② /api/me + SSE | dp12 재계산 즉시 | 본인(로컬보드) | SP 전곡 |
 
 > SP ★/추천 계산은 INF 앱에 없음 — 앱은 SP **기록만** 내보내고, 표시·추천·분석은 오소리웹이 gist 데이터로 처리([../../ohSorryWeb/docs/sp.md](../../ohSorryWeb/docs/sp.md)).
@@ -90,9 +90,9 @@ profile 이 매 렌더 새 객체라 setUser·SSE 폭주 → 카드 무한 재�
 | 항목 | 값 |
 |------|-----|
 | 소스 | Reflux `tracker.tsv`(SPB/SPN/SPH/SPA/SPL) |
-| 경로① 적재 | `scores` `play_style:0`, gameLevel 10~12, 10분 주기 |
+| 경로① 적재 | `scores` `play_style:0`, gameLevel 10~12, 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격) |
 | 경로② 원격 | `/api/me` `sp_charts_json`(전곡)+`sp_tier12`, SSE 실시간 |
 | 핵심 파일 | `App.tsx`(spAllCharts), `supabaseSync.ts`(적재), `remoteUser.ts`(원격빌드), `http-server.ts`(/api/me·SSE) |
-| 관련 버전 | v0.0.78(/api/me SP), v0.0.79(/osr 네트워크우선), v0.0.80(setUser dedup), v0.0.81(supabase SP) |
+| 관련 버전 | v0.0.78(/api/me SP), v0.0.79(/osr 네트워크우선), v0.0.80(setUser dedup), v0.0.81(supabase SP), v0.0.125(TSV 디바운스 업로드) |
 
 > **상태: 구현됨 · 데이터 제공만** — INF 는 SP 기록 수집/노출까지. 표시·추천은 오소리웹.

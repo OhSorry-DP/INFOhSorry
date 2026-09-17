@@ -142,6 +142,8 @@ const APP_VERSION = __APP_VERSION__;
 const STAR_REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 정기 업로드 — 10분
 const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비) 후 첫 업로드까지 대기 — 3분
 const MANUAL_UPLOAD_COOLDOWN_MS = 5 * 60 * 1000;
+const TSV_UPLOAD_DEBOUNCE_MS = 45 * 1000;    // tsv 변경 후 조용해지면(45초) 업로드 트리거
+const TSV_UPLOAD_COOLDOWN_MS = 3 * 60 * 1000; // 마지막 업로드로부터 최소 간격 — 미만이면 그 시점까지 지연
 const SNAPSHOT_RETRY_INTERVAL_MS = 15 * 1000;
 const SNAPSHOT_RETRY_REPORT_AFTER = 4;
 
@@ -364,6 +366,8 @@ export default function App() {
   // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 이후 tsv 변경마다 실시간 갱신.
   // (옛 동작: 마운트 즉시 옛 tsv 표시 → race condition 으로 stale 데이터 영구 노출 가능했음)
   const tsvChangedDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const tsvUploadDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
+  const tsvUploadCooldownTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const captureSnapshot = useCallback(async (
     expect: { generation: number; pid: number | null },
     source: 'tsv-changed' | 'retry',
@@ -416,6 +420,20 @@ export default function App() {
     const offReflux = window.infohsorry.reflux.onState(setRefluxState);
     const viewer = window.infohsorry;
     const offSession = viewer.session.onState(setSession);
+    // TSV 변경 → 조용해지면 업로드, 단 마지막 업로드로부터 TSV_UPLOAD_COOLDOWN_MS 미만이면 그 시점까지 지연
+    const scheduleTsvUpload = (): void => {
+      // 첫 업로드 전(lastUploadAtRef=0)에는 건너뛴다 — 데이터 준비 대기(INITIAL_UPLOAD_DELAY_MS)를 지키기 위해
+      //   초기 업로드는 schedTimersRef 의 3분 스케줄에 맡기고, 이 경로는 그 뒤부터 동작한다.
+      if (lastUploadAtRef.current === 0) return;
+      if (tsvUploadCooldownTimerRef.current) { clearTimeout(tsvUploadCooldownTimerRef.current); tsvUploadCooldownTimerRef.current = null; }
+      const fire = (): void => {
+        const fn = (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto;
+        if (fn) fn();
+      };
+      const remaining = TSV_UPLOAD_COOLDOWN_MS - (Date.now() - lastUploadAtRef.current);
+      if (remaining <= 0) fire();
+      else tsvUploadCooldownTimerRef.current = window.setTimeout(fire, remaining);
+    };
     const offTsvChanged = viewer.reflux.onTsvChanged((e: TsvChangedEvent) => {
       console.log(`[tsvChanged] event mtime=${e.mtime} size=${e.size} generation=${e.generation} pid=${e.pid} browserRemote=${IS_BROWSER_REMOTE}`);
       if (IS_BROWSER_REMOTE) return;
@@ -424,13 +442,20 @@ export default function App() {
         { generation: e.generation, pid: e.pid },
         'tsv-changed',
       ), 400);
+      if (tsvUploadDebounceRef.current) clearTimeout(tsvUploadDebounceRef.current);
+      tsvUploadDebounceRef.current = window.setTimeout(() => scheduleTsvUpload(), TSV_UPLOAD_DEBOUNCE_MS);
     });
     void (async () => {
       const [s, path, list, lastSelected] = await Promise.all([viewer.session.getState(), window.infohsorry.reflux.getTsvPath(), viewer.account.list(), viewer.account.getLastSelected()]);
       setSession(s); setRefluxState(await window.infohsorry.reflux.getState()); setTsvPath(path); setAccounts(list);
       if (s.pid == null && lastSelected) void loadViewerAccount(lastSelected);
     })();
-    return () => { offReflux(); offSession(); offTsvChanged(); if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current); };
+    return () => {
+      offReflux(); offSession(); offTsvChanged();
+      if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current);
+      if (tsvUploadDebounceRef.current) clearTimeout(tsvUploadDebounceRef.current);
+      if (tsvUploadCooldownTimerRef.current) clearTimeout(tsvUploadCooldownTimerRef.current);
+    };
   }, [captureSnapshot, loadViewerAccount]);
 
 
