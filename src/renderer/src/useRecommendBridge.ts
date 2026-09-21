@@ -57,6 +57,9 @@ function slimRow(r: Any): Record<string, unknown> {
   if (r.djLevel) out.djLevel = r.djLevel;
   if (typeof r.exScore === 'number') out.exScore = r.exScore;
   if (typeof r.scoreRate === 'number' && r.scoreRate != null) out.scoreRate = r.scoreRate;
+  // 곡 밀도 — 초당 노트 수(스크래치 제외). 평균 / 2초 창 피크. slim 차트에 없을 수 있다.
+  if (r._nps && typeof r._nps.a === 'number') out.nps = r._nps.a;
+  if (r._nps && typeof r._nps.p === 'number') out.peakNps = r._nps.p;
   if (typeof r.margin === 'number') out.margin = r.margin;
   if (typeof r.gameLevel === 'number') out.gameLevel = r.gameLevel;
   if (r._category) out.category = r._category;

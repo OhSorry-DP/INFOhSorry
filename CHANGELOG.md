@@ -2,6 +2,17 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 코치 브리지에 `nps`·`peakNps` 노출 (2026-09-21)
+
+추천 행 슬림(`useRecommendBridge.ts` `slimRow`)에 곡 밀도 두 값을 실었다.
+`nps` = 곡 전체 평균 초당 노트 수(스크래치 제외), `peakNps` = 2초 창 최대 밀도.
+
+- 엔진이 최종 행에 붙이는 `r._nps` 에서 읽고 **없으면 필드를 생략**한다.
+- 값 공급은 이미 끝나 있다 — `data.iidx.in` 의 `lib/recommend.js`(엔진)와
+  `data/patterns-dp-*.json`(차트별 `nps`) 양쪽이 배포됐다. **INF 는 재시작하면 새 엔진을 받는다.**
+- ⚠️ INF 쪽 코치 지침은 웹 커스텀 GPT 와 **별도 파일**이다(`tools/openwebui/system-prompt.md`).
+  NPS 해석 규칙을 쓰려면 그 파일도 따로 갱신해야 한다 — 이번에는 건드리지 않았다.
+
 ### v0.0.125 — 2026-09-18 TSV 변경 디바운스 업로드
 
 곡을 클리어해도 Supabase 업로드는 10분 고정 틱뿐이라, 남이 웹에서 그 유저를 볼 때 최대 11~12분 늦게 반영됐다. 본인 화면은 원격모드 SSE 직결이라 이 지연을 겪지 않아 드러나지 않던 문제다. 조사 결과 dump-user Actions(20~26초)·data.iidx.in 엣지 캐시(60초)·ETag 조건부 요청은 모두 정상 동작이었고, 전체 지연의 약 90%가 이 업로드 틱이었다.
