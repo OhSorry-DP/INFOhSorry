@@ -14,6 +14,13 @@ import type { ChartSlot } from '../../shared/types';
 const GRADE_TH = { A: 6 / 9, AA: 7 / 9, AAA: 8 / 9, MAXM: 0.944444 } as const;
 // 웹이 밴드 폭을 스케일할 때 쓰는 기준 unit(rate-star.json unit 이 바뀌어도 밴드가 흔들리지 않게).
 const BASELINE_UNIT = 2.5462094128788015;
+// AAA 목표 밴드 — 2026-09-23 실측 재유도(조사 d:/work/scratchpad/target-band-investigation.md).
+//   ⚠️ 이 둘은 **현행 자에서 직접 잰 값이라 ×S 를 곱하지 않는다**(maxm 의 unit 기반 예외와 같은 취급).
+//   hi 0.25 = 달성률 24% 지점. 그 위는 9% 이하라 「목표」라 부르기 부정직하다.
+//   sortTarget -0.25 = 달성률 50% 지점. lo 를 열어도 화면 상위가 적정 난이도로 유지되게 하는 장치라
+//   **lo:null 과 반드시 함께 간다** — 정렬을 되돌리면 화면이 「안 친 쉬운 곡」으로 덮인다.
+const AAA_TARGET_HI = 0.25;
+const AAA_SORT_TARGET = -0.25;
 
 // ratingData.ratings 한 행에서 뽑는 내부 r★ (등급별 목표 별값 + 신뢰도 + scoreOffset).
 interface RStarEntry {
@@ -105,6 +112,8 @@ interface Spec {
   floor: number | null;
   lo: number | null;
   hi: number;
+  /** 있으면 「이 delta 에 가까운 순」으로 정렬한다. 없으면 종전대로 targetStar 오름차순. */
+  sortTarget?: number;
 }
 
 /**
@@ -142,7 +151,9 @@ export function computeTargetFolders(
   const specs: Spec[] = [
     { key: 'a', field: 'ra', confField: 'confA', th: GRADE_TH.A, floor: null, lo: null, hi: 0.0885724242083653 * S },
     { key: 'aa', field: 'raa', confField: 'confAa', th: GRADE_TH.AA, floor: GRADE_TH.A, lo: -0.0885724242083653 * S, hi: 0.0885724242083653 * S },
-    { key: 'aaa', field: 'raaa', confField: 'confAaa', th: GRADE_TH.AAA, floor: GRADE_TH.AA, lo: -0.05904828280557687 * S, hi: 0.14762070701394217 * S },
+    // lo 를 연다 — 밴드 안 곡이 대부분 「이미 AAA」라 후보가 고갈됐다(27명 p50 4곡·0개 7명).
+    //   sortTarget 이 화면 상위를 지키므로 쉬운 곡이 쏟아져도 위로 올라오지 않는다.
+    { key: 'aaa', field: 'raaa', confField: 'confAaa', th: GRADE_TH.AAA, floor: GRADE_TH.AA, lo: null, hi: AAA_TARGET_HI, sortTarget: AAA_SORT_TARGET },
     { key: 'maxm', field: 'maxm', confField: 'confMaxm', th: GRADE_TH.MAXM, floor: GRADE_TH.AAA, lo: -2 * unit, hi: 0.5 * unit },
   ];
 
@@ -172,7 +183,11 @@ export function computeTargetFolders(
         estimated: isEst,
       });
     }
-    rows.sort((a, b) => a.targetStar - b.targetStar);
+    // sortTarget 이 있는 등급은 「적정 난이도 근접순」 — 없으면 종전대로 가까운(쉬운) 순.
+    const sortTarget = spec.sortTarget;
+    rows.sort(sortTarget == null
+      ? (a, b) => a.targetStar - b.targetStar
+      : (a, b) => Math.abs(a.targetStar - U - sortTarget) - Math.abs(b.targetStar - U - sortTarget));
     out[spec.key] = rows;
   }
   return out;
