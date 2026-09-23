@@ -31,6 +31,7 @@ const api = {
   reflux: {
     start: (): Promise<RefluxStartResult> => ipcRenderer.invoke('reflux:start'),
     stop: (): Promise<{ ok: boolean }> => ipcRenderer.invoke('reflux:stop'),
+    restart: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('reflux:restart'),
     getState: (): Promise<RefluxState> => ipcRenderer.invoke('reflux:state'),
     getTsvPath: (): Promise<string> => ipcRenderer.invoke('reflux:tsvPath'),
     // offsets.txt 파싱 — anchor 절대주소 + module-base 기준 상대 offset

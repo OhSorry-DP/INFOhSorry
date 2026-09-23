@@ -27,6 +27,7 @@ declare global {
       reflux: {
         start: () => Promise<RefluxStartResult>;
         stop: () => Promise<{ ok: boolean }>;
+        restart: () => Promise<{ ok: boolean; error?: string }>;
         getState: () => Promise<RefluxState>;
         getTsvPath: () => Promise<string>;
         getOffsets: () => Promise<{

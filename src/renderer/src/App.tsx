@@ -146,12 +146,14 @@ const TSV_UPLOAD_DEBOUNCE_MS = 45 * 1000;    // tsv 변경 후 조용해지면(4
 const TSV_UPLOAD_COOLDOWN_MS = 3 * 60 * 1000; // 마지막 업로드로부터 최소 간격 — 미만이면 그 시점까지 지연
 const SNAPSHOT_RETRY_INTERVAL_MS = 15 * 1000;
 const SNAPSHOT_RETRY_REPORT_AFTER = 4;
+const ID_SWITCH_SNAPSHOT_BLOCK_MS = 20 * 1000; // Reflux 재기동 직후 부분 tracker.tsv 스냅샷 방지
 
 type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
 const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
 type SnapshotCaptureResult =
   | { ok: true; iidxId: string; generation: number; tsvMtime: number }
   | { ok: false; reason: 'fresh-id-unavailable'; fresh: { processMissing: boolean; error: string | null; iidxId: string | null } }
+  | { ok: false; reason: 'id-switch-cooldown' }
   | { ok: false; reason: 'snapshot-rejected'; snapshotReason: SnapshotReason | string | undefined }
   | { ok: false; reason: 'exception'; error: string };
 
@@ -247,6 +249,8 @@ export default function App() {
       setRows(t.rows ?? []);
       setTsvMtime(t.mtime ?? 0);
     } else {
+      setRows([]);
+      setTsvMtime(0);
       console.warn('[viewer] account.readTsv failed:', t.error);
       addDiagLine(`저장된 기록(${id}) 읽기 실패: ${t.error ?? '알 수 없는 오류'}`);
     }
@@ -280,6 +284,9 @@ export default function App() {
   const lastSnapshotRetryReportRef = useRef<string | null>(null);
   const snapshotRetrySessionRef = useRef<{ pid: number | null; generation: number } | null>(null);
   const lastSnapshotFreshFailureRef = useRef<string | null>(null);
+  const snapshotBlockUntilRef = useRef(0);
+  const lastValidIidxIdRef = useRef<string | null>(null);
+  const lastValidProfileRef = useRef<ProfileInfo | null>(null);
   // 현재 rows(TSV 점수) 가 어느 IIDX ID 의 덤프에서 온 것인지 — TSV read 성공 시 그 시점 live ID 로 태깅.
   //   업로드 직전 현재 ID 와 비교해, ID 가 바뀐 뒤 옛 rows 가 새 ID 로 잘못 올라가는 것을 차단(이중 안전장치).
   // spawn 직후 최초 read 한 디스크 tracker.tsv 의 mtime("세션 baseline"). 이 값 이하의 read = 디스크 잔존
@@ -372,6 +379,13 @@ export default function App() {
     expect: { generation: number; pid: number | null },
     source: 'tsv-changed' | 'retry',
   ): Promise<SnapshotCaptureResult> => {
+    if (Date.now() < snapshotBlockUntilRef.current) {
+      if (source === 'tsv-changed' && lastSnapshotFreshFailureRef.current !== 'id-switch-cooldown') {
+        lastSnapshotFreshFailureRef.current = 'id-switch-cooldown';
+        addDiagLine('스냅샷 보류: 계정 전환 직후 Reflux tracker.tsv 안정화 대기 중');
+      }
+      return { ok: false, reason: 'id-switch-cooldown' };
+    }
     try {
       const fresh = await readIidxIdFresh();
       if (!fresh.ok || !fresh.iidxId || !VALID_IIDX_ID.test(fresh.iidxId)) {
@@ -1177,7 +1191,9 @@ export default function App() {
       snapshotRetryFailuresRef.current += 1;
       if (snapshotRetryFailuresRef.current < SNAPSHOT_RETRY_REPORT_AFTER) return;
       let detail: string;
-      if (result.reason === 'fresh-id-unavailable') {
+      if (result.reason === 'id-switch-cooldown') {
+        detail = '계정 전환 직후 Reflux tracker.tsv 안정화 대기 중';
+      } else if (result.reason === 'fresh-id-unavailable') {
         detail = freshIdFailureDetail(result.fresh);
       } else if (result.reason === 'snapshot-rejected') {
         detail = `스냅샷 거부: ${snapshotReasonLabel(result.snapshotReason)}`;
@@ -1338,6 +1354,42 @@ export default function App() {
       return { kind: 'http-failure', error, durationMs };
     }
   }, []);
+
+  // IIDX ID 전환은 세션(pid/generation) 전환과 별도의 축으로 감지한다.
+  // Reflux 재기동 직후 tracker.tsv 는 부분적으로만 쓰일 수 있으므로, 안정화 전 스냅샷을 막는다.
+  useEffect(() => {
+    const refluxHooked = refluxState.stage === 'hooked' || refluxState.stage === 'ready';
+    const currentId = profile.iidxId;
+    if (!refluxHooked || !currentId || !VALID_IIDX_ID.test(currentId)) return;
+
+    const previousId = lastValidIidxIdRef.current;
+    const previousProfile = lastValidProfileRef.current;
+    lastValidIidxIdRef.current = currentId;
+    lastValidProfileRef.current = { ...profile };
+    if (!previousId || previousId === currentId) return;
+
+    void (async () => {
+      const snapshot = buildSnapshot('id-switch', previousProfile);
+      if (snapshot) void uploadSnapshot(snapshot, 'id-switch');
+
+      setRows([]);
+      setTsvMtime(0);
+      lastLoadedMtime.current = 0;
+      clearLiveSessionState();
+      snapshotBlockUntilRef.current = Date.now() + ID_SWITCH_SNAPSHOT_BLOCK_MS;
+      lastSnapshotFreshFailureRef.current = null;
+      try {
+        const restarted = await window.infohsorry.reflux.restart();
+        if (!restarted.ok) addDiagLine(`계정 전환 후 Reflux 재시작 실패: ${restarted.error ?? '알 수 없는 오류'}`);
+      } catch (e) {
+        addDiagLine(`계정 전환 후 Reflux 재시작 예외: ${(e as Error).message}`);
+      }
+      // 재기동이 끝난 시점부터 다시 센다 — hardStop + startAll(프로세스 kill → 재기동 → 후킹) 자체가
+      //   차단 시간에 육박하면 위에서 건 차단이 이미 만료돼 부분 tracker.tsv 가 통과할 수 있다.
+      snapshotBlockUntilRef.current = Date.now() + ID_SWITCH_SNAPSHOT_BLOCK_MS;
+      addDiagLine(`계정 전환 감지 (${previousId} → ${currentId}) — 기록 초기화 + Reflux 재시작`);
+    })();
+  }, [buildSnapshot, clearLiveSessionState, profile, refluxState.stage, uploadSnapshot]);
 
   // pending은 자기 identity를 갖고 있으므로 현재 게임/프로필과 무관하게 앱 준비 후 한 번 순차 재전송한다.
   useEffect(() => {

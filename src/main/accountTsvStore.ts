@@ -8,6 +8,8 @@ import type { InfinitasSessionState } from '../shared/session';
 import type { TsvReadResult } from '../shared/types';
 
 const IIDX_RE = /^[A-Z]\d{12}$/;
+// 기존 스냅샷 대비 허용하는 최소 행 수 비율
+const MIN_ROW_RATIO = 0.5;
 function usersRoot(): string { return join(app.getPath('userData'), 'users'); }
 function accountDir(iidxId: string): string { return join(usersRoot(), iidxId); }
 function viewerStatePath(): string { return join(app.getPath('userData'), 'viewer-state.json'); }
@@ -39,6 +41,29 @@ export async function snapshotTsv(req: AccountSnapshotRequest, deps: { sourceTsv
     // rename 직전 라이브 PID 최종 확인 — 폴링 캐시(getSession)가 아직 못 본 A→B 전환을 즉시 차단.
     //   tmp 는 위 st2 검증을 이미 통과한 안정 사본이므로 재복사하지 않는다.
     if (findProcessId('bm2dx.exe') !== req.expect.pid) { await fsp.unlink(tmp).catch(() => {}); return { ok: false, reason: 'pid-mismatch' }; }
+    try {
+      await fsp.stat(finalPath);
+      try {
+        const [existingText, newText] = await Promise.all([
+          fsp.readFile(finalPath, 'utf8'),
+          fsp.readFile(tmp, 'utf8'),
+        ]);
+        const countRows = (text: string): number => text.split(/\r?\n/).filter((l) => l.length > 0).length;
+        const existingRows = countRows(existingText);
+        const newRows = countRows(newText);
+        if (newRows < existingRows * MIN_ROW_RATIO) {
+          console.warn('[account:snapshot] 행 수 부족:', { existingRows, newRows });
+          await fsp.unlink(tmp).catch(() => {});
+          return { ok: false, reason: 'source-empty' };
+        }
+      } catch (e) {
+        console.warn('[account:snapshot] 행 수 검사 실패:', e);
+      }
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
+        console.warn('[account:snapshot] 행 수 검사 실패:', e);
+      }
+    }
     await fsp.rename(tmp, finalPath); await writeMeta(req.iidxId, req.djName);
     return { ok: true, iidxId: req.iidxId, tsvMtime: st.mtimeMs, generation: s.generation };
   } catch (e) {

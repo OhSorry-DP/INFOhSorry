@@ -43,6 +43,7 @@ const refluxManager = new RefluxManager();
 const sessionMonitor = new InfinitasSessionMonitor();
 refluxManager.attachSession(() => sessionMonitor.getState());
 let sessionOpChain: Promise<void> = Promise.resolve();
+let abortFinalUpload: (() => void) | null = null;
 
 // 원격모드(LAN 로컬보드) — renderer 가 계산해 push 한 오소리웹 user 객체(별값 + charts_json) 캐시.
 //   http-server 의 GET /api/me 가 이 값을 노출 → 오소리웹 원격 카드가 supabase 대신 읽음.
@@ -75,6 +76,24 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   'reflux:stop': async () => {
     await refluxManager.stop();
     return { ok: true };
+  },
+  'reflux:restart': async (): Promise<{ ok: boolean; error?: string }> => {
+    let result: { ok: boolean; error?: string } = { ok: true };
+    // hardStop 까지 try 안에 둔다 — 여기서 throw 가 새어 나가면 sessionOpChain 이 rejected 로 남아
+    //   이후 onSessionStart / onSessionEnd 가 영구히 실행되지 않는다.
+    sessionOpChain = sessionOpChain.then(async () => {
+      try {
+        await refluxManager.hardStop();
+        await refluxManager.startAll();
+      } catch (e) {
+        const error = (e as Error).message;
+        console.warn('[reflux] 재시작 실패:', error);
+        result = { ok: false, error };
+      }
+      pushSessionState();
+    });
+    await sessionOpChain;
+    return result;
   },
   'reflux:tsvPath': async () => RefluxManager.tsvFilePath,
   'session:getState': async () => sessionMonitor.getState(),
@@ -605,6 +624,7 @@ function requestFinalUpload(timeoutMs = FINAL_UPLOAD_TIMEOUT_MS): Promise<Upload
     const finish = (outcome: UploadOutcome): void => {
       if (done) return;
       done = true;
+      abortFinalUpload = null;
       clearTimeout(timer);
       ipcMain.removeListener('upload:final-done', onDone);
       resolve(outcome);
@@ -612,6 +632,7 @@ function requestFinalUpload(timeoutMs = FINAL_UPLOAD_TIMEOUT_MS): Promise<Upload
     const onDone = (_event: Electron.IpcMainEvent, outcome: UploadOutcome): void => finish(outcome);
     ipcMain.on('upload:final-done', onDone);
     const timer = setTimeout(() => finish({ kind: 'timeout', durationMs: Date.now() - startedAt }), timeoutMs);
+    abortFinalUpload = () => finish({ kind: 'timeout', durationMs: Date.now() - startedAt });
     try {
       win.webContents.send('upload:final-request');
     } catch {
@@ -707,7 +728,7 @@ app.whenReady().then(() => {
   appendDiagLine(appStartMarkerLine(app.getVersion()));
   createWindow();
   // start 는 pid!=null 을 즉시 통보(뷰어가 "게임 ON" 을 빨리 인지) — Reflux 기동은 chain 에서 이어짐.
-  sessionMonitor.on('start', () => { pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
+  sessionMonitor.on('start', () => { abortFinalUpload?.(); pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
   // end 는 즉시 통보하지 않는다 — onSessionEnd 가 final upload 를 끝낸 뒤 pid=null 을 push(provenance 유실 방지).
   sessionMonitor.on('end', () => { sessionOpChain = sessionOpChain.then(() => onSessionEnd()); });
   sessionMonitor.start();

@@ -159,6 +159,7 @@ if (!IS_HOST) {
     reflux: {
       start: () => callIpc('reflux:start') as ReturnType<Window['infohsorry']['reflux']['start']>,
       stop: () => callIpc('reflux:stop') as ReturnType<Window['infohsorry']['reflux']['stop']>,
+      restart: () => callIpc('reflux:restart') as ReturnType<Window['infohsorry']['reflux']['restart']>,
       getState: () => callIpc('reflux:state') as Promise<RefluxState>,
       getTsvPath: () => callIpc('reflux:tsvPath') as Promise<string>,
       getOffsets: () => callIpc('reflux:offsets') as ReturnType<Window['infohsorry']['reflux']['getOffsets']>,

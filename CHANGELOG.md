@@ -2,6 +2,47 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 계정 전환 시 기록이 섞이던 버그 수정 — ID 축 가드 복원 (2026-09-23)
+
+A 계정으로 플레이하다 게임을 끄고 **바로** B 계정으로 켜면 A 기록과 B 기록이 한 파일로 섞여
+앱과 웹 양쪽에 잘못 표시되던 문제를 고쳤다.
+
+🔴 **근본 원인은 `0.0.71`(`fa36c73`)에서 이미 고쳤던 버그의 회귀다.** `0.0.116`(`68303f7`) 계정격리
+통합에서 `doReset` / `lastValidIidxIdRef` / `prevIidxIdRef` 가 제거되고 `clearLiveSessionState()` 로
+대체되면서 **트리거 축이 「IIDX ID 전환」에서 「session pid/generation」으로 바뀌었고**, 그 과정에서
+`setRows([])` 와 Reflux `tracker.tsv` 정리가 통째로 빠졌다.
+
+**섞이는 경로**: A→B 고속 전환 → `clearLiveSessionState` 는 돌지만 rows·tracker.tsv 는 무방비 →
+`onSessionEnd` 가 `requestFinalUpload()`(최대 30초)를 먼저 기다리느라 `hardStop()` 이 밀림 →
+그동안 Reflux 가 살아서 새 프로세스에 재부착(2초 폴링으로 `bm2dx` 재탐색) →
+`File.WriteAllText` 전체 덮어쓰기라 내부 스코어맵의 A 가 남은 채 B 를 읽어 **A+B 혼합본**이 쓰임 →
+B 신원으로 스냅샷 요청 시 generation·pid 검증이 **전부 통과**해 `users/{B}/tracker.tsv` 에 혼합본 저장.
+
+- **ID 축 전환 감지 복원** — `lastValidIidxIdRef` 앵커. 게임 재시작 시 시퀀스가 `A→null→B` 가 되므로
+  직전 tick 이 아니라 **마지막 유효 ID** 와 비교해야 `A→B` 를 놓치지 않는다.
+  🔴 **읽기 실패(null)는 전환 트리거로 쓰지 않는다** — 조회 실패를 「값 없음」으로 만드는 fail-open 금지.
+- **전환 시 정리 순서** — ① 이전 계정 스냅샷 **선업로드**(뒤로 미루면 A 의 마지막 기록이 유실된다)
+  ② `rows`·`tsvMtime`·`lastLoadedMtime` 리셋 ③ `clearLiveSessionState()` ④ **Reflux 재시작**.
+  🔴 계정 폴더 `users/{IIDX_ID}/` 는 **건드리지 않는다**.
+- **`reflux:restart` IPC 신설** — `sessionOpChain` 에 태워 `onSessionStart` 와 경합하지 않게 직렬화.
+  🔴 `clearTsv` 로 파일만 비우는 것은 무의미하다 — Reflux 가 2초 뒤 폴링에서 A+B 를 다시 쓴다.
+  프로세스를 죽이고 `tracker.db`/`sessions` 까지 지우는 `hardStop` + `startAll` 이라야 내부 상태가 초기화된다.
+- **final upload abort** — 새 세션 `start` 감지 시 진행 중인 `requestFinalUpload()` 를 즉시 끊는다.
+  없으면 위 재시작이 최대 30초 뒤로 밀린다. `onSessionEnd` 의 문장 순서 자체는 그대로 둔다.
+- **계정 전환 후 20초 스냅샷 차단**(`ID_SWITCH_SNAPSHOT_BLOCK_MS`) — Reflux 재기동 직후 `tracker.tsv` 는
+  부분적으로만 쓰여 있고, `snapshotTsv` 는 크기 0 만 거부하므로 그대로 통과해 계정 폴더의 **기존 전체
+  기록을 부분 데이터로 덮어쓴다**. 🔴 차단 시각은 재기동이 **끝난 시점부터** 다시 센다 —
+  `hardStop`+`startAll` 자체가 차단 시간에 육박하면 미리 건 차단이 이미 만료된다.
+  🔴 `stage === 'ready'` 게이트는 쓸 수 없다 — `setState({stage:'ready'})` 와 `emit('tsvChanged')` 가
+  **같은 tick 에 동시 발생**한다.
+- **스냅샷 행 수 sanity 가드**(`MIN_ROW_RATIO = 0.5`) — 새 스냅샷이 기존 계정 파일의 절반 미만이면 거부.
+  🔴 고정 행수 assert 는 신곡에 죽은 전례가 있어 **비율 기준**으로 잡았다. 기존 파일이 없으면(첫 플레이)
+  건너뛰고, 검사 자체가 실패하면 통과시킨다.
+- **`loadViewerAccount` 실패 시 rows 비우기** — `readTsv` 가 실패하면 이전 계정 rows 가 화면에 그대로
+  남아 있었다(B 계정 첫 플레이라 폴더가 아직 없는 경우).
+
+⚠️ 실기 검증은 이번에도 하지 못했다(typecheck 만 통과). 이 프로젝트의 상시 리스크다.
+
 ### AAA 목표곡 밴드 재유도 (2026-09-23)
 
 웹 정본(`ohSorryWeb`)의 AAA 목표 밴드 변경을 `emodeTargets.ts` 에 1:1 반영했다.
