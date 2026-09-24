@@ -62,6 +62,7 @@ import AccountSelector from './AccountSelector';
 import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
 import { uploadProfile, fetchUserPublic, getInfChartChecker, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
+import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
 import { SNAPSHOT_VERSION, type SnapshotReason, type UploadOutcome, type UploadSnapshot } from '../../shared/uploadSnapshot';
@@ -306,6 +307,60 @@ export default function App() {
     };
     return () => {
       delete (window as unknown as { startdev?: () => void }).startdev;
+    };
+  }, []);
+  useEffect(() => {
+    if (IS_BROWSER_REMOTE) return;
+    const win = window as unknown as {
+      syncScores?: (iidxId?: string, opts?: { force?: boolean }) => Promise<unknown>;
+    };
+    win.syncScores = async (iidxId?: string, opts?: { force?: boolean }) => {
+      try {
+        const id = iidxId || selectedViewerIdRef.current;
+        if (!id) throw new Error('선택된 IIDX ID가 없습니다.');
+        const tsv = await window.infohsorry.account.readTsv(id);
+        if (!tsv.ok || !tsv.rows) throw new Error(tsv.error || 'tracker.tsv 읽기 실패');
+        const plan = await planScoreSync(id, tsv.rows, opts);
+        console.table(plan.counts);
+        console.table(plan.deletions.map((d) => ({
+          scoreId: d.scoreId,
+          title: d.title,
+          slot: d.slot,
+          dateKst: d.dateKst,
+          dbExScore: d.db.exScore,
+          dbLamp: d.db.lamp,
+          tsvExScore: d.tsv?.exScore ?? null,
+          tsvLamp: d.tsv?.lamp ?? null,
+          category: d.category,
+        })));
+        if (plan.ambiguousSamples.length > 0) console.table(plan.ambiguousSamples);
+        console.log(`tsv: 차트 ${plan.tsvStats.charts} / 플레이 ${plan.tsvStats.played} / 곡 매칭 실패 ${plan.tsvStats.unmatched}`);
+        if (plan.blockedByRatio) {
+          console.warn('[syncScores] 삭제 대상이 INF 기록의 30% 를 넘어 SQL 을 만들지 않았다 — tsv 가 오염됐거나 부분 파일일 수 있다. 확인 후에도 진행하려면 syncScores(id, { force: true })');
+          return plan;
+        }
+        if (!plan.sql) {
+          console.log('[syncScores] 삭제할 행이 없다.');
+          return plan;
+        }
+        console.log(plan.sql);
+        if (plan.sql) {
+          try {
+            await navigator.clipboard.writeText(plan.sql);
+            console.log('생성된 SQL을 클립보드에 복사했습니다.');
+          } catch (e) {
+            console.log('SQL 클립보드 복사 실패:', e);
+          }
+        }
+        console.log('Supabase SQL Editor에 붙여넣어 실행한 뒤, 게임을 끈 상태에서 수동 업로드로 정상 기록을 다시 올려라.');
+        return plan;
+      } catch (e) {
+        console.error('[syncScores] 실패:', e);
+        return null;
+      }
+    };
+    return () => {
+      delete win.syncScores;
     };
   }, []);
   const [tsvPath, setTsvPath] = useState<string>('');

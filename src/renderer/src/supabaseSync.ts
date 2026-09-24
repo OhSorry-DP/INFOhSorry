@@ -21,19 +21,19 @@ import type { RecInputChart } from '../../shared/recommend';
 import { norm, slotToDiff } from '../../shared/match';
 import { DATA_BASE } from '../../shared/dataSource';
 
-const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
+export const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
 const SUPABASE_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN2eHBlZWN4aWF3ZGRtcnpiZHZuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg5ODMxMzQsImV4cCI6MjA5NDU1OTEzNH0.lWnnSsSIFFLs7NsJq5yI6fe9HPiT9yQ3Pj-8sgfGuxI';
-const HEADERS = {
+export const HEADERS = {
   'Content-Type': 'application/json',
   apikey: SUPABASE_KEY,
   Authorization: `Bearer ${SUPABASE_KEY}`,
 };
 
 // 새 디비 변환 매핑 (dbConn.js 와 동일)
-const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANOTHER: 3, LEGGENDARIA: 4 };
-const LAMP_MAP: Record<string, number> = { NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7 };
+export const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANOTHER: 3, LEGGENDARIA: 4 };
+export const LAMP_MAP: Record<string, number> = { NP: 0, F: 1, AC: 2, EC: 3, NC: 4, HC: 5, EX: 6, FC: 7, PFC: 7 };
 const PLAYED_VERSION_INF = 0;
 
 // supabase songs 마스터 1개 row — PlayData / Recent 의 곡 메타 lookup 에 사용.
@@ -123,7 +123,7 @@ async function getSongsCacheBundle(): Promise<{ byNorm: Map<string, SongEntry[]>
   console.log(`[supabaseSync] songs 매핑 캐시: ${byNorm.size} unique norm / ${byId.size} 곡 fetch (${totalFetched} rows)`);
   return songsCache;
 }
-async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
+export async function getSongsCache(): Promise<Map<string, SongEntry[]>> {
   return (await getSongsCacheBundle()).byNorm;
 }
 // PlayData 가 곡 마스터 전체를 시리즈별로 그룹화할 때 사용. song_id 기준 dedup.
@@ -150,7 +150,7 @@ export async function getInfChartChecker(): Promise<(title: string, chartName?: 
 // normKey 후보 array + played_version → song_id 단일 선택
 //   played_version 0 = INF (ac & 2), > 0 = AC (ac & 1)
 //   INFOhSorry 는 항상 INF — wantInf = true 고정
-function pickSongId(candidates: SongEntry[] | undefined, playedVersion: number): number | null {
+export function pickSongId(candidates: SongEntry[] | undefined, playedVersion: number): number | null {
   if (!candidates || candidates.length === 0) return null;
   if (candidates.length === 1) return candidates[0].song_id;
   const wantInf = playedVersion === 0;
