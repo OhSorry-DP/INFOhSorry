@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 점수 정리 콘솔 명령어 `syncScores()` (2026-09-25)
+### v0.0.127 — 2026-09-25 점수 정리 콘솔 명령어 `syncScores()`
 
 계정 전환 버그로 다른 계정 기록이 섞여 올라간 서버 행을 찾아 **삭제용 SQL 을 만들어 주는** 개발자 콘솔 명령어.
 계정 폴더의 `tracker.tsv` 를 정본으로 삼고, 서버 `scores` 는 **읽기만** 한다. 삭제는 사람이 SQL 을 Supabase SQL Editor 에서 실행한다.
