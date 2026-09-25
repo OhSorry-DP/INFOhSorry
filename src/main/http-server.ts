@@ -13,6 +13,7 @@
 //   GET  /osr, /osr/*      — 레거시 → 같은 경로의 루트 등가물로 302 (호환).
 //   GET  /                 — remote 쿼리 없으면 /?remote 로 302 (IP:3000 만 쳐도 원격 카드).
 //   GET  /* (그 외)         — 오소리웹 루트 마운트(serveOsr: vercel 캐시/프록시 + SPA fallback).
+//                             Host 가 v3.* (v3.ohsorry.local) 면 v3 셸(v3.iidx.in)을 같은 방식으로 서빙.
 //
 // production 빌드 (npm run release) 에서만 시작 — dev 모드는 vite 가 :5173 띄움.
 import http from 'http';
@@ -26,6 +27,7 @@ import type { RefluxState } from '../shared/types';
 
 const PORT = 3000;
 const LOCAL_NAME = 'ohsorry.local';   // mDNS 광고 이름 — 포트80 OK 면 http://ohsorry.local 로 접속
+const LOCAL_NAME_V3 = 'v3.' + LOCAL_NAME;   // v3 셸 접속 이름 — 같은 IP 로 광고, Host 헤더로 v1 과 가른다
 
 // 폰/PC2 접속 정보 — 헤더 QR/안내용.
 export interface ConnectInfo {
@@ -39,6 +41,7 @@ export interface ConnectInfo {
 }
 // 원격모드 오소리웹 서빙 — vercel 배포본을 받아 로컬 캐시(A: 오프라인) + 캐시 비우면 재fetch(B: 최신화).
 const OSR_ORIGIN = 'https://ohsorry.iidx.in';  // 정본 도메인 (vercel.app 은 여기로 308 redirect)
+const OSR_ORIGIN_V3 = 'https://v3.iidx.in';    // v3 셸 — 원격모드(/api/me 실시간)·로그인은 미지원, 정적 셸만
 
 function mimeOf(ext: string): string {
   switch (ext.toLowerCase()) {
@@ -82,6 +85,7 @@ export function lanAddresses(): string[] {
 //   오소리웹의 /api/me 는 절대경로 → 루트로 가서 INF http-server 가 처리(same-origin, mixed content 없음).
 async function serveOsr(
   urlPath: string,
+  origin: string,
   osrCacheDir: string,
   res: http.ServerResponse,
 ): Promise<void> {
@@ -94,7 +98,7 @@ async function serveOsr(
   //   특정 PoP 가 옛 파일을 들고 있어 토글/신규 UI 가 안 뜨던 문제). 받은 건 디스크에도 저장(오프라인 fallback).
   //   네트워크 실패(오프라인 등) 시에만 디스크 캐시로 fallback. (이전엔 캐시 우선이라 한 번 받으면 영원히 stale.)
   try {
-    const resp = await fetch(`${OSR_ORIGIN}/${rel}?t=${Date.now()}`, { cache: 'no-store' });
+    const resp = await fetch(`${origin}/${rel}?t=${Date.now()}`, { cache: 'no-store' });
     if (resp.ok) {
       buf = Buffer.from(await resp.arrayBuffer());
       await fsp.mkdir(dirname(cachePath), { recursive: true });
@@ -375,7 +379,15 @@ export function startHttpServer(
           res.end();
           return;
         }
-        await serveOsr(urlPath, osrCacheDir, res);
+        // Host 가 v3.* 면 v3 셸. 캐시 디렉터리도 분리해 v1 파일과 섞이지 않게 한다. IP 접속은 v1 그대로.
+        const host = (req.headers.host || '').split(':')[0].toLowerCase();
+        const isV3 = host.startsWith('v3.');
+        await serveOsr(
+          urlPath,
+          isV3 ? OSR_ORIGIN_V3 : OSR_ORIGIN,
+          isV3 ? join(osrCacheDir, 'v3') : osrCacheDir,
+          res,
+        );
         return;
       }
 
@@ -427,12 +439,12 @@ export function startHttpServer(
       mdnsInst = makeMdns();
       mdnsInst.on('query', (q) => {
         for (const question of q.questions || []) {
-          if (question.name === LOCAL_NAME && question.type === 'A') {
-            mdnsInst?.respond({ answers: [{ name: LOCAL_NAME, type: 'A', ttl: 120, data: primaryIp }] });
+          if ((question.name === LOCAL_NAME || question.name === LOCAL_NAME_V3) && question.type === 'A') {
+            mdnsInst?.respond({ answers: [{ name: question.name, type: 'A', ttl: 120, data: primaryIp }] });
           }
         }
       });
-      console.log(`[mdns] ${LOCAL_NAME} → ${primaryIp} 광고`);
+      console.log(`[mdns] ${LOCAL_NAME}, ${LOCAL_NAME_V3} → ${primaryIp} 광고`);
     } catch (e) {
       console.warn('[mdns] 광고 실패(무시):', (e as Error).message);
     }
