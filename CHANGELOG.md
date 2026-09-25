@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 미릴리즈 — 2026-09-26 원격 서버에 `v3.ohsorry.local` 추가 (오소리웹 v3 셸)
+### v0.0.128 — 2026-09-26 원격 서버에 `v3.ohsorry.local` 추가 (오소리웹 v3 셸)
 
 - `http://v3.ohsorry.local` 로 접속하면 오소리웹 v3 셸(`https://v3.iidx.in`)을 서빙한다. `ohsorry.local`·IP 접속은 기존 v1 그대로.
 - Host 헤더가 `v3.` 로 시작하는지로 가른다. 오프라인 캐시는 `osr-cache/v3` 로 분리해 v1 파일과 섞이지 않는다.
