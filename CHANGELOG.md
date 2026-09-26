@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 미배포 — 2026-09-26 v3 접속 이름을 `ohsorry-v3.local` 로 (한 단계 이름)
+### v0.0.130 — 2026-09-26 v3 접속 이름을 `ohsorry-v3.local` 로 (한 단계 이름)
 
 - `http://v3.ohsorry.local` 이 Windows 등에서 안 열리던 문제 — 두 단계 `.local` 이름은 OS 리졸버가 mDNS 로 묻지 않는다. 서버는 정상이었다.
 - 이제 **`http://ohsorry-v3.local`** 로 접속한다(`ohsorry.local` 이 되는 기기면 똑같이 된다). mDNS 가 이 이름에도 같은 LAN IP 로 응답한다.
