@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 미릴리즈 — 2026-09-26 원격 v3 셸용 본인 프로필 API `GET /api/me/v3profile`
+
+- 오소리웹 v3 셸이 원격모드에서 본인 프로필을 실시간으로 받을 수 있게, `/api/me` 스냅샷을 CDN `user/{id}.json` 과 **같은 모양**으로 합성해 준다(`src/main/v3Profile.ts`).
+- CDN 프로필(서버 계산값 radars·persona·osPattern·reachNps·Recent 등)은 그대로 두고, `user` 별값 필드와 INF 행(`played_version` 0)의 lamp·EX·BP 만 로컬 값으로 덮는다. AC·DBR 행은 건드리지 않는다.
+- 곡 ID 는 CDN `songs.json` + 공용 `norm`(normTitle 마스터 사본) + 업로드 경로와 같은 `pickSongId` 규칙(동명이면 INF 판)으로 찾는다.
+  실데이터 왕복(INF 유저 1명, DP 1773행 · SP 584행)에서 전부 같은 song_id 로 교체됨을 확인했다.
+- CDN 프로필은 10분, songs 는 1시간 캐시. 실패는 캐시하지 않고 직전 성공본으로 버틴다. 미존재 유저는 빈 골격에 INF 행만 채운다.
+
 ### v0.0.128 — 2026-09-26 원격 서버에 `v3.ohsorry.local` 추가 (오소리웹 v3 셸)
 
 - `http://v3.ohsorry.local` 로 접속하면 오소리웹 v3 셸(`https://v3.iidx.in`)을 서빙한다. `ohsorry.local`·IP 접속은 기존 v1 그대로.

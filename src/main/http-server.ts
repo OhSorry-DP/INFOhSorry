@@ -7,6 +7,7 @@
 //   GET  /api/events       — SSE (text/event-stream) — reflux state 변경을 PC2 에 실시간 push.
 //                             기존 5초 polling 대체. EventSource 가 자동 재연결 처리.
 //   GET  /api/me           — renderer 가 push 한 오소리웹 user 객체(원격모드 본인 카드).
+//   GET  /api/me/v3profile — 위 스냅샷을 CDN user/{id}.json 모양으로 합성한 v3 셸용 본인 프로필.
 //   POST /api/recommend    — body { kind, params } → renderer recCtx 로 추천 계산 (OpenWebUI 챗봇용).
 //                             kind: meta / clear / practice / ladder / targets. renderer 미준비 시 503.
 //   GET  /index.html,/assets/* — out/renderer/ 의 INF 자체 화면(LAN 원격제어). 로컬 정적.
@@ -23,6 +24,7 @@ import { networkInterfaces } from 'os';
 import makeMdns from 'multicast-dns';
 import QRCode from 'qrcode';
 import { RefluxManager } from './reflux';
+import { getV3Profile } from './v3Profile';
 import type { RefluxState } from '../shared/types';
 
 const PORT = 3000;
@@ -290,6 +292,20 @@ export function startHttpServer(
       // SSE event stream — reflux state push (5초 polling 대체)
       if (urlPath === '/api/events' && req.method === 'GET') {
         sse.attach(req, res);
+        return;
+      }
+
+      // 원격모드 v3 본인 프로필 — push 된 user 스냅샷을 CDN user/{id}.json 과 같은 모양으로 합성(v3Profile.ts).
+      //   오소리웹 v3 셸의 원격 분기가 CDN 대신 이 엔드포인트를 읽는다. 스냅샷 미준비면 /api/me 와 같은 404.
+      if (urlPath === '/api/me/v3profile' && req.method === 'GET') {
+        const user = getRemoteUser ? getRemoteUser() : null;
+        const profile = user ? await getV3Profile(user) : null;
+        res.writeHead(profile ? 200 : 404, {
+          'content-type': 'application/json; charset=utf-8',
+          'access-control-allow-origin': '*',
+          'cache-control': 'no-cache',
+        });
+        res.end(JSON.stringify(profile ?? { error: 'no remote user yet' }));
         return;
       }
 
