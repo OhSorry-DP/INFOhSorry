@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 미릴리즈 — 2026-09-26 원격 v3 셸용 본인 프로필 API `GET /api/me/v3profile`
+### v0.0.129 — 2026-09-26 원격 v3 셸용 본인 프로필 API `GET /api/me/v3profile`
 
 - 오소리웹 v3 셸이 원격모드에서 본인 프로필을 실시간으로 받을 수 있게, `/api/me` 스냅샷을 CDN `user/{id}.json` 과 **같은 모양**으로 합성해 준다(`src/main/v3Profile.ts`).
 - CDN 프로필(서버 계산값 radars·persona·osPattern·reachNps·Recent 등)은 그대로 두고, `user` 별값 필드와 INF 행(`played_version` 0)의 lamp·EX·BP 만 로컬 값으로 덮는다. AC·DBR 행은 건드리지 않는다.
