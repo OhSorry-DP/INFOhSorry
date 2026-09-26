@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 미배포 — 2026-09-26 v3 접속 이름을 `ohsorry-v3.local` 로 (한 단계 이름)
+
+- `http://v3.ohsorry.local` 이 Windows 등에서 안 열리던 문제 — 두 단계 `.local` 이름은 OS 리졸버가 mDNS 로 묻지 않는다. 서버는 정상이었다.
+- 이제 **`http://ohsorry-v3.local`** 로 접속한다(`ohsorry.local` 이 되는 기기면 똑같이 된다). mDNS 가 이 이름에도 같은 LAN IP 로 응답한다.
+- 기존 `v3.ohsorry.local` 도 계속 응답·서빙한다 — 되던 기기는 그대로.
+
 ### v0.0.129 — 2026-09-26 원격 v3 셸용 본인 프로필 API `GET /api/me/v3profile`
 
 - 오소리웹 v3 셸이 원격모드에서 본인 프로필을 실시간으로 받을 수 있게, `/api/me` 스냅샷을 CDN `user/{id}.json` 과 **같은 모양**으로 합성해 준다(`src/main/v3Profile.ts`).

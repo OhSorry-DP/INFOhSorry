@@ -14,7 +14,8 @@
 //   GET  /osr, /osr/*      — 레거시 → 같은 경로의 루트 등가물로 302 (호환).
 //   GET  /                 — remote 쿼리 없으면 /?remote 로 302 (IP:3000 만 쳐도 원격 카드).
 //   GET  /* (그 외)         — 오소리웹 루트 마운트(serveOsr: vercel 캐시/프록시 + SPA fallback).
-//                             Host 가 v3.* (v3.ohsorry.local) 면 v3 셸(v3.iidx.in)을 같은 방식으로 서빙.
+//                             Host 가 ohsorry-v3.* 또는 v3.* 면 v3 셸(v3.iidx.in)을 같은 방식으로 서빙.
+//                             🔴 기본 이름은 한 단계 `ohsorry-v3.local` — 두 단계 `v3.ohsorry.local` 은 Windows 리졸버가 mDNS 로 묻지 않아 안 열렸다(0.0.130).
 //
 // production 빌드 (npm run release) 에서만 시작 — dev 모드는 vite 가 :5173 띄움.
 import http from 'http';
@@ -29,7 +30,8 @@ import type { RefluxState } from '../shared/types';
 
 const PORT = 3000;
 const LOCAL_NAME = 'ohsorry.local';   // mDNS 광고 이름 — 포트80 OK 면 http://ohsorry.local 로 접속
-const LOCAL_NAME_V3 = 'v3.' + LOCAL_NAME;   // v3 셸 접속 이름 — 같은 IP 로 광고, Host 헤더로 v1 과 가른다
+const LOCAL_NAME_V3 = 'ohsorry-v3.local';   // v3 셸 접속 이름 — 🔴 한 단계 이름이어야 한다(Windows·안드로이드는 `a.b.local` 을 mDNS 로 안 묻는다). 같은 IP 로 광고, Host 헤더로 v1 과 가른다
+const LOCAL_NAME_V3_LEGACY = 'v3.' + LOCAL_NAME;   // 0.0.128~129 의 두 단계 이름 — 되는 기기(iOS 등)를 끊지 않으려고 계속 응답한다
 
 // 폰/PC2 접속 정보 — 헤더 QR/안내용.
 export interface ConnectInfo {
@@ -395,9 +397,9 @@ export function startHttpServer(
           res.end();
           return;
         }
-        // Host 가 v3.* 면 v3 셸. 캐시 디렉터리도 분리해 v1 파일과 섞이지 않게 한다. IP 접속은 v1 그대로.
+        // Host 가 ohsorry-v3.* 또는 v3.* 면 v3 셸. 캐시 디렉터리도 분리해 v1 파일과 섞이지 않게 한다. IP 접속은 v1 그대로.
         const host = (req.headers.host || '').split(':')[0].toLowerCase();
-        const isV3 = host.startsWith('v3.');
+        const isV3 = host.startsWith('ohsorry-v3.') || host.startsWith('v3.');
         await serveOsr(
           urlPath,
           isV3 ? OSR_ORIGIN_V3 : OSR_ORIGIN,
@@ -455,12 +457,12 @@ export function startHttpServer(
       mdnsInst = makeMdns();
       mdnsInst.on('query', (q) => {
         for (const question of q.questions || []) {
-          if ((question.name === LOCAL_NAME || question.name === LOCAL_NAME_V3) && question.type === 'A') {
+          if ((question.name === LOCAL_NAME || question.name === LOCAL_NAME_V3 || question.name === LOCAL_NAME_V3_LEGACY) && question.type === 'A') {
             mdnsInst?.respond({ answers: [{ name: question.name, type: 'A', ttl: 120, data: primaryIp }] });
           }
         }
       });
-      console.log(`[mdns] ${LOCAL_NAME}, ${LOCAL_NAME_V3} → ${primaryIp} 광고`);
+      console.log(`[mdns] ${LOCAL_NAME}, ${LOCAL_NAME_V3}, ${LOCAL_NAME_V3_LEGACY} → ${primaryIp} 광고`);
     } catch (e) {
       console.warn('[mdns] 광고 실패(무시):', (e as Error).message);
     }
