@@ -546,13 +546,15 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
       }
     }
   }
-  // SP 차트 — gameLevel 10~12 만 play_style:0 으로 (song_id 는 곡 단위라 DP 와 공유. songs 미등록 신곡은 skip).
+  // SP 차트 — gameLevel 1~12(BEGINNER 제외, 2026-09-28 사용자 결정 — 종전 10~12) play_style:0 으로 (song_id 는 곡 단위라 DP 와 공유. songs 미등록 신곡은 skip).
   let spUnmatched = 0;
   let spCount = 0;
   for (const c of (input.spCharts ?? [])) {
-    if (c.level < 10 || c.level > 12) continue;
+    if (c.level < 1 || c.level > 12) continue;
     if ((c.exScore ?? 0) <= 0) continue;  // 미플레이 skip
-    const diffInt = DIFF_MAP[slotToDiff(c.slot)];
+    const spDiff = slotToDiff(c.slot);
+    if (spDiff === 'BEGINNER') continue;  // DP 처럼 BEGINNER 는 올리지 않는다
+    const diffInt = DIFF_MAP[spDiff];
     if (diffInt == null) continue;
     const songId = pickSongId(songMap.get(norm(c.title)), PLAYED_VERSION_INF);
     if (songId == null) { spUnmatched++; continue; }
@@ -572,7 +574,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     }
   }
   if (spUnmatched > 0) console.warn(`[supabaseSync] SP song 매칭 실패 ${spUnmatched}건 (skip, songs 미등록)`);
-  if (spCount > 0) console.log(`[supabaseSync] SP10~12 scores: ${spCount}건 (play_style:0)`);
+  if (spCount > 0) console.log(`[supabaseSync] SP1~12 scores: ${spCount}건 (play_style:0)`);
 
   // DP 전 레벨 — play_style:1 로 적재 (위 charts(dp12Match)는 lv11/12 만 → 저레벨 DP 보강).
   //   songs 미등록 신곡은 skip — allTsvCharts 등록 패스가 모든 DP 곡을 이미 ensure_song 했으므로 정상 매칭됨.
