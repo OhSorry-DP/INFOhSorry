@@ -615,20 +615,27 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     return { ok: true };
   }
 
-  try {
-    const chartRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_scores`, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({ p_rows: scoreRows }),
-    });
-    if (!chartRes.ok) {
-      const errText = await chartRes.text().catch(() => '');
-      return { ok: false, error: `scores HTTP ${chartRes.status} ${errText}` };
+  const SCORE_UPSERT_CHUNK_SIZE = 1000;
+  const total = Math.ceil(scoreRows.length / SCORE_UPSERT_CHUNK_SIZE);
+  // 앞 청크가 이미 들어가도 upsert_scores는 멱등(historical best 미달 skip)이라 재전송 안전하다.
+  for (let i = 0; i < total; i++) {
+    const chunk = scoreRows.slice(i * SCORE_UPSERT_CHUNK_SIZE, (i + 1) * SCORE_UPSERT_CHUNK_SIZE);
+    console.log(`[supabaseSync] scores 청크 ${i + 1}/${total} (${chunk.length}행)`);
+    try {
+      const chartRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_scores`, {
+        method: 'POST',
+        headers: HEADERS,
+        body: JSON.stringify({ p_rows: chunk }),
+      });
+      if (!chartRes.ok) {
+        const errText = await chartRes.text().catch(() => '');
+        return { ok: false, error: `scores chunk ${i + 1}/${total} HTTP ${chartRes.status} ${errText}` };
+      }
+    } catch (e) {
+      return { ok: false, error: `scores chunk ${i + 1}/${total} error: ${(e as Error).message}` };
     }
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, error: `scores error: ${(e as Error).message}` };
   }
+  return { ok: true };
 }
 
 // ─── Recent 탭 RPC (ohSorryWeb modules/api.js 의 호출 형식 그대로 옮김) ─────────────

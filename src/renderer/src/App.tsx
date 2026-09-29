@@ -1596,6 +1596,7 @@ export default function App() {
       dp12StarResult.star.toFixed(3),
       part('c', dp12Match.charts),
       part('u', dp12Match.unclassifiedCharts),
+      part('d', dpAllCharts),
       part('s', spAllCharts),
       spTierData ? '1' : '0',
       textageByTitle ? 't1' : 't0',   // textage 매핑 로드되면 sig 변경 → 재push(머지 키 반영)
@@ -1612,9 +1613,9 @@ export default function App() {
     lastRemoteSigRef.current = sig;
     dbg('PUSH ✅ setUser 호출');
     void window.infohsorry.remote.setUser(
-      buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined),
+      buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined, dpAllCharts),
     );
-  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, spAllCharts, spTierData, spStarResult, textageByTitle]);
+  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, dpAllCharts, spAllCharts, spTierData, spStarResult, textageByTitle]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:

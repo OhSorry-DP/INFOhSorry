@@ -121,6 +121,38 @@ function spChartToJson(c: SongChart, txMap?: TxMap): unknown {
   };
 }
 
+// SongChart(DP TSV 추출, dp12 분류 밖 레벨) → 오소리웹 charts_json 항목. toChartJson 과 같은 키(playStyle 없음).
+//   별값/zasa 매칭이 없어 level/zasaLevel 은 null (PlayData 는 gameLevel 로 그림).
+function dpChartToJson(c: SongChart, txMap?: TxMap): unknown {
+  const diff = slotToDiff(c.slot);
+  return {
+    title: c.title,
+    diff,
+    slot: c.slot,
+    lamp: c.lamp,
+    lampNum: lampNum(c.lamp),
+    exScore: typeof c.exScore === 'number' ? c.exScore : 0,
+    prevLamp: null,
+    prevExScore: null,
+    prevPlayedVersion: null,
+    djLevel: c.letter || null,
+    prevDjLevel: null,
+    gameLevel: typeof c.level === 'number' ? c.level : null,
+    level: null,
+    zasaLevel: null,
+    ereterLevel: c.ereterLevel ?? null,
+    pgreat: null,
+    great: null,
+    missCount: typeof c.missCount === 'number' ? c.missCount : null,
+    noteCount: typeof c.noteCount === 'number' ? c.noteCount : null,
+    unlocked: c.unlocked ?? true,
+    date: null,
+    __songId: null,
+    __playedVersion: 0,
+    __textageSongId: txIdOf(c.title, txMap),
+  };
+}
+
 // INF 로컬 값(profile + 별값 + 분류/미분류 charts) → 오소리웹 user 객체.
 //   notes_radar / sp_rank / dp_rank 는 v0.0.108+ 부터 INFINITAS 메모리 값으로 채운다(그 전엔 null).
 //   os_pattern_score 는 여전히 null — 카드 내부 calcWeakness 가 charts_json 으로 패턴을 보강한다.
@@ -128,6 +160,8 @@ function spChartToJson(c: SongChart, txMap?: TxMap): unknown {
 //   (playdata.js 가 userData.r_star 를 요구). supabase 경로는 users.r_star 를 싣고 있어 일반 카드만 되던 문제.
 //   BP / 노트수는 charts_json 각 항목의 missCount / noteCount 로 이미 나간다(웹 shelf.js 가 그 키를 읽음).
 //   spCharts / spTier12 는 원격모드 SP 표시용 (소스 비종속 — 추후 DB 백필 시 같은 필드 재사용).
+//   DP charts_json = dp12 분류/미분류분 + dpAllCharts 중 그 밖의 전 레벨(v0.0.132 — 원격 화면에서 DP 10 이하가
+//   옛 CDN 값에 머물던 것). 같은 채보는 dp12 쪽(별값·zasa 필드 보유)이 이긴다.
 export function buildRemoteUser(
   profile: RemoteProfile,
   starResult: StarResult,
@@ -138,8 +172,20 @@ export function buildRemoteUser(
   spTier12?: SpTierData | null,
   spStar?: { cpiInt: number | null; starRounded: number | null } | null,
   textageByTitle?: TxMap,   // title(raw)→textage_song_id (라이벌 비교 머지 키). 미로딩이면 undefined→__textageSongId null
+  dpAllCharts?: SongChart[],
 ): unknown {
   const allCharts: ChartLike[] = [...charts, ...unclassified];
+  const chartsJson = allCharts.map((c) => toChartJson(c, textageByTitle));
+  const chartKeys = new Set(chartsJson.map((c) => {
+    const item = c as { title: string; diff: string };
+    return norm(item.title) + '|' + item.diff;
+  }));
+  for (const c of dpAllCharts ?? []) {
+    const key = norm(c.title) + '|' + slotToDiff(c.slot);
+    if (chartKeys.has(key)) continue;
+    chartKeys.add(key);
+    chartsJson.push(dpChartToJson(c, textageByTitle));
+  }
   return {
     iidx_id: profile.iidxId,
     dj_name: profile.djName,
@@ -157,7 +203,7 @@ export function buildRemoteUser(
     dp_rank: profile.dpRank ?? '-',
     series: 'INF',
     played_version: 0,
-    charts_json: allCharts.map((c) => toChartJson(c, textageByTitle)),
+    charts_json: chartsJson,
     // SP — 친 모든 SP 채보(전 레벨/시리즈) + SP12 서열표. 오소리웹이 ?remote 에서 SP 모드로 표시.
     sp_charts_json: Array.isArray(spCharts) ? spCharts.map((c) => spChartToJson(c, textageByTitle)) : [],
     sp_tier12: spTier12 ?? null,
