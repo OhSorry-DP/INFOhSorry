@@ -52,6 +52,9 @@
     'メテオラ-meteor-': 'メテオラ -meteor-',  // eagate Reflux 공백 없는 표기 → textage 공백 있는 표기 (안전망 — norm 공백제거가 이미 처리하지만 cache stale 케이스 대응)
     'Lagrangian Point ?': 'Lagrangian Point Ø',  // eagate/Reflux 가 'Ø'(U+00D8)를 '?'로 인코딩 깨짐 → textage 'Ø' 로 복원 (norm 에서 Ø→0)
     'Lagrangian Point 0': 'Lagrangian Point Ø',  // 일부 소스가 'Ø'를 숫자 '0' 으로 표기 → textage 'Ø' 로 통일 (norm 결과는 동일하나 명시)
+    'NOMAD (feat. らっぷびと)': 'NOMAD (feat.らっぷぴと)',   // eagate 'びと'(탁점) → textage 'ぴと'(반탁점). 공백 차이도 함께 흡수
+    "Shogun's Last Dawn ft. Kanae Asaba": "Shogun's Last Dawn feat. Kanae Asaba",  // eagate 'ft.' → textage 'feat.'
+    '月下散刄': '月下散刃',                    // eagate '刄'(U+5204) → textage '刃'(U+5203) — 다른 한자
   };
 
   // 동명이곡 (norm 후 같은 키, raw 만 다른) → 강제 norm 키 분리.
@@ -169,7 +172,7 @@
   }
 
   return {
-    VERSION: '0.0.6',
+    VERSION: '0.0.7',
     norm: norm,
     denorm: denorm,
   };
