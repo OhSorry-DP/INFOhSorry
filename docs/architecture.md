@@ -43,10 +43,14 @@
 
 `src/preload/index.ts` 는 로직이 없습니다. 각 메서드는 `ipcRenderer.invoke('channel', ...args)` 한 줄(또는 `ipcRenderer.on` 구독 헬퍼)뿐입니다. 채널별 상세는 [ipc-reference.md](ipc-reference.md) 참고.
 
-이벤트 구독형(콜백) API 두 가지:
-- `reflux.onState(cb)` — `ipcRenderer.on('reflux:state', ...)` (`src/preload/index.ts:42-48`)
-- `window.onMaximizedChange(cb)` — `ipcRenderer.on('window:maximized', ...)` (`src/preload/index.ts:197-203`)
-- `portable.onProgress(cb)` — `ipcRenderer.on('portable:progress', ...)` (`src/preload/index.ts:95-99`)
+이벤트 구독형 API:
+- `reflux.onState(cb)` — `reflux:state`
+- `reflux.onTsvChanged(cb)` — `reflux:tsvChanged`
+- `session.onState(cb)` — `session:state`
+- `window.onMaximizedChange(cb)` — `window:maximized`
+- `portable.onProgress(cb)` — `portable:progress`
+- `recommend.onRequest(cb)` — `recommend:request`
+- `upload.onFinalRequest(cb)` — `upload:final-request`
 
 ---
 
@@ -106,10 +110,10 @@
 4. **production 빌드에서만** `startHttpServer(...)`(`src/main/index.ts:573-580`). dev 는 Vite 가 서버를 띄우므로 skip(`ELECTRON_RENDERER_URL` 존재로 판정).
 5. ereter 캐시가 stale 이면 백그라운드 자동 갱신(`src/main/index.ts:586-596`).
 
-또한 `startInfinitasWatch()`(`src/main/index.ts:659`)로 bm2dx.exe tasklist 30초 폴링을 시작 — INFINITAS 종료 감지 시 마지막 업로드(아래).
+게임 감시는 `InfinitasSessionMonitor`가 1초 간격으로 PID를 확인합니다. PID/generation 전환의 start/end를 main이 직렬 처리하며, start는 Reflux를 재기동하고 end는 마지막 업로드 후 작업 세션을 정리합니다.
 
 종료 처리(모두 "마지막 업로드 1회" 를 거침, [data-flow.md](data-flow.md) 3절):
-- 창 닫기(X) → `mainWindow.on('close')` 가 `e.preventDefault()` 로 파괴를 미루고 `requestFinalUpload()`(렌더러 생존 시점) 후 `destroy()` (`src/main/index.ts:612-628`).
+- 창 닫기(X) → `close`에서 `e.preventDefault()` 후 창을 즉시 숨기고 `app.quit()` 호출. `before-quit`에서 renderer를 살린 채 마지막 업로드를 기다리고 Reflux 정리 → 창 파괴 → `app.exit(0)`.
 - `window-all-closed` → darwin 외 `app.quit()` (`src/main/index.ts:695-697`).
 - `before-quit` → `e.preventDefault()` 후 `requestFinalUpload()`(렌더러 살아있으면) + Reflux 떠 있으면 `refluxManager.stop()`(자식 프로세스 정리) 하고 `app.exit(0)` (`src/main/index.ts:700-722`).
 - INFINITAS(bm2dx.exe) 종료 감지 시 → `requestFinalUpload()`(앱은 유지, `src/main/index.ts:570-582`).
@@ -120,7 +124,7 @@
 
 | effect | 동작 | 위치 |
 |--------|------|------|
-| Reflux 구독+자동시작 | `reflux.onState` 구독, `getTsvPath`/`getState`, 미spawn 이면 `reflux.start()` 자동 호출. spawn `false→true` transit 시 `readTsv` 1회 | `App.tsx:208-240` |
+| 세션·Reflux·TSV 구독 | `reflux.onState`/`session.onState`/`reflux.onTsvChanged` 구독, 계정 목록·마지막 선택 조회. 게임 OFF이면 마지막 선택 계정 저장 TSV 로드. 게임 ON 시작은 main이 처리 | `App.tsx:583-605`, `src/main/index.ts:717-734` |
 | ereter | `ereter.status()` → stale 면 `refreshEreter`, 아니면 `ereter.get(false)` | `App.tsx:243-254` |
 | zasa | `zasa.get(false)` | `App.tsx:257-266` |
 | rating | `rating.get(false)` | `App.tsx:269-278` |
@@ -130,11 +134,11 @@
 | 별값 lib | gist `onlyOSR`/`OSR135`/`OhsorryNorm`/`onlyOSRtoEreter` 로드 | `App.tsx:724-746` |
 | recommend lib | `loadRecLibs()` | `App.tsx:981-992` |
 | INF 차트 판정기 | `getInfChartChecker()` (Supabase songs) | `App.tsx:996-1007` |
-| tsv 실시간 reload | `refluxState.lastTsvMtime` 변경 감지 → debounce 400ms → `loadTsv` (host 전용) | `App.tsx` |
-| Supabase 업로드 스케줄 | INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격, 첫 업로드 후부터 동작, v0.0.125) (읽기 없음, host 전용) | `App.tsx:1025-1126`(스케줄) + `App.tsx:419-459`(TSV 디바운스) |
+| TSV 스냅샷·reload | `reflux.onTsvChanged` → 400ms 디바운스 → fresh ID + PID/generation 확인 → `account.snapshot` → 선택 계정 `account.readTsv`로 rows 갱신 (host 전용) | `App.tsx:499-575,587-594` |
+| Supabase 자동 업로드 | 스냅샷 성공마다 계정별 마지막 업로드 성공 시각과 현재 시각 비교. 기록 없음 또는 최소 3분 경과 시 업로드, 계산 데이터 미준비·진행 중이면 보류 (고정 업로드 타이머 없음) | `App.tsx:573-574,1651-1660` |
 | 마지막 업로드 수신 | `upload.onFinalRequest` — 앱/INFINITAS 종료 시 main 요청 받아 1회 업로드 후 `finalDone` ack | `App.tsx:1082-1088` |
 
-> tsv 읽기 정책: 마운트 즉시 readTsv 하지 않습니다. Reflux spawn 완료 시점에 1회 + 이후 **`tracker.tsv` 변경마다 실시간 reload**(debounce 400ms). 부팅 직후 잠깐 빈 화면 → spawn(10~30초) 후 채워짐. Supabase 업로드는 별도 스케줄(감지 후 3분 → 10분 주기(v0.0.121) + TSV 변경 45초 디바운스(최소 3분 간격, v0.0.125) + 종료 시 1회). 데이터 흐름 상세는 [data-flow.md](data-flow.md).
+> TSV 읽기 정책: 게임 OFF에서는 마지막 선택 계정의 저장 TSV를 불러옵니다. 게임 ON에서는 TSV 변경 이벤트를 400ms 디바운스한 뒤 fresh ID와 PID/generation을 검증해 계정별 스냅샷을 저장하고 읽습니다. 자동 업로드는 스냅샷마다 계정별 마지막 성공 시각을 비교해 최소 3분 간격으로 판정하며, 앱·게임 종료 업로드는 별도입니다. 상세는 [data-flow.md](data-flow.md).
 
 ---
 
