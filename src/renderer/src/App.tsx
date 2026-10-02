@@ -66,7 +66,7 @@ import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
 import { SNAPSHOT_VERSION, type SnapshotReason, type UploadOutcome, type UploadSnapshot } from '../../shared/uploadSnapshot';
-import { isFloorSeedCurrent, type AccountScope, type AccountMeta, type TsvChangedEvent } from '../../shared/account';
+import { isFloorSeedCurrent, resolveAccountSnapshotProfile, type AccountScope, type AccountMeta, type TsvChangedEvent } from '../../shared/account';
 import type { InfinitasSessionState } from '../../shared/session';
 import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 
@@ -1406,8 +1406,8 @@ export default function App() {
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope });
-  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope };
+  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime });
+  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime };
 
   function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
     const p = uploadStateRef.current.profile;
@@ -1417,8 +1417,12 @@ export default function App() {
       if (s.pid != null) return { ok: false, reason: 'game-on' };
       const id = selectedViewerIdRef.current;
       if (!id || !VALID_IIDX_ID.test(id)) return { ok: false, reason: 'no-selected-account' };
+      // 이 함수는 [] 의존성 effect(tryUpload)에 캡처되므로 렌더 변수 대신 ref 를 읽는다.
+      if (uploadStateRef.current.scope.iidxId !== id) return { ok: false, reason: 'rows-owner-mismatch' };
       const account = accountsRef.current.find((entry) => entry.iidxId === id);
-      if (!account || !account.djName) return { ok: false, reason: 'no-account-meta' };
+      const fallback = p.iidxId === id ? p : null;
+      const resolved = resolveAccountSnapshotProfile(id, account, fallback);
+      if (!resolved?.djName) return { ok: false, reason: 'no-account-meta' };
       if (rowsRef.current.length === 0) return { ok: false, reason: 'snapshot-empty' };
       return { ok: true, id };
     }
@@ -1435,33 +1439,33 @@ export default function App() {
   }
 
   // 캡처는 동기 값 복사만 수행한다. 이후 doReset이 rows/ref를 비워도 snapshot은 변하지 않는다.
-  const buildSnapshot = useCallback((reason: SnapshotReason, identityProfile: ProfileInfo | null): UploadSnapshot | null => {
-    const id = identityProfile?.iidxId;
-    const djName = identityProfile?.djName;
-    const sourceIidxId: string = lastSnapshotRef.current?.iidxId ?? id!;
-    if (!id || !/^[A-Z]\d{12}$/.test(id)) {
+  const buildSnapshot = useCallback((reason: SnapshotReason, iidxId: string, fallbackProfile: ProfileInfo | null): UploadSnapshot | null => {
+    if (!iidxId || !/^[A-Z]\d{12}$/.test(iidxId)) {
       console.log('[upload] skip reason=invalid-identity');
       return null;
     }
-    if (!djName) {
+    const meta = accountsRef.current.find((entry) => entry.iidxId === iidxId);
+    const resolvedProfile = resolveAccountSnapshotProfile(iidxId, meta, fallbackProfile);
+    if (!resolvedProfile?.djName) {
       console.log('[upload] skip reason=missing-dj-name');
       return null;
     }
     const state = uploadStateRef.current;
-    if (state.scope.iidxId !== id || !isFloorSeedCurrent(state.scope, accountScopeRef.current)) {
+    if (rowsRef.current.length === 0 || state.scope.iidxId !== iidxId || !isFloorSeedCurrent(state.scope, accountScopeRef.current)) {
       console.log('[upload] skip reason=stale-calculation-scope');
       return null;
     }
+    const sameSnapshot = lastSnapshotRef.current?.iidxId === iidxId ? lastSnapshotRef.current : null;
     const snapshot: UploadSnapshot = {
       v: SNAPSHOT_VERSION,
       capturedAt: Date.now(),
       reason,
-      iidxId: id,
-      djName,
-      sourceIidxId,
-      tsvMtime: lastSnapshotRef.current?.tsvMtime ?? tsvMtimeRef.current,
+      iidxId,
+      djName: resolvedProfile.djName,
+      sourceIidxId: state.scope.iidxId,
+      tsvMtime: sameSnapshot?.tsvMtime ?? state.tsvMtime,
       appVersion: APP_VERSION,
-      profile: { ...identityProfile, iidxId: id, djName },
+      profile: { ...resolvedProfile, spRadar: resolvedProfile.spRadar == null ? null : { ...resolvedProfile.spRadar }, dpRadar: resolvedProfile.dpRadar == null ? null : { ...resolvedProfile.dpRadar } },
       starResult: state.dp12StarResult,
       rStar: state.userRStar,
       charts: state.dp12Match?.charts ?? [],
@@ -1472,7 +1476,7 @@ export default function App() {
       dpAllCharts: state.dpAllCharts,
       allTsvCharts: state.allTsvCharts,
     };
-    console.log(`[upload] capture reason=${reason} id=${id} tsv_mtime=${snapshot.tsvMtime} charts=${snapshot.allTsvCharts.length}`);
+    console.log(`[upload] capture reason=${reason} id=${iidxId} tsv_mtime=${snapshot.tsvMtime} charts=${snapshot.allTsvCharts.length}`);
     return snapshot;
   }, []);
 
@@ -1536,7 +1540,7 @@ export default function App() {
     if (!previousId || previousId === currentId) return;
 
     void (async () => {
-      const snapshot = buildSnapshot('id-switch', previousProfile);
+      const snapshot = buildSnapshot('id-switch', previousId, previousProfile);
       if (snapshot) void uploadSnapshot(snapshot, 'id-switch');
 
       lastLoadedMtime.current = 0;
@@ -1601,10 +1605,7 @@ export default function App() {
           return { kind: 'skip-no-snapshot', reason: 'fresh-id-mismatch' };
         }
       }
-      const identityProfile = trigger === 'snapshot'
-        ? { ...uploadStateRef.current.profile, iidxId: gate.id, djName: accountsRef.current.find((entry) => entry.iidxId === gate.id)?.djName ?? null }
-        : { ...uploadStateRef.current.profile, iidxId: gate.id };
-      const snapshot = buildSnapshot(trigger === 'final' ? 'app-close' : trigger === 'manual' || trigger === 'snapshot' ? 'manual' : 'periodic', identityProfile);
+      const snapshot = buildSnapshot(trigger === 'final' ? 'app-close' : trigger === 'manual' || trigger === 'snapshot' ? 'manual' : 'periodic', gate.id, uploadStateRef.current.profile);
       if (!snapshot) {
         console.warn(`[upload] skip trigger=${trigger} reason=snapshot-guard`);
         if (trigger !== 'final') addDiagLine(`업로드 건너뜀: ${uploadReasonLabel('snapshot-guard')}`);
