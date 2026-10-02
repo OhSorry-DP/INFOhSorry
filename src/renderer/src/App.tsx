@@ -251,7 +251,17 @@ export default function App() {
   const selectedViewerIdRef = useRef<string | null>(null);
   const [accounts, setAccounts] = useState<AccountMeta[]>([]);
   const accountsRef = useRef<AccountMeta[]>([]);
-  accountsRef.current = accounts;
+  const accountsListSeqRef = useRef(0);
+  const refreshAccounts = useCallback(async (expectedScope?: AccountScope): Promise<boolean> => {
+    const seq = ++accountsListSeqRef.current;
+    const list = await window.infohsorry.account.list();
+    if (seq !== accountsListSeqRef.current) return false;
+    if (expectedScope && !isFloorSeedCurrent(expectedScope, accountScopeRef.current)) return false;
+    accountsRef.current = list;
+    setAccounts(list);
+    return true;
+  }, []);
+  useEffect(() => { accountsRef.current = accounts; }, [accounts]);
   const invalidateAccountScope = useCallback((nextId: string | null, clearRows: boolean): void => {
     const previous = accountScopeRef.current;
     const scope = { iidxId: nextId, epoch: previous.epoch + 1 };
@@ -507,26 +517,50 @@ export default function App() {
         };
       }
       const viewer = window.infohsorry;
-      const res = await viewer.account.snapshot({ iidxId: fresh.iidxId, djName: uploadStateRef.current.profile.djName ?? null, expect });
+      const expectedSession = { pid: sessionRef.current.pid, generation: sessionRef.current.generation };
+      const expectedScope = { ...accountScopeRef.current };
+      const capturedProfile = uploadStateRef.current.profile;
+      const copiedProfile = {
+        ...capturedProfile,
+        spRadar: capturedProfile.spRadar ? { ...capturedProfile.spRadar } : capturedProfile.spRadar,
+        dpRadar: capturedProfile.dpRadar ? { ...capturedProfile.dpRadar } : capturedProfile.dpRadar,
+      };
+      const isCurrentCapture = (): boolean => sessionRef.current.pid === expectedSession.pid
+        && sessionRef.current.generation === expectedSession.generation
+        && isFloorSeedCurrent(expectedScope, accountScopeRef.current)
+        && selectedViewerIdRef.current === expectedScope.iidxId;
+      const rejectStaleCapture = (): SnapshotCaptureResult => ({ ok: false, reason: 'snapshot-rejected', snapshotReason: 'generation-changed' });
+      const res = await viewer.account.snapshot({
+        iidxId: fresh.iidxId,
+        djName: capturedProfile.iidxId === fresh.iidxId ? capturedProfile.djName ?? null : null,
+        profile: copiedProfile,
+        expect,
+      });
       if (!res.ok || !res.iidxId || res.generation == null || res.tsvMtime == null) {
         console.warn('[snapshot] rejected:', res.reason);
         if (source === 'tsv-changed') addDiagLine(`스냅샷 거부: ${snapshotReasonLabel(res.reason)}`);
         return { ok: false, reason: 'snapshot-rejected', snapshotReason: res.reason };
       }
+      if (!isCurrentCapture()) return rejectStaleCapture();
       console.log(`[snapshot] captured id=${res.iidxId} generation=${res.generation} tsvMtime=${res.tsvMtime}`);
+      if (!await refreshAccounts(expectedScope)) return rejectStaleCapture();
+      if (!isCurrentCapture()) return rejectStaleCapture();
+      if (selectedViewerIdRef.current === res.iidxId) {
+        const readSeq = ++viewerReadSeqRef.current;
+        const t = await viewer.account.readTsv(res.iidxId);
+        if (!isCurrentCapture()) return rejectStaleCapture();
+        if (t.ok) {
+          if (!commitAccountRows(expectedScope, readSeq, expectedSession, t.rows ?? [], t.mtime ?? 0)) return rejectStaleCapture();
+        } else {
+          console.warn('[snapshot] account.readTsv failed:', t.error);
+        }
+      }
+      if (!isCurrentCapture()) return rejectStaleCapture();
       lastSnapshotRef.current = { iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
       lastSnapshotFreshFailureRef.current = null;
       if (snapshotRetryTimerRef.current != null) {
         window.clearInterval(snapshotRetryTimerRef.current);
         snapshotRetryTimerRef.current = null;
-      }
-      void viewer.account.list().then(setAccounts);
-      if (selectedViewerIdRef.current === res.iidxId) {
-        const scope = { ...accountScopeRef.current };
-        const readSeq = ++viewerReadSeqRef.current;
-        const expectedSession = { pid: sessionRef.current.pid, generation: sessionRef.current.generation };
-        const t = await viewer.account.readTsv(res.iidxId);
-        if (t.ok) commitAccountRows(scope, readSeq, expectedSession, t.rows ?? [], t.mtime ?? 0);
       }
       return { ok: true, iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
     } catch (err) {
@@ -535,7 +569,7 @@ export default function App() {
       if (source === 'tsv-changed') addDiagLine(`스냅샷 처리 중 오류: ${error}`);
       return { ok: false, reason: 'exception', error };
     }
-  }, [commitAccountRows]);
+  }, [commitAccountRows, refreshAccounts]);
   useEffect(() => {
     const offReflux = window.infohsorry.reflux.onState(setRefluxState);
     const viewer = window.infohsorry;
@@ -566,8 +600,9 @@ export default function App() {
       tsvUploadDebounceRef.current = window.setTimeout(() => scheduleTsvUpload(), TSV_UPLOAD_DEBOUNCE_MS);
     });
     void (async () => {
-      const [s, path, list, lastSelected] = await Promise.all([viewer.session.getState(), window.infohsorry.reflux.getTsvPath(), viewer.account.list(), viewer.account.getLastSelected()]);
-      setSession(s); setRefluxState(await window.infohsorry.reflux.getState()); setTsvPath(path); setAccounts(list);
+      // 목록 갱신이 더 최신 요청에 밀려도(false) 마지막 선택 계정 로드는 진행한다 — 목록은 최신 요청이 채운다.
+      const [s, path, , lastSelected] = await Promise.all([viewer.session.getState(), window.infohsorry.reflux.getTsvPath(), refreshAccounts(), viewer.account.getLastSelected()]);
+      setSession(s); setRefluxState(await window.infohsorry.reflux.getState()); setTsvPath(path);
       if (s.pid == null && lastSelected) void loadViewerAccount(lastSelected);
     })();
     return () => {
@@ -576,7 +611,7 @@ export default function App() {
       if (tsvUploadDebounceRef.current) clearTimeout(tsvUploadDebounceRef.current);
       if (tsvUploadCooldownTimerRef.current) clearTimeout(tsvUploadCooldownTimerRef.current);
     };
-  }, [captureSnapshot, loadViewerAccount]);
+  }, [captureSnapshot, loadViewerAccount, refreshAccounts]);
 
 
   useEffect(() => {
@@ -1261,10 +1296,10 @@ export default function App() {
     const prev = prevSessionRef.current;
     if (prev && (prev.pid !== session.pid || prev.generation !== session.generation)) {
       clearLiveSessionState();
-      void window.infohsorry.account.list().then(setAccounts);
+      void refreshAccounts();
     }
     prevSessionRef.current = session;
-  }, [session, clearLiveSessionState]);
+  }, [session, clearLiveSessionState, refreshAccounts]);
   useEffect(() => {
     const stopRetryTimer = (): void => {
       if (snapshotRetryTimerRef.current != null) {
