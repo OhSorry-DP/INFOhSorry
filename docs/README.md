@@ -17,15 +17,15 @@
 |------|------|
 | [architecture.md](architecture.md) | Electron main/preload/renderer 3 프로세스 구조, electron-vite 빌드, 앱 부팅 시퀀스, 5개 탭 구성, IPC 핸들러 등록 메커니즘, LAN 연결(ohsorry.local+QR) |
 | [memory-reading.md](memory-reading.md) | Reflux 자동 다운로드/관리, `tracker.tsv` 파싱, koffi Win32 메모리 스캔(`memory.ts`), `profileOffsets`/`useProfile`, gist `offsets.json` 원격 갱신, INFINITAS 패치 시 offset 깨짐 대응 |
-| [data-flow.md](data-flow.md) | 외부 데이터 소스(ereter/zasa/rating/spTier) gist 캐시 + TTL, `recommendCore` 의 gist 코어 통합, tsv 실시간 reload + Supabase 업로드(감지 후 3분 → 이후 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격) + 종료 시 1회) 분리, http-server LAN 원격제어(SSE)+연결(ohsorry.local/QR), IIDX ID 전환 가드 |
+| [data-flow.md](data-flow.md) | 외부 데이터 소스(ereter/zasa/rating/spTier) 캐시 + TTL, 추천 코어 통합, 계정별 TSV 스냅샷 + 자동 업로드(스냅샷마다 마지막 성공 시각 비교, 최소 3분 간격) + 종료 업로드, LAN 원격 셸/API/SSE, 계정·세션 소유권 가드 |
 | [ipc-reference.md](ipc-reference.md) | main↔renderer IPC 채널 전수 목록 + 각 핸들러 시그니처/역할, preload `window.infohsorry` API 매핑, HTTP `/api/ipc` bridge |
-| [sp.md](sp.md) | **SP(싱글) 데이터 흐름** — Reflux 메모리 SP 5 slot → ① Supabase `play_style:0` 적재(SP10~12, 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격)), ② 원격모드 `/api/me` `sp_charts_json`+`sp_tier12` 실시간(SSE·setUser dedup·/osr 네트워크우선) |
+| [sp.md](sp.md) | **SP(싱글) 데이터 흐름** — SP 5 slot → Supabase `play_style:0` 적재(SP1~12, BEGINNER·EX SCORE 0 이하 제외), 스냅샷마다 최소 3분 간격 판정, 원격 `/api/me`·`/api/me/v3profile` + SSE, SP★/CPI 계산 |
 
 ---
 
 ## 빠른 참조
 
-- **버전**: `0.0.103` (`package.json`)
+- **버전**: `0.0.134` (`package.json`)
 - **스택**: Electron 28 + React 18 + TypeScript 5.4, 빌드 `electron-vite 3`, 패키징 `electron-builder`(NSIS + portable)
 - **소스 트리**:
   - `src/main/` — Electron 메인 프로세스(Node 백엔드): IPC 핸들러, Reflux 관리, 메모리 스캔, 외부 데이터 fetch, LAN 서버

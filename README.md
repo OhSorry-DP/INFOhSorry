@@ -4,12 +4,12 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 ## 주요 기능
 
-- **Reflux 자동 통합** — 처음 실행 시 [olji/Reflux](https://github.com/olji/Reflux) 를 자동 다운로드. 메모리 리딩 + tracker.tsv dump 까지 백그라운드에서 처리
+- **Reflux 자동 통합** — [OhSorry-DP/Reflux](https://github.com/OhSorry-DP/Reflux) fork의 최신 릴리스를 확인해 설치·갱신. 메모리 리딩 + tracker.tsv dump까지 백그라운드에서 처리 (원본: olji/Reflux)
 - **SP / DP 곡 표** — 차트 단위 (한 row = 한 난이도)로 LAMP / LV / 곡명 / NOTES / RATE 시각화 / SCORE / MISS
 - **DP RECOMMEND 탭** — ereter넷 리코멘드 매칭 + ohSorry v3.3.6 모델로 별값 추정, EC / HC / EX-HARD 추천곡 (도전 + 정리), DP12렙 서열표 표시 및 저장
 - **ereter 데이터 자동 갱신** — 24h TTL 캐시. 만료되면 자동 fetch (수동 갱신 버튼도 있음). v0.0.14+ 부터 ereter.net / zasa 다운 시 ohSorry gist 에서 자동 fallback → 끊김 없이 동작.
 - **ohSorryRating fallback** — ereter 미등록 lv11/lv12 차트는 ohSorry 가 모은 추정값 (ohSorryRating.json) 으로 추천 풀 보강. lv11 추정 곡명은 진한 연두색, lv12 추정은 하늘색.
-- **LAN 원격 제어** — 같은 네트워크의 다른 PC 의 Chrome 으로 접속하면 같은 화면 + 모든 기능 사용 가능 (HTTP RPC bridge)
+- **LAN 원격 모드** — 같은 네트워크의 브라우저에서 오소리웹 셸로 본인 기록 확인. `/api/me`·`/api/me/v3profile`과 SSE로 실시간 갱신하며, INF 자체 화면은 `/index.html`에서 HTTP RPC bridge로 접속
 - **곡 목록 필터** — 검색 / LAMP / LV / 잠긴 차트 숨김 / sticky 헤더 + 필터
 
 ## 설치
@@ -26,7 +26,7 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 ## 사용 방법
 
 1. **INFINITAS 실행** (먼저 띄워두기)
-2. 앱 실행 → "데이터 불러오기" 클릭 → Reflux 자동 다운로드 + 백그라운드 시작
+2. 앱 실행 → 게임 세션 감지 시 Reflux 자동 설치·갱신 + 백그라운드 시작
 3. 게임에서 **곡 선택 화면 한 번 진입** → tracker.tsv 자동 dump → 표 자동 표시
 4. 이후 곡 선택 갈 때마다 자동 갱신
 
@@ -57,9 +57,9 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 ## LAN 원격 제어(투컴 방송용)
 
-PC1 (호스트, 게임실항하는 PC) 에서 앱 실행 → 콘솔에 표시되는 `http://192.168.x.x:3000` 을 PC2 의 Chrome 으로 접속.
+PC1 (호스트, 게임 실행 PC)에서 앱 실행 → PC2 브라우저에서 `http://ohsorry.local:3000` 또는 `http://PC-IP:3000` 접속. 포트 80 바인딩에 성공하면 `:3000`을 생략할 수 있습니다.
 
-PC2 의 화면이 PC1 과 같고, 모든 버튼 (데이터 불러오기 / ereter 갱신 / 캡처 등) 이 PC1 에서 실행됩니다. PC2 는 단순 원격 클라이언트.
+루트는 `/?remote`로 이동해 오소리웹 원격 본인 카드를 제공합니다. v3 전용 이름은 `http://ohsorry-v3.local:3000`이며 `/api/me/v3profile`로 본인 프로필을 받습니다. INF 자체 화면의 HTTP RPC bridge는 `/index.html`로 접속합니다. 호스트별 upstream과 캐시는 분리됩니다.
 
 ## 데이터 저장 위치
 
