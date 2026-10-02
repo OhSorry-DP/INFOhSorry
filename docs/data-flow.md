@@ -8,7 +8,7 @@
 ## 0. 전체 그림
 
 ```
- INFINITAS 메모리 ──(Reflux)──> tracker.tsv ──(tsv:read IPC)──> SongRow[]  (renderer)
+ INFINITAS 메모리 → Reflux tracker.tsv → account:snapshot(ID/PID/generation 검증) → users/{IIDX_ID}/tracker.tsv → account:readTsv → SongRow[] (renderer)
                                                                     │
         ┌──────────────── 외부 데이터(main fetch + 캐시) ───────────┤
         │ ereter / zasa / rating / spTier / serviceStatus / offsets │
@@ -17,7 +17,7 @@
    gist 코어(renderer fetch+eval) ──> recommendCore / 별값 lib ──> 추천/별값/분석
                                                                     │
                                             ┌───────────────────────┤
-                    ▼ (감지+3분 → 10분 주기 + TSV 변경 45초 디바운스(최소 3분 간격) + 종료시, host 전용) ▼
+                    ▼ (스냅샷마다 계정별 마지막 성공 시각 비교: 기록 없음/최소 3분 경과 시 + 수동/종료시, host 전용) ▼
                                      Supabase scores            Supabase user_ohsorry_radars
                                      + users (upsert_user)      (upsert_user_feature_score)
 ```
@@ -111,33 +111,29 @@ TSV(`rowsToAllCharts`, `src/renderer/src/recommendCore.ts:109-133`) + ratingData
 
 ohSorry 와 같은 Supabase 프로젝트 `cvxpeecxiawddmrzbdvn`(Tokyo) 공유. `iidx_id text PK` 라 namespace 호환. 모든 fetch 는 anon JWT key + REST/RPC(`SUPABASE_URL`/`SUPABASE_KEY`, `src/renderer/src/supabaseSync.ts:22-30`).
 
-### 읽기/업로드 분리 — 실시간 reload + 주기/디바운스/종료 업로드
+### 읽기/업로드 분리 — 계정 스냅샷 + 시각 비교 + 종료 업로드
 
-**TSV 읽기는 실시간, Supabase 업로드는 주기적**으로 분리돼 있습니다. 업로드 주기는 v0.0.100 에서 egress/DB 부하 절감을 위해 **"INF/데이터 감지 후 3분 뒤 첫 업로드 → 이후 15분 주기 + 앱/INFINITAS 종료 시 마지막 1회"** 로 바뀌었습니다(이전엔 즉시 + 3분 interval). v0.0.121에서 이후 주기를 10분으로 단축했습니다. v0.0.125 에서는 곡 클리어가 최대 10~11분 뒤에야 반영되던 지연을 줄이기 위해 **TSV 변경 감지 기반 디바운스 업로드**를 추가했습니다 — `tracker.tsv` 가 바뀐 뒤 45초 동안 추가 변경이 없으면 업로드를 트리거하되, 마지막 **성공한** 업로드로부터 3분이 안 됐으면 3분이 되는 시점까지 지연시킵니다(연속 플레이 중 업로드가 촘촘히 쏘아지는 것 방지). 기존 10분 고정 주기는 TSV 변경 이벤트를 놓치는 경우의 fail-safe 로 그대로 남겨뒀습니다. 상세는 아래 ②.
+**TSV 읽기는 변경 이벤트 기반이며 자동 업로드는 스냅샷마다 시각을 비교**합니다. v0.0.134에서 최초 3분 대기·10분 고정 주기·업로드용 45초 디바운스와 지연 쿨다운 타이머를 제거했습니다. 계정별 `infohsorry.lastUploadAt.{IIDX_ID}`를 localStorage에 저장하고, 새 스냅샷마다 마지막 성공 시각과 현재 시각을 비교해 최소 3분이 지났으면 업로드합니다. 기록이 없거나 시스템 시계가 마지막 시각보다 뒤로 갔으면 즉시 판정합니다. 시간이 지났다는 이유만으로 예약 업로드하지 않으며 다음 스냅샷에서 다시 판정합니다. 계산 데이터 미준비 또는 자동 업로드 진행 중이면 보류합니다.
 
 TSV 변경 시 메모리 IIDX ID 재확인이 일시 실패해 provenance 스냅샷이 없으면, 게임 실행 중이고 rows가 있을 때만 15초 간격으로 다시 읽어 스냅샷을 확보합니다. 폴링 프로필 값으로 대체하지 않으며, 확보 즉시 재시도를 멈춥니다.
 
-**① 실시간 reload (`App.tsx`)** — Reflux 의 `watchTsv` 가 `tracker.tsv` mtime 변경을 감지하면 `setState({stage:'ready', lastTsvMtime})`(`reflux.ts:599`) → `onState` → renderer `refluxState.lastTsvMtime` 갱신. 이를 dep 으로 한 effect 가 **debounce 400ms** 후 `loadTsv(tsvPath)` 호출 → rows 갱신 → `dp12StarResult` 자동 재계산. host 전용(`IS_BROWSER_REMOTE` skip). debounce 는 메모리 덤프 연속 갱신 시 폭주 방지. **이 실시간 reload 는 업로드 타이머와 완전히 무관** — 주기를 15분으로 늘려도(현재는 10분) 화면 반영은 플레이 즉시(아래 ③·④도 동일).
+**① 실시간 reload (`App.tsx:499-575,587-594`)** — `reflux.onTsvChanged`를 400ms 디바운스한 뒤 `readIidxIdFresh()`로 소유 ID를 확인하고 `account.snapshot({ iidxId, djName, profile, expect:{pid,generation} })`로 저장합니다. 완료 후 계정/세션 소유권을 다시 확인하고 계정 목록을 갱신한 뒤, 선택 계정이면 `account.readTsv(id)`로 rows를 교체합니다. ID 전환 직후 안정화 대기와 stale 완료 가드가 있으며 host 전용입니다. 이 400ms 디바운스는 스냅샷 캡처용입니다.
 
-**② 업로드 스케줄 (`App.tsx`)** — 상수 `INITIAL_UPLOAD_DELAY_MS = 3분` / `STAR_REFRESH_INTERVAL_MS = 10분` / `TSV_UPLOAD_DEBOUNCE_MS = 45초` / `TSV_UPLOAD_COOLDOWN_MS = 3분`(`App.tsx:142-146`, 뒤 둘은 v0.0.125). host 전용. 세 경로가 공존합니다:
-- **무장 effect (`App.tsx:1105-1126`)** — `profile.iidxId`(+djName, 형식 통과) **그리고** `rows.length > 0`(=INF/데이터 감지)이 처음 모두 충족될 때 1회 무장: `setTimeout(INITIAL_UPLOAD_DELAY_MS)` → 첫 업로드 → 그 안에서 `setInterval(STAR_REFRESH_INTERVAL_MS)` 로 10분 주기 시작. rows 가 차야 `spAllCharts`/`dpAllCharts` 까지 채워져 가진 scores 가 함께 적재됨(users 만 빈 업로드 방지). dp12(★)는 안 기다림 — DP12 안 친 유저도 인식되고 늦으면 다음 틱이 보강. 타이머 핸들은 `schedTimersRef`(initial/interval) 로 추적해 ID 전환 재무장/언마운트 시 정리. **이 10분 고정 주기는 v0.0.125 이후에도 그대로 유지** — TSV 변경 이벤트를 못 잡는 경우(watcher 실패 등)의 fail-safe 입니다.
-- **TSV 디바운스 경로 (`App.tsx:419-459`, v0.0.125 신규)** — `reflux.onTsvChanged` 이벤트가 올 때마다 `TSV_UPLOAD_DEBOUNCE_MS`(45초) 타이머를 재시작(`tsvUploadDebounceRef`)해, tsv 가 계속 바뀌는 동안은 쏘지 않고 **조용해진 뒤 45초** 시점에 `scheduleTsvUpload()` 를 실행합니다. 스냅샷 캡처용 400ms 디바운스(`tsvChangedDebounceRef`)와는 완전히 별개 타이머입니다.
-  - `lastUploadAtRef.current === 0`(=아직 첫 업로드 전)이면 즉시 return — 초기 업로드의 데이터 준비 대기(`INITIAL_UPLOAD_DELAY_MS`)를 지키기 위함이며, 이 구간은 위 무장 effect 의 3분 스케줄이 전담합니다.
-  - 첫 업로드 이후에는 **마지막으로 성공한 업로드**(`lastUploadAtRef`) 로부터 `TSV_UPLOAD_COOLDOWN_MS`(3분) 이상 지났으면 즉시 업로드하고, 미만이면 3분이 되는 시점까지 `setTimeout` 으로 미뤘다가 쏩니다 — 연속 클리어로 tsv 가 짧은 간격으로 계속 바뀌어도 업로드가 3분보다 촘촘히 쏘아지지 않게 막는 쿨다운입니다.
-  - 새 업로드 함수를 만들지 않고 아래 업로드 effect 의 `window.__tryUploadAuto`(=`runAuto`)를 그대로 재사용합니다.
-  - 결과적으로 TSV 변경 감지 후 최악 지연은(기존 최대 10~11분에서) **약 4.5분**(45초 디바운스 + 쿨다운 대기 최대 3분 + 실행 여유)으로 줄어듭니다.
-- **업로드 effect (`App.tsx:1025-1098`)** — `tryUpload(trigger)` 정의 + 노출. 무장 effect 와 TSV 디바운스 경로가 공통으로 호출하는 `runAuto`(=`tryUpload('auto')` + 200ms 후 vec 재계산 트리거)를 `window.__tryUploadAuto` 로 노출.
-1. `tryUpload('auto')` — 별값 + scores upload.
-2. 200ms 후 `setVecRecomputeKey(k=>k+1)` — Analysis 의 패턴 vec 재계산 + `user_ohsorry_radars` upsert 트리거.
+**② 자동 업로드 판정 (`App.tsx:1651-1660`)** — `AUTO_UPLOAD_MIN_GAP_MS = 3분`. 스냅샷 완료가 `window.__tryUploadIfDue(id)`를 호출합니다.
+- `readLastUploadAt(id)` + `isUploadDue(lastAt, Date.now(), AUTO_UPLOAD_MIN_GAP_MS)`로 판정합니다. 기록 없음/손상 또는 시계 역행은 업로드 가능으로 처리합니다.
+- `autoUploadBusyRef`가 진행 중이면 중복을 막고, `calcReady`(onlyOSR·rating·ereter)가 false이면 성공 시각을 기록하지 않고 다음 스냅샷에서 재판정합니다.
+- 조건 통과 시 `tryUpload('auto')`를 실행하고, 200ms 뒤 Analysis vec 재계산을 요청합니다.
+- 첫 업로드용 timeout, 고정 interval, 45초 업로드 디바운스, 쿨다운 만료 예약은 없습니다. 3분이 지난 뒤 새 스냅샷이 있어야 판정하므로 플레이부터 DB 반영까지의 고정 지연 상한은 보장하지 않습니다.
+- 성공 시 pending 정리 후 계정별 마지막 업로드 시각을 localStorage에 저장합니다. 전송 전 pending 스냅샷을 저장하며, 실패하면 보존하고 앱 준비 후 한 번 순차 재전송합니다 (`App.tsx:1509-1546,1594-1614`).
 
-**③ 종료 시 마지막 업로드 (v0.0.100)** — 앱/게임 종료 시 마지막 변경을 놓치지 않게 main 이 renderer 에 "마지막 업로드 1회" 를 요청합니다. main `requestFinalUpload(timeoutMs=6000)`(`src/main/index.ts:534-553`)가 `webContents.send('upload:final-request')` → renderer `upload.onFinalRequest`(`App.tsx:1082-1088`)가 `tryUpload('final')` 후 `upload.finalDone()` 로 ack → main 이 `upload:final-done` 수신(또는 timeout)까지 await. 호출 경로 3개:
-- **창 닫기(X)** — `mainWindow.on('close')`(`src/main/index.ts:612-628`)가 `e.preventDefault()` 로 파괴를 미루고(렌더러 생존 시점) `requestFinalUpload()` 후 `destroy()`.
-- **before-quit** — OS 종료/메뉴 등 직접 quit 경로(`src/main/index.ts:700-722`). 렌더러가 살아있을 때만 동작(이미 닫힌 X버튼 경로는 close 핸들러가 처리 → 여기선 no-op).
-- **INFINITAS(bm2dx.exe) 종료 감지** — `startInfinitasWatch`(`src/main/index.ts:570-582`)가 **tasklist 30초 폴링**(`isInfinitasAlive`, `tasklist.exe /FI "IMAGENAME eq bm2dx.exe"`). 떠 있다 사라지면 `requestFinalUpload()`(앱은 계속 유지). tasklist 실패 시엔 직전 상태 유지 → 거짓 "종료" 전환 방지. PC2(브라우저 원격) 브리지는 `upload.*`/`server.*` no-op.
+**③ 종료 시 마지막 업로드** — `requestFinalUpload()`는 기본 30초 동안 renderer의 `upload:final-done` 결과(`UploadOutcome`)를 기다립니다. `upload.onFinalRequest` → `tryUpload('final')` → `upload.finalDone(outcome)`으로 응답합니다.
+- **창 닫기(X)** — 창을 숨기고 `app.quit()`을 호출해 `before-quit` 경로에 합류합니다.
+- **before-quit** — 세션 감시 중단 → 마지막 업로드 대기 → Reflux 정리 → 창 파괴 → 종료.
+- **게임 종료/PID 전환** — 1초 간격 세션 감시의 end에서 마지막 업로드를 기다린 뒤 `hardStop()`하고 세션 상태를 push합니다. 새 start는 진행 중인 종료 대기를 중단하고 직렬 처리 체인에서 재기동합니다.
 
 > v0.0.41~0.0.75 는 mtime 이벤트 reload 를 끄고 timer 가 `loadTsv`+업로드를 함께 했었음(race 우려). 옛 ID 잘못 업로드 방어는 `loadTsv` 의 `rowsSourceIidxIdRef` 태깅 + `tryUpload` 가드가 담당하므로, 읽기만 실시간으로 되살림.
 
-> **④ 리모트 실시간 푸시는 이 타이머와 무관(불변)** — 원격모드 본인 카드(`me:update` SSE)·TSV reload·프로필 메모리 폴링은 별도 effect 라 업로드 주기 변경(3분→15분)의 영향을 전혀 받지 않습니다(현재 주기는 10분 + TSV 45초 디바운스, v0.0.125). TSV 값이 하나라도 바뀌면 `remote.setUser` → main `notifyMeUpdate()` 로 PC2 카드를 플레이 즉시 다시 그립니다(`App.tsx:1128~` 주석). 즉 **화면 반영은 실시간, DB 부하만 주기적/디바운스/종료시**.
+> **④ 원격 실시간 푸시는 DB 업로드와 별도** — 게임 실행 중 유효 ID·스냅샷 provenance·DP 별값/매칭이 준비되면 차트·레이더·단위·r★ 등 내용 시그니처 변화에 따라 `remote.setUser` → `notifyMeUpdate()` → SSE `me:update`를 보냅니다. DB 자동 업로드는 스냅샷마다 최소 3분 간격으로 판정하며 원격 화면 푸시를 기다리게 하지 않습니다.
 
 수동 호출: 탭 바 우측의 **수동 업로드 버튼**(host 전용, `MANUAL_UPLOAD_COOLDOWN_MS = 5분`) — 마지막으로 **성공한** 업로드에서 5분이 지나야 활성화되고 누르면 `tryUpload('manual')` 1회 실행(v0.0.121). 콘솔에서는 `window.updateSupabase()` 로 같은 경로를 호출.
 게임이 꺼져 있을 때는 `tryUpload('snapshot')` 경로로 갈아탑니다 — 선택한 계정의 `account.readTsv(id)` 저장본과 `accounts` 메타의 DJ NAME 을 **같은 IIDX ID 로 묶어** 올리므로 소유권이 어긋나지 않습니다. 선택 계정·계정 메타·표시 중인 기록이 모두 있을 때만 허용하고, 메모리 재확인(`readIidxIdFresh`)은 게임이 꺼져 읽을 수 없으므로 건너뜁니다. 게임이 켜져 있으면 이 경로는 `game-on` 으로 거부되고 기존 `manual` 경로를 씁니다.
@@ -147,16 +143,16 @@ TSV 변경 시 메모리 IIDX ID 재확인이 일시 실패해 provenance 스냅
 ### uploadProfile (`src/renderer/src/supabaseSync.ts:246-400`)
 
 1. **kill-switch 확인**: `serviceStatus.get()` 의 `uploadEnabled===false` 면 skip(`src/renderer/src/supabaseSync.ts:250-253`).
-2. **users upsert**: RPC `upsert_user`. `p_star`(ereterStar 4자리), `p_sp_rank`/`p_dp_rank` = **게임 메모리에서 읽은 단위**(v0.0.108+, supabase 스케일 int). 못 읽음/미취득이면 `null` → RPC COALESCE 가 기존값(ohSorryAdmin 배치가 넣은 값) 보존.
-2-B. **user_radars upsert**: RPC `upsert_user_radar`(`uploadRadars`) — 메모리에서 읽은 SP(`play_style:0`) / DP(`1`) 노트레이더 6지표를 스타일별 1회씩. 값 없는 스타일은 skip, 실패는 warn 만 남기고 **scores 업로드를 막지 않는다**.
+2. **users upsert**: RPC `upsert_user`. `p_star`·`p_r_star`·SP CPI/★와 단위를 전송합니다. 모든 트리거의 프로필은 대상 ID의 계정 meta 세트에서 선택하며, 구 meta에만 같은 ID의 live/보존 profile을 fallback으로 사용합니다. 단위가 null이면 기존 DB 값 보존은 서버 RPC 계약에 따릅니다.
+2-B. **user_radars upsert**: 선택한 같은 계정 프로필의 SP(`play_style:0`) / DP(`1`) 레이더 6지표를 RPC `upsert_user_radar`로 스타일별 전송합니다. 값 없는 스타일은 skip, 실패는 warn만 남기고 scores 업로드를 막지 않습니다.
    - ⚠️ 이 RPC 는 **ohSorryAdmin 이 쓰던 기존 함수**(`text, integer, numeric×6`)다. 같은 이름으로 새로 만들면 파라미터 이름이 겹쳐 PostgREST 가 후보를 못 골라(PGRST203) 호출이 전부 HTTP 300 으로 죽는다. PostgREST 는 인자를 **이름**으로 넘기므로 선언 순서 차이는 문제가 안 된다.
-3. **scores upsert**: chart row 변환 + songs 매칭 + dedup → RPC `upsert_scores`(`src/renderer/src/supabaseSync.ts:285-399`).
+3. **scores upsert**: chart row 변환 + songs 매칭 + dedup 후 최대 1000행씩 순차 RPC `upsert_scores` 전송. SP는 레벨 1~12(BEGINNER·EX SCORE 0 이하 제외), DP는 전 레벨의 플레이 성적을 포함합니다. 청크 실패 시 실패 결과를 반환합니다.
    - **`bp`(TSV missCount) / `note_count`(TSV noteCount)** 함께 전송(v0.0.108+, `14_scores_bp_notecount.sql`). 음수/비유한수는 `null`(미상) 로 — `bp` 는 0 이 유효값(FC)이라 `>= 0`, `note_count` 는 0 이 미상이라 `> 0` 기준.
    - ⚠️ `upsert_scores` 는 historical best 미달이면 INSERT 자체를 skip 하므로, **이미 best 가 저장된 채보는 재업로드해도 bp/note_count 가 안 채워진다**. 기존 행까지 메우려면 `16_scores_bp_notecount_backfill.sql`(빈 칸만 채우는 패스 추가) 적용 필요.
    - `DIFF_MAP`/`LAMP_MAP`(`src/renderer/src/supabaseSync.ts:33-34`), `PLAYED_VERSION_INF=0`.
    - songs 매칭: `getSongsCache()`(norm key → `SongEntry[]`, ac/legen bit, 페이징 fetch `src/renderer/src/supabaseSync.ts:81-122`) + `pickSongId`(INF 비트 2, `src/renderer/src/supabaseSync.ts:150-159`).
    - 미등록 신곡: `ensure_song` RPC 자동 호출(textage-meta 의 `textage_song_id` 전달해 옛 row 통합, `src/renderer/src/supabaseSync.ts:313-352`).
-   - PK `(song_id, iidx_id, diff, played_version)` 중복 dedup — best ex_score/lamp(`src/renderer/src/supabaseSync.ts:299-375`).
+   - 클라이언트 dedup 키는 `(song_id, iidx_id, diff, played_version, play_style)` — SP/DP를 분리해 best ex_score/lamp를 선택합니다. DB의 실제 PK/제약은 이 문서에서 확정하지 않습니다.
 
 ### user_ohsorry_radars (패턴 vec, `Analysis.tsx`)
 
@@ -176,41 +172,39 @@ DBR 토글(`dbrOnly`): ON 이면 `played_version=-10`(배틀) 날짜만, DBR 난
 
 ### 기타 Supabase fetch
 
-- `fetchUserPublic(iidxId)` — `user_radars`(DP 6지표) + `users`(sp_rank/dp_rank) 병렬. **메모리 리딩이 우선이고 이건 fallback** — 게임 미실행/로그인 전/패치로 offset 이 깨졌을 때 ProfileCard 가 빈 카드가 되지 않게 하는 안전망(App.tsx 의 `cardRadar`/`cardSpRank`).
+- `fetchUserPublic(iidxId)` — 공개 DP 레이더·단위·별값을 조회합니다. 카드는 선택 계정 meta 프로필 세트를 기본으로 사용하고 같은 ID의 live non-null 값만 우선합니다. 공개정보 fallback은 rows/account epoch 소유권이 일치하고 `profileCapturedAt`이 없는 구 meta에서만 허용합니다.
 - `getSongsById()`/`ensureTextageMeta()`/`fetchSeriesNames()` — PlayData 의 곡 마스터/메타/시리즈명.
 
 ---
 
-## 4. IIDX ID 전환 가드 (`App.tsx:936-1008`)
+## 4. IIDX ID·세션·계정 소유권 가드
 
-옛 ID 의 TSV 가 메모리에 남아 **새 ID 로 잘못 업로드되는 사고**를 막는 이중 안전장치입니다.
+옛 계정 기록을 새 ID로 업로드하지 않도록 PID/generation, 스냅샷 provenance, 선택 계정 scope/epoch를 검증합니다.
 
-두 가지 transition 을 감지:
-1. **A→B 계정 전환**: 새 유효 ID(`now`)가 **마지막 유효 ID**(`lastValidIidxIdRef`)와 다르면 → 즉시 정리(`doReset`, `App.tsx:982-988`). 직전 tick(`prev`)이 아니라 **마지막 유효 ID** 대비라, 게임 재시작 중 `A→null→B` 로 null 이 껴도(`prev=null`) A→B 전환을 놓치지 않음 — null 공백을 건너뛰고 `직전 유효 ID ≠ 새 유효 ID` 로 판정(v0.0.102, 이전엔 prev-tick 기준이라 놓쳐 옛 계정 별값/0 잔존).
-2. **truthy→null**: 게임 종료/INFINITAS 죽음 → null 이 **5초 지속**될 때만(debounce, `App.tsx:999-1007`). "데이터 불러오기" 재시작 중 잠깐 null 되는 false-positive 회피.
+1. **A→B 계정 전환**: 마지막 유효 ID와 새 유효 ID를 비교합니다. 이전 계정 업로드 스냅샷을 캡처한 뒤 live 상태와 계정 scope를 초기화하고 `reflux.restart()`를 호출합니다. Reflux 재기동 직후 부분 TSV를 막기 위해 시작 전과 완료 후 각각 20초 안정화 차단 시각을 설정합니다.
+2. **PID/generation 전환**: live provenance와 계정 scope를 무효화하되 계정별 저장 TSV는 보존합니다. 게임 종료 업로드와 Reflux 작업 디렉터리 정리는 main의 세션 end 처리가 맡습니다. 기존 `truthy→null` 5초 `doReset` 경로는 없습니다.
+3. **스냅샷/rows 소유권**: fresh ID + PID/generation으로 스냅샷을 저장하고 완료 후 계정 scope·읽기 순서를 다시 검증합니다. 업로드 gate는 live/선택 계정·rows·provenance가 맞을 때만 통과하며 auto/manual 경로는 전송 전 메모리 ID를 다시 확인합니다.
 
-`doReset`(`App.tsx:948-975`): rows/tsvMtime/lastLoadedMtime/rowsSourceIidxIdRef/initialUploadDoneRef reset + `clearTsv(tsvPath)` IPC(내용 비우기). 가드 조건(`everHadValidIidxIdRef`): 세션 중 한 번이라도 Reflux 후킹 + 유효 ID 형식 잡힌 적 있어야 함.
-
-이중 안전장치: TSV read 시점의 live ID 를 `rowsSourceIidxIdRef` 에 태깅(`App.tsx:425`)하고, 업로드 직전 *출처 ID ≠ 현재 ID* 면 업로드 skip(`App.tsx:1162-1163`). 비동기 업로드 도중 ID 가 바뀌는 경쟁까지 차단.
+계정별 정본은 `userData/users/{IIDX_ID}/tracker.tsv`와 `meta.json`이며 Reflux 작업 TSV와 분리됩니다.
 
 ---
 
 ## 5. LAN 원격 제어 (`src/main/http-server.ts` + `src/renderer/src/api.ts`)
 
-같은 네트워크의 다른 PC(PC2)·폰 의 브라우저로 접속하면 같은 화면 + 모든 기능. PC2 는 단순 원격 클라이언트, 실제 동작은 PC1 에서. 접속 주소는 v0.0.101 에서 편해졌습니다(아래 LAN 연결).
+LAN 루트는 오소리웹 원격 셸을 제공합니다. INF 자체 renderer의 HTTP RPC 화면은 `/index.html`입니다. 루트의 셸/API 경로와 INF 화면의 IPC polyfill 경로를 구분합니다.
 
 ### 서버 (`startHttpServer`, `src/main/http-server.ts:251-430`)
 
 production 빌드에서만 시작(`src/main/index.ts:667-676`). 포트 3000, `0.0.0.0` 바인드. 라우팅:
 - `POST /api/ipc` — `{channel, args}` → `ipcHandlers[channel](...args)` → `{result}` 또는 `{error}`(`handleIpc`). **ipcMain 과 같은 핸들러 맵 공유**([architecture.md](architecture.md) 3절).
 - `GET /api/events` — SSE(text/event-stream). reflux state 실시간 push(아래).
-- `GET /api/me` — renderer 가 push 한 원격모드 본인 카드(`remote.setUser`, payload 는 `buildRemoteUser`). 오소리웹 `?remote` 분기가 supabase 대신 읽음.
+- `GET /api/me` — `remote.setUser`로 push한 기존 user 객체. `GET /api/me/v3profile` — 같은 스냅샷을 CDN user JSON 형태로 합성한 v3 프로필. CDN INF 행을 로컬 전 레벨 DP/SP 성적으로 보강하며 `remote_recent`에 CDN 대비 미반영 최고 성적을 KST 오늘 관측값으로 제공합니다. user 캐시는 성공/404/실패 backoff 모두 60초이고 실패 시 마지막 성공값을 보존합니다. 실제 플레이 이벤트 시각으로 해석하지 않습니다.
   - 형식은 오소리웹 `modules/api.js` 의 `fetchUserProfile` 반환과 1:1 이어야 한다 — 어긋나면 카드가 안 그려진다.
   - `notes_radar` = `{ sp, dp }`, 각 값은 **대문자 키**(`NOTES/PEAK/CHARGE/CHORD/SCRATCH/SOF-LAN`) + `total`(6개 합, DB 에도 total 컬럼이 없어 계산). `sp_rank`/`dp_rank` 는 **표시 문자열**(`十段`, 미취득 `-`) — supabase 경로가 `rankIntToStr` 로 이미 문자열을 넣기 때문.
   - BP / 노트수는 `charts_json`·`sp_charts_json` 항목의 `missCount`/`noteCount`(웹 `shelf.js` 가 읽는 키). supabase 경로는 `make_grid_data` 가 `bp`/`note_count` 를 반환하지 않아 아직 `missCount:null` 이다 — 원격모드가 이 점에서 오히려 데이터가 더 많다.
   - push 는 값 변경 시에만(`sig` 비교, Reflux 가 2초마다 같은 값을 다시 써서 생기는 폭주 방지). sig 에는 차트 합계뿐 아니라 **레이더/단위도 포함** — 메모리 read 가 첫 push 보다 늦게 잡히는 경우가 있어서다.
 - `GET /` — `?remote` 없으면 `/?remote` 로 302(IP 만 쳐도 원격 카드). `GET /osr,/osr/*` 레거시는 루트 등가물로 302.
-- `GET /*` — 오소리웹 루트 마운트(`serveOsr`: vercel 정본 네트워크 우선 + 로컬 캐시 fallback). `/index.html`·`/assets/*` 만 INF 자체 renderer(`out/renderer/`).
+- `GET /*` — `serveOsr`로 upstream 정적 셸을 네트워크 우선 + 디스크 캐시 fallback으로 제공합니다. Host가 `ohsorry-v3.*` 또는 `v3.*`면 `https://v3.iidx.in` + `osr-cache/v3`, 그 외(IP 포함)는 `https://ohsorry.iidx.in` + `osr-cache`를 선택합니다. `/index.html`·`/assets/*`는 INF 자체 renderer입니다. upstream의 현재 배포 플랫폼은 여기서 단정하지 않습니다.
 - CORS: `access-control-allow-origin: *` + OPTIONS preflight 처리.
 
 ### LAN 연결 — 포트 80 + mDNS `ohsorry.local` + 앱 내 QR (v0.0.101)
@@ -224,7 +218,7 @@ production 빌드에서만 시작(`src/main/index.ts:667-676`). 포트 3000, `0.
 
 ### SSE broadcast (`setupSseBroadcast`, `src/main/http-server.ts:193-249`)
 
-`refluxManager.on('state', ...)` → 접속한 PC2 들에 `event: reflux:state` broadcast. 연결 즉시 현재 state 1회 push(초기 sync). 15초마다 `: ping` keep-alive(idle proxy/NAT 끊김 방지). client 끊기면 close 핸들러가 set 에서 제거. 추가로 `notifyMeUpdate()`(renderer 의 `remote.setUser` 가 트리거)가 `event: me:update` 를 broadcast → PC2 가 보고 있는 본인 카드를 조용히 다시 fetch/렌더(원격모드 실시간). 이 me:update 는 Supabase 업로드 타이머와 무관(위 §3 ④).
+`refluxManager.on('state', ...)` → 접속한 PC2 들에 `event: reflux:state` broadcast. 연결 즉시 현재 state 1회 push(초기 sync). 15초마다 `: ping` keep-alive(idle proxy/NAT 끊김 방지). client 끊기면 close 핸들러가 set 에서 제거. 추가로 `notifyMeUpdate()`(renderer 의 `remote.setUser` 가 트리거)가 `event: me:update` 를 broadcast → PC2 가 보고 있는 본인 카드를 조용히 다시 fetch/렌더(원격모드 실시간). 이 me:update 는 스냅샷 기반 Supabase 자동 업로드 판정과 무관(위 §3 ④).
 
 ### 클라이언트 polyfill (`src/renderer/src/api.ts`)
 
