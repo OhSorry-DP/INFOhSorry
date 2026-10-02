@@ -138,13 +138,14 @@ declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
 // 실력값 추정 + Supabase 업로드 주기 — 타이머를 쓰지 않는다.
 //   계정별 마지막 업로드 성공 시각(시스템 시간)을 localStorage 에 찍어 두고, TSV 스냅샷을 얻을 때마다
-//   「지금 − 마지막 업로드 ≥ STAR_REFRESH_INTERVAL_MS」면 올린다(isUploadDue). 기록이 없으면 바로 올린다.
+//   「지금 − 마지막 업로드 ≥ AUTO_UPLOAD_MIN_GAP_MS(3분)」면 올린다(isUploadDue). 기록이 없으면 바로 올린다.
+//   기록이 바뀔 때마다 판정하므로 10분 주기를 기다리지 않는다(v0.0.125 변경 업로드와 같은 3분 간격).
 //   종래 「3분 뒤 첫 업로드 + 10분 setInterval」은 스냅샷이 ref 로만 들어와 무장 effect 가 다시 안 돌면
 //   타이머가 영영 안 걸려 자동 업로드가 통째로 멈췄다.
 //   추가로 앱 종료 / INFINITAS 종료 감지 시 main 이 마지막 업로드를 1회 요청(upload.onFinalRequest).
 //   ※ 리모트 실시간 푸시(me:update SSE) / TSV reload 는 이 주기와 무관(별도 effect).
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
-const STAR_REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 정기 업로드 최소 간격 — 10분
+const AUTO_UPLOAD_MIN_GAP_MS = 3 * 60 * 1000; // 기록 변경 업로드 최소 간격 — 3분(dump-user 20~26초라 겹치지 않는다)
 const MANUAL_UPLOAD_COOLDOWN_MS = 5 * 60 * 1000;
 const LAST_UPLOAD_KEY_PREFIX = 'infohsorry.lastUploadAt.';
 // 계정별 마지막 업로드 성공 시각. 읽기 실패·손상은 0(기록 없음 → 바로 업로드)으로 본다.
@@ -1649,7 +1650,7 @@ export default function App() {
     // 스냅샷 직후 호출 — 해당 계정의 마지막 업로드 시각이 주기를 넘었을 때만 올린다. 진행 중이면 겹치지 않는다.
     const runIfDue = (iidxId: string): void => {
       const lastAt = readLastUploadAt(iidxId);
-      if (!isUploadDue(lastAt, Date.now(), STAR_REFRESH_INTERVAL_MS)) return;
+      if (!isUploadDue(lastAt, Date.now(), AUTO_UPLOAD_MIN_GAP_MS)) return;
       if (autoUploadBusyRef.current) return;
       // 별값 계산 데이터(onlyOSR·rating·ereter) 로드 전이면 건너뛴다 — 시각을 안 찍으므로 다음 스냅샷에서 다시 판정.
       if (!uploadStateRef.current.calcReady) { console.log(`[upload] due id=${iidxId} 보류: 계산 데이터 로드 전`); return; }
