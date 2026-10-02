@@ -1,4 +1,5 @@
 import { norm } from '../shared/match';
+import { buildRemoteRecentRows } from './remoteRecent';
 
 type AnyRecord = Record<string, any>;
 type SongRecord = AnyRecord & { title?: string; song_id: string | number; ac?: number };
@@ -32,7 +33,8 @@ function empty(remote: AnyRecord): AnyRecord {
 }
 
 // 원격 사용자 정보와 차트 점수를 CDN 프로필에 합친다.
-export function composeV3Profile(remote: AnyRecord, cdn: AnyRecord | null, songIndex: SongIndex | null): AnyRecord {
+export function composeV3Profile(remote: AnyRecord, cdn: AnyRecord | null, songIndex: SongIndex | null, nowIso = new Date().toISOString()): AnyRecord {
+  const mappedRows: Array<{ song_id: string | number; diff: number; play_style: number; lamp: number; ex_score: number; bp: number | null; note_count: number | null }> = [];
   const out = cdn ? JSON.parse(JSON.stringify(cdn)) as AnyRecord : empty(remote);
   out.user = { ...(out.user || {}) };
   const fields: Record<string, string> = { dj_name: 'dj_name', star: 'star_estimate', native_star: 'native_star', ereter_star: 'ereter_star', r_star: 'r_star', sp_cpi: 'sp_cpi', sp_star: 'sp_star', sp_rank: 'sp_rank', dp_rank: 'dp_rank' };
@@ -51,6 +53,7 @@ export function composeV3Profile(remote: AnyRecord, cdn: AnyRecord | null, songI
       const id = pickSongId(songIndex.get(norm(String(chart.title ?? ''))) ?? []);
       const diff = DIFF[String(chart.diff)];
       if (id == null || diff === undefined) { unmatched++; continue; }
+      mappedRows.push({ song_id: id, diff, play_style: key === 'dp' ? 1 : 0, lamp: chart.lampNum, ex_score: chart.exScore, bp: chart.missCount ?? null, note_count: chart.noteCount ?? null });
       const row = rows.find((item) => item.song_id === id && item.diff === diff && item.played_version === 0);
       if (row) {
         row.lamp = chart.lampNum;
@@ -67,19 +70,44 @@ export function composeV3Profile(remote: AnyRecord, cdn: AnyRecord | null, songI
   apply('dp', Array.isArray(remote.charts_json) ? remote.charts_json : []);
   apply('sp', Array.isArray(remote.sp_charts_json) ? remote.sp_charts_json : []);
   out._remote = { matched, unmatched, cdn: cdn ? 'ok' : 'notfound' };
+  const normalizedId = String(remote.iidx_id ?? '').replace(/-/g, '').trim().toUpperCase();
+  const cdnOwner = String(cdn?.user?.iidx_id ?? '').replace(/-/g, '').trim().toUpperCase();
+  const ownerMatches = !cdn || !cdnOwner || cdnOwner === normalizedId;
+  out.remote_recent = { iidx_id: normalizedId, date_kst: new Date(Date.parse(nowIso) + 9 * 3600000).toISOString().slice(0, 10), cdn_revision: ownerMatches && cdn?._v != null ? String(cdn._v) : null, rows: ownerMatches && songIndex ? buildRemoteRecentRows(mappedRows, cdn, nowIso) : [] };
   return out;
 }
 
 type Cache<T> = { value: T; expires: number };
 let songsCache: Cache<{ index: SongIndex }> | null = null;
-const profileCache = new Map<string, Cache<AnyRecord | null>>();
+async function get(url: string, fetchImpl: typeof fetch = fetch): Promise<Response> {
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 8000);
+  try { return await fetchImpl(url, { signal: controller.signal, cache: 'no-store' }); } finally { clearTimeout(timeout); }
+}
 
-// 원격 요청에 공통 timeout과 no-store 옵션을 적용한다.
-async function get(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 8000);
-  try { return await fetch(url, { signal: controller.signal, cache: 'no-store' }); }
-  finally { clearTimeout(timeout); }
+export function createV3CdnProfileLoader(fetchImpl: typeof fetch = fetch, now: () => number = Date.now) {
+  type Result = { value: AnyRecord | null; status: 'ok' | 'notfound' | 'error'; revision: string | null };
+  const cache = new Map<string, { result: Result; expires: number }>();
+  const lastSuccess = new Map<string, AnyRecord>();
+  const inFlight = new Map<string, Promise<Result>>();
+  const load = (id: string): Promise<Result> => {
+    const key = id.replace(/-/g, '').trim().toUpperCase(); const current = now(); const cached = cache.get(key);
+    if (cached && cached.expires > current) return Promise.resolve(cached.result);
+    const active = inFlight.get(key); if (active) return active;
+    const request = (async (): Promise<Result> => {
+      try {
+        const response = await get(`https://data.iidx.in/user/${key}.json`, fetchImpl);
+        if (response.status === 404) { const result: Result = { value: null, status: 'notfound', revision: null }; cache.set(key, { result, expires: now() + 60000 }); return result; }
+        if (!response.ok) throw Error();
+        const value = await response.json() as AnyRecord; lastSuccess.set(key, value);
+        const result: Result = { value, status: 'ok', revision: value._v == null ? null : String(value._v) }; cache.set(key, { result, expires: now() + 60000 }); return result;
+      } catch {
+        const value = lastSuccess.get(key) ?? null; const result: Result = { value, status: 'error', revision: value?._v == null ? null : String(value._v) };
+        cache.set(key, { result, expires: now() + 60000 }); return result;
+      }
+    })();
+    inFlight.set(key, request); void request.finally(() => { if (inFlight.get(key) === request) inFlight.delete(key); }); return request;
+  };
+  return { load };
 }
 
 // songs 캐시를 갱신할 때 제목 인덱스도 한 번만 만든다.
@@ -96,26 +124,19 @@ async function songs(): Promise<SongIndex | null> {
   } catch { return songsCache?.value.index ?? null; }
 }
 
-async function profile(id: string): Promise<{ value: AnyRecord | null; status: 'ok' | 'notfound' | 'error' }> {
-  const now = Date.now();
-  const old = profileCache.get(id);
-  if (old && old.expires > now) return { value: old.value, status: old.value ? 'ok' : 'notfound' };
-  try {
-    const response = await get(`https://data.iidx.in/user/${id.replace(/-/g, '').toUpperCase()}.json`);
-    if (response.status === 404) { profileCache.set(id, { value: null, expires: now + 300000 }); return { value: null, status: 'notfound' }; }
-    if (!response.ok) throw Error();
-    const value = await response.json() as AnyRecord;
-    profileCache.set(id, { value, expires: now + 600000 });
-    return { value, status: 'ok' };
-  } catch { return old?.value ? { value: old.value, status: 'ok' } : { value: null, status: 'error' }; }
-}
+const defaultProfileLoader = createV3CdnProfileLoader();
 
 export async function getV3Profile(remote: unknown): Promise<AnyRecord | null> {
   const value = remote as AnyRecord | null;
   if (!value || !value.iidx_id) return null;
-  const [songIndex, result] = await Promise.all([songs(), profile(String(value.iidx_id))]);
-  const out = composeV3Profile(value, result.value, songIndex);
+  const [songIndex, result] = await Promise.all([songs(), defaultProfileLoader.load(String(value.iidx_id))]);
+  const owner = String(result.value?.user?.iidx_id ?? '').replace(/-/g, '').trim().toUpperCase();
+  const cdn = result.value;
+  const out = composeV3Profile(value, cdn, songIndex);
   out._remote.cdn = result.status;
+  if (owner && owner !== String(value.iidx_id).replace(/-/g, '').trim().toUpperCase()) { out.remote_recent.rows = []; out.remote_recent.cdn_revision = null; }
   if (!songIndex) out._remote.songs = 'error';
+  if (result.status === 'error' && !result.value) out.remote_recent.rows = [];
+  if (!owner || owner === String(value.iidx_id).replace(/-/g, '').trim().toUpperCase()) out.remote_recent.cdn_revision = cdn?._v == null ? null : String(cdn._v);
   return out;
 }
