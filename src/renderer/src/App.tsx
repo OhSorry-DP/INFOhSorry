@@ -66,7 +66,7 @@ import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
 import { SNAPSHOT_VERSION, type SnapshotReason, type UploadOutcome, type UploadSnapshot } from '../../shared/uploadSnapshot';
-import type { AccountMeta, TsvChangedEvent } from '../../shared/account';
+import { isFloorSeedCurrent, type AccountScope, type AccountMeta, type TsvChangedEvent } from '../../shared/account';
 import type { InfinitasSessionState } from '../../shared/session';
 import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 
@@ -228,34 +228,85 @@ export default function App() {
     window.infohsorry?.diag?.logPath().then((p) => { if (alive) setDiagLogPath(p); }).catch(() => {});
     return () => { alive = false; };
   }, []);
-  const [rows, setRows] = useState<SongRow[]>([]);
+  const [rowsState, setRowsState] = useState<{ rows: SongRow[]; scope: AccountScope }>({ rows: [], scope: { iidxId: null, epoch: 0 } });
+  const rows = rowsState.rows;
+  const rowsOwnerId = rowsState.scope.iidxId;
   const rowsRef = useRef<SongRow[]>([]);
-  rowsRef.current = rows;
+  const accountScopeRef = useRef<AccountScope>({ iidxId: null, epoch: 0 });
+  const viewerReadSeqRef = useRef(0);
+  const [tsvMtime, setTsvMtime] = useState<number>(0);
+  const tsvMtimeRef = useRef<number>(0);
+  const [floorState, setFloorState] = useState<{ scope: AccountScope; starFloor: number | null; rStarFloor: number | null }>({ scope: { iidxId: null, epoch: 0 }, starFloor: null, rStarFloor: null });
+  const floorCurrent = isFloorSeedCurrent(floorState.scope, rowsState.scope);
+  const starFloor = floorCurrent ? floorState.starFloor : null;
+  const rStarFloor = floorCurrent ? floorState.rStarFloor : null;
+  const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
+  const [userPublicScope, setUserPublicScope] = useState<AccountScope | null>(null);
+  const osrAccumRef = useRef<Map<string, { title: string; diff: string; lampNum: number }>>(new Map());
+  const osrAccumScopeRef = useRef<AccountScope>({ iidxId: null, epoch: 0 });
   const [session, setSession] = useState<InfinitasSessionState>({ pid: null, generation: 0, startedAt: null });
   const sessionRef = useRef(session);
   sessionRef.current = session;
   const [selectedViewerId, setSelectedViewerId] = useState<string | null>(null);
   const selectedViewerIdRef = useRef<string | null>(null);
-  selectedViewerIdRef.current = selectedViewerId;
   const [accounts, setAccounts] = useState<AccountMeta[]>([]);
   const accountsRef = useRef<AccountMeta[]>([]);
   accountsRef.current = accounts;
+  const invalidateAccountScope = useCallback((nextId: string | null, clearRows: boolean): void => {
+    const previous = accountScopeRef.current;
+    const scope = { iidxId: nextId, epoch: previous.epoch + 1 };
+    accountScopeRef.current = scope;
+    viewerReadSeqRef.current += 1;
+    setFloorState({ scope, starFloor: null, rStarFloor: null });
+    setUserPublic({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
+    setUserPublicScope(null);
+    osrAccumRef.current.clear();
+    osrAccumScopeRef.current = scope;
+    const nextRows = clearRows || previous.iidxId !== nextId ? [] : rowsRef.current;
+    rowsRef.current = nextRows;
+    setRowsState({ rows: nextRows, scope });
+    if (clearRows) {
+      tsvMtimeRef.current = 0;
+      setTsvMtime(0);
+    }
+  }, []);
+  const commitAccountRows = useCallback((expectedScope: AccountScope, readSeq: number, expectedSession: { pid: number | null; generation: number }, nextRows: SongRow[], mtime: number): boolean => {
+    if (!isFloorSeedCurrent(expectedScope, accountScopeRef.current)
+      || viewerReadSeqRef.current !== readSeq
+      || selectedViewerIdRef.current !== expectedScope.iidxId
+      || sessionRef.current.pid !== expectedSession.pid
+      || sessionRef.current.generation !== expectedSession.generation) return false;
+    rowsRef.current = nextRows;
+    setRowsState({ rows: nextRows, scope: expectedScope });
+    tsvMtimeRef.current = mtime;
+    setTsvMtime(mtime);
+    return true;
+  }, []);
   const loadViewerAccount = useCallback(async (id: string): Promise<void> => {
     if (!id || !VALID_IIDX_ID.test(id)) return;
+    if (selectedViewerIdRef.current !== id) invalidateAccountScope(id, true);
+    selectedViewerIdRef.current = id;
     setSelectedViewerId(id);
     const viewer = window.infohsorry;
     void viewer.account.setLastSelected(id);
-    const t = await viewer.account.readTsv(id);
+    const scope = { ...accountScopeRef.current };
+    const readSeq = ++viewerReadSeqRef.current;
+    const expectedSession = { pid: sessionRef.current.pid, generation: sessionRef.current.generation };
+    let t;
+    try {
+      t = await viewer.account.readTsv(id);
+    } catch (err) {
+      if (commitAccountRows(scope, readSeq, expectedSession, [], 0)) console.warn('[viewer] account.readTsv rejected:', err);
+      return;
+    }
     if (t.ok) {
-      setRows(t.rows ?? []);
-      setTsvMtime(t.mtime ?? 0);
+      commitAccountRows(scope, readSeq, expectedSession, t.rows ?? [], t.mtime ?? 0);
     } else {
-      setRows([]);
-      setTsvMtime(0);
+      if (!commitAccountRows(scope, readSeq, expectedSession, [], 0)) return;
       console.warn('[viewer] account.readTsv failed:', t.error);
       addDiagLine(`저장된 기록(${id}) 읽기 실패: ${t.error ?? '알 수 없는 오류'}`);
     }
-  }, []);
+  }, [commitAccountRows, invalidateAccountScope]);
   const [tab, setTab] = useState<Tab>('playdata');
   // 추천곡 클릭 → DP 탭 + 해당 row 로 스크롤 타깃
   const [scrollTarget, setScrollTarget] = useState<{ title: string; slot: string; gameLevel?: number | null } | null>(null);
@@ -369,9 +420,6 @@ export default function App() {
 
   // 디스크에서 마지막으로 읽은 tracker.tsv 의 mtime — 같은 mtime 으로 중복 reload 방지
   const lastLoadedMtime = useRef<number>(0);
-  const [tsvMtime, setTsvMtime] = useState<number>(0);
-  const tsvMtimeRef = useRef<number>(0);
-  tsvMtimeRef.current = tsvMtime;
   const [lastUploadAt, setLastUploadAt] = useState(0);
   const lastUploadAtRef = useRef(0);
   const [manualUploadBusy, setManualUploadBusy] = useState(false);
@@ -474,8 +522,11 @@ export default function App() {
       }
       void viewer.account.list().then(setAccounts);
       if (selectedViewerIdRef.current === res.iidxId) {
+        const scope = { ...accountScopeRef.current };
+        const readSeq = ++viewerReadSeqRef.current;
+        const expectedSession = { pid: sessionRef.current.pid, generation: sessionRef.current.generation };
         const t = await viewer.account.readTsv(res.iidxId);
-        if (t.ok) { setRows(t.rows ?? []); setTsvMtime(t.mtime ?? 0); }
+        if (t.ok) commitAccountRows(scope, readSeq, expectedSession, t.rows ?? [], t.mtime ?? 0);
       }
       return { ok: true, iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
     } catch (err) {
@@ -484,7 +535,7 @@ export default function App() {
       if (source === 'tsv-changed') addDiagLine(`스냅샷 처리 중 오류: ${error}`);
       return { ok: false, reason: 'exception', error };
     }
-  }, []);
+  }, [commitAccountRows]);
   useEffect(() => {
     const offReflux = window.infohsorry.reflux.onState(setRefluxState);
     const viewer = window.infohsorry;
@@ -1022,8 +1073,11 @@ export default function App() {
   //   Reflux 덤프가 일부 채보 unlock/lamp 를 순간 0 으로 읽어 별값(전체곡 50% native)이 5.49~5.6 으로 흔들리던 wobble 제거.
   //   key=title|diff, 값=세션 최대 lampNum. DB make_grid_data 도 lamp_best(채보별 최대 lamp) 라 산식 일치 → 같은 값(5.6)으로 수렴.
   //   ⚠ 유저(iidx_id) 전환/세션 리셋 시 반드시 clear(아래 doReset) — 안 그러면 이전 유저 클리어가 섞여 별값 오염.
-  const osrAccumRef = useRef<Map<string, { title: string; diff: string; lampNum: number }>>(new Map());
   const osrChartsInput = useMemo(() => {
+    if (!isFloorSeedCurrent(rowsState.scope, osrAccumScopeRef.current)) {
+      osrAccumRef.current.clear();
+      osrAccumScopeRef.current = { ...rowsState.scope };
+    }
     // 현재 rows 의 클리어를 누적 맵에 merge(max). 순간 누락은 무시되고 새 클리어/상위 lamp 만 반영 → 아래로 안 흔들림.
     for (const r of rows) {
       for (const slot of DP_SLOTS) {
@@ -1038,7 +1092,7 @@ export default function App() {
       }
     }
     return Array.from(osrAccumRef.current.values());
-  }, [rows]);
+  }, [rows, rowsState.scope.iidxId, rowsState.scope.epoch]);
 
   // ── 별값(★) — v3.4.0 onlyOSRtoEreter.inferEreter (본체 calcOhsorryCore 와 동일) ──
   //   onlyOSRtoEreter 는 window.onlyOSR + window.OSR135 + window.OhsorryNorm 셋을 선행 요구
@@ -1102,8 +1156,6 @@ export default function App() {
   //   모델(onlyOSRtoEreter)은 미플레이 곡을 새로 클리어하는 경우를 원리적으로 못 막는다 — 클리어율의
   //   분모가 "친 곡 수"라 신규곡이 들어오면 분모도 같이 늘기 때문. 그래서 표시단에서 덮는다.
   //   계수/난이도축 재배포 후 재기준화는 래칫을 안 타는 backfillStars.js --apply 로 한다.
-  const [starFloor, setStarFloor] = useState<number | null>(null);
-  const [rStarFloor, setRStarFloor] = useState<number | null>(null);
 
   // 표시 별값(ereterStar) + 추천 native base(ohsorryStar) 를 inferEreter 한 번에 산출.
   const dp12StarResult = useMemo<StarResult | null>(() => {
@@ -1122,13 +1174,16 @@ export default function App() {
       console.warn('[★] inferEreter 실패:', (e as Error).message);
       return null;
     }
-  }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor]);
+  }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
 
   // 세션 래칫 — 계산값이 하한보다 높으면 하한을 끌어올린다(단조 증가라 루프는 한 번에 수렴).
   useEffect(() => {
     const s = dp12StarResult?.star;
-    if (typeof s === 'number') setStarFloor((f) => (f == null || s > f ? s : f));
-  }, [dp12StarResult]);
+    const scope = rowsState.scope;
+    if (typeof s !== 'number' || !Number.isFinite(s) || !isFloorSeedCurrent(scope, accountScopeRef.current)) return;
+    setFloorState((f) => !isFloorSeedCurrent(scope, accountScopeRef.current) || !isFloorSeedCurrent(scope, f.scope)
+      ? f : f.starFloor == null || s > f.starFloor ? { ...f, starFloor: s } : f);
+  }, [dp12StarResult, rowsState.scope]);
 
   // 사용자 r★ — 크롤러와 동일한 userRateStar.inferUserRStar 커널에 INF DP EX SCORE/노트수를 전달한다.
   // 계산 실패·표본부족이면 null로 두어 업로드 RPC의 COALESCE가 기존 users.r_star를 보존한다.
@@ -1157,11 +1212,14 @@ export default function App() {
       console.warn('[r★] inferUserRStar 실패 — 기존 users.r_star 보존:', (e as Error).message);
       return null;
     }
-  }, [userRateStarLib, ratingData, dpAllCharts, rStarFloor]);
+  }, [userRateStarLib, ratingData, dpAllCharts, rStarFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
 
   useEffect(() => {
-    if (typeof userRStar === 'number') setRStarFloor((f) => (f == null || userRStar > f ? userRStar : f));
-  }, [userRStar]);
+    const scope = rowsState.scope;
+    if (typeof userRStar !== 'number' || !Number.isFinite(userRStar) || !isFloorSeedCurrent(scope, accountScopeRef.current)) return;
+    setFloorState((f) => !isFloorSeedCurrent(scope, accountScopeRef.current) || !isFloorSeedCurrent(scope, f.scope)
+      ? f : f.rStarFloor == null || userRStar > f.rStarFloor ? { ...f, rStarFloor: userRStar } : f);
+  }, [userRStar, rowsState.scope]);
 
   // 추천 baseStar = 표시 별값(ereterStar) 그대로 사용.
   // SP 대표 실력값(発狂★相当) — sp12 클리어 × cpi.json.
@@ -1192,17 +1250,16 @@ export default function App() {
   const liveIidxId = session.pid != null && profile.iidxId && VALID_IIDX_ID.test(profile.iidxId) ? profile.iidxId : null;
   const clearLiveSessionState = useCallback(() => {
     lastSnapshotRef.current = null;
-    osrAccumRef.current.clear();
-    setRStarFloor(null);
+    invalidateAccountScope(selectedViewerIdRef.current, false);
     initialUploadDoneRef.current = false;
     if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
     if (schedTimersRef.current.interval != null) window.clearInterval(schedTimersRef.current.interval);
     schedTimersRef.current = { initial: null, interval: null };
-  }, []);
+  }, [invalidateAccountScope]);
   const prevSessionRef = useRef<InfinitasSessionState | null>(null);
   useEffect(() => {
     const prev = prevSessionRef.current;
-    if (prev && ((session.pid != null && (prev.pid == null || prev.generation !== session.generation)) || (session.pid == null && prev.pid != null))) {
+    if (prev && (prev.pid !== session.pid || prev.generation !== session.generation)) {
       clearLiveSessionState();
       void window.infohsorry.account.list().then(setAccounts);
     }
@@ -1264,42 +1321,58 @@ export default function App() {
     return stopRetryTimer;
   }, [captureSnapshot, session.pid, session.generation, rows.length]);
   useEffect(() => {
-    if (liveIidxId && selectedViewerIdRef.current !== liveIidxId) void loadViewerAccount(liveIidxId);
-  }, [liveIidxId, loadViewerAccount]);
-
-  const [userPublic, setUserPublic] = useState<UserPublicInfo>({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
-  useEffect(() => {
-    if (!profile.iidxId || !/^[A-Z]\d{12}$/.test(profile.iidxId)) {
+    if (!rowsOwnerId || rows.length === 0 || selectedViewerId !== rowsOwnerId) {
       setUserPublic({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
+      setUserPublicScope(null);
       return;
     }
     let cancelled = false;
-    fetchUserPublic(profile.iidxId).then((r) => {
-      if (cancelled) return;
+    const request = { ...rowsState.scope };
+    if (!isFloorSeedCurrent(request, accountScopeRef.current)) return;
+    fetchUserPublic(rowsOwnerId).then((r) => {
+      if (cancelled || !isFloorSeedCurrent(request, accountScopeRef.current)) return;
       setUserPublic(r);
+      setUserPublicScope(request);
       // 저장된 별값을 래칫 하한으로 채택 (다른 세션/본체 크롤로 올라간 값 반영).
-      if (typeof r.star === 'number') setStarFloor((f) => (f == null || r.star! > f ? r.star! : f));
-      if (typeof r.rStar === 'number') setRStarFloor((f) => (f == null || r.rStar! > f ? r.rStar! : f));
+      setFloorState((f) => {
+        if (cancelled || !isFloorSeedCurrent(request, accountScopeRef.current) || !isFloorSeedCurrent(request, f.scope)) return f;
+        const star = r.star;
+        const rStar = r.rStar;
+        return {
+          ...f,
+          starFloor: typeof star === 'number' && Number.isFinite(star) && (f.starFloor == null || star > f.starFloor) ? star : f.starFloor,
+          rStarFloor: typeof rStar === 'number' && Number.isFinite(rStar) && (f.rStarFloor == null || rStar > f.rStarFloor) ? rStar : f.rStarFloor,
+        };
+      });
+    }).catch((err) => {
+      if (cancelled || !isFloorSeedCurrent(request, accountScopeRef.current)) return;
+      setUserPublic({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
+      setUserPublicScope(null);
+      console.warn('[viewer] fetchUserPublic failed:', err);
     });
     return () => { cancelled = true; };
-  }, [profile.iidxId]);
+  }, [rowsOwnerId, rowsState.scope.epoch, rows.length > 0, selectedViewerId]);
+  const currentUserPublic = userPublicScope && selectedViewerId === rowsOwnerId
+    && isFloorSeedCurrent(userPublicScope, rowsState.scope)
+    && isFloorSeedCurrent(userPublicScope, accountScopeRef.current)
+    ? userPublic : { dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null };
 
   // ProfileCard 에 넘길 레이더 / 단위 — 게임 메모리 값이 있으면 그걸 쓰고, 없을 때만 supabase 저장값.
   //   메모리 = 지금 이 계정의 실시간 값 (SP/DP 둘 다), supabase = eagate 배치 스냅샷 (DP 만).
   const memoryRadar = profile.spRadar || profile.dpRadar;
   const cardRadar = memoryRadar
     ? { source: 'memory' as const, sp: profile.spRadar, dp: profile.dpRadar }
-    : { source: 'eagate' as const, sp: null, dp: userPublic.dpRadar };
-  const cardSpRank = profile.spRankInt ?? userPublic.spRank;
-  const cardDpRank = profile.dpRankInt ?? userPublic.dpRank;
+    : { source: 'eagate' as const, sp: null, dp: currentUserPublic.dpRadar };
+  const cardSpRank = profile.spRankInt ?? currentUserPublic.spRank;
+  const cardDpRank = profile.dpRankInt ?? currentUserPublic.dpRank;
 
   // 실력값 추정 + Supabase 업로드 — tryUpload 정의 + 노출(스케줄러/콘솔/종료요청). 주기 자체는 아래 스케줄 effect.
   // tsv 재읽기는 위 실시간 reload effect(refluxState.lastTsvMtime 감지)가 담당 →
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts });
-  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts };
+  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope });
+  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope };
 
   function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
     const p = uploadStateRef.current.profile;
@@ -1340,6 +1413,10 @@ export default function App() {
       return null;
     }
     const state = uploadStateRef.current;
+    if (state.scope.iidxId !== id || !isFloorSeedCurrent(state.scope, accountScopeRef.current)) {
+      console.log('[upload] skip reason=stale-calculation-scope');
+      return null;
+    }
     const snapshot: UploadSnapshot = {
       v: SNAPSHOT_VERSION,
       capturedAt: Date.now(),
@@ -1427,10 +1504,9 @@ export default function App() {
       const snapshot = buildSnapshot('id-switch', previousProfile);
       if (snapshot) void uploadSnapshot(snapshot, 'id-switch');
 
-      setRows([]);
-      setTsvMtime(0);
       lastLoadedMtime.current = 0;
       clearLiveSessionState();
+      invalidateAccountScope(currentId, true);
       snapshotBlockUntilRef.current = Date.now() + ID_SWITCH_SNAPSHOT_BLOCK_MS;
       lastSnapshotFreshFailureRef.current = null;
       try {
@@ -1444,7 +1520,10 @@ export default function App() {
       snapshotBlockUntilRef.current = Date.now() + ID_SWITCH_SNAPSHOT_BLOCK_MS;
       addDiagLine(`계정 전환 감지 (${previousId} → ${currentId}) — 기록 초기화 + Reflux 재시작`);
     })();
-  }, [buildSnapshot, clearLiveSessionState, profile, refluxState.stage, uploadSnapshot]);
+  }, [buildSnapshot, clearLiveSessionState, invalidateAccountScope, profile, refluxState.stage, uploadSnapshot]);
+  useEffect(() => {
+    if (liveIidxId && selectedViewerIdRef.current !== liveIidxId) void loadViewerAccount(liveIidxId);
+  }, [liveIidxId, loadViewerAccount]);
 
   // pending은 자기 identity를 갖고 있으므로 현재 게임/프로필과 무관하게 앱 준비 후 한 번 순차 재전송한다.
   useEffect(() => {
