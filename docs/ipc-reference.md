@@ -11,8 +11,9 @@
 - **renderer 등록**: 부팅 시 모든 채널을 `ipcMain.handle(channel, (_evt, ...args) => fn(...args))`(`src/main/index.ts:499-501`). 단, `portable:download`/`portable:run` 은 `event.sender` 필요로 별도 등록(`src/main/index.ts:504-509`).
 - **preload 노출**: `src/preload/index.ts` 가 `contextBridge.exposeInMainWorld('infohsorry', api)`(`src/preload/index.ts:207`). 각 API 는 `ipcRenderer.invoke(channel, ...args)` 한 줄.
 - **LAN bridge**: `POST /api/ipc {channel, args}` 가 같은 `ipcHandlers` 호출(`src/main/http-server.ts:104-116`). 브라우저 polyfill(`src/renderer/src/api.ts:134-242`)이 `window.infohsorry` 를 동일 형태로 재구성.
-- **main→renderer push 채널**(invoke 아님, `webContents.send`): `reflux:state`, `window:maximized`, `portable:progress`, `upload:final-request`(종료 시 마지막 업로드 요청). SSE `/api/events` 가 `reflux:state`·`me:update` 를 PC2 에 전달.
-- **renderer→main send 채널**(`ipcRenderer.send`, invoke 아님): `upload:final-done`(마지막 업로드 ack). main 이 `ipcMain.once` 로 수신.
+- **main→renderer push 채널**(invoke 아님, `webContents.send`): `reflux:state`, `reflux:tsvChanged`, `session:state`, `window:maximized`, `portable:progress`, `upload:final-request`, `recommend:request`(추천 요청). SSE `/api/events` 가 `reflux:state`·`me:update` 를 PC2 에 전달.
+- **renderer→main send 채널**(`ipcRenderer.send`, invoke 아님): `upload:final-done`(마지막 업로드 결과 ack), `recommend:response`(추천 응답), `diag:append`(진단 로그).
+- **추가 invoke 채널**: `session:getState`; `account:list`/`account:readTsv`/`account:snapshot`/`account:lastSelected:get`/`account:lastSelected:set`; `upload:savePending`/`upload:loadPending`/`upload:clearPending`; `reflux:restart`; `diag:logPath`.
 
 > 채널 응답 컨벤션: 대부분 `{ ok: boolean, ... }` 또는 `{ ok: false, error }`. 일부(상태 조회/단순 값)는 raw 값 반환.
 
@@ -67,7 +68,7 @@
 | `rating:get` / `rating:status` | `getRatingData`/`getRatingCacheStatus`(ohSorryRating.json) | `rating.get(force?)` / `rating.status()` |
 | `sptier:get` / `sptier:status` | `getSpTierData`/`getSpTierCacheStatus`(SP ☆12 서열표) | `spTier.get(force?)` / `spTier.status()` |
 | `serviceStatus:get` | `fetchServiceStatus()` — fresh fetch, fail-closed. `ServiceStatus`(uploadEnabled/shelfEnabled/notInINF) | `serviceStatus.get()` |
-| `offsets:getProfile` | `getRemoteProfileOffsets()` — gist offsets.json 의 profile 부분(or null) | `offsets.getProfile()` |
+| `offsets:getProfile` | `getRemoteProfileOffsets()` → `{ profile: RemoteProfileMap \| null, buildVersion: string \| null, confidence: BuildConfidence \| null }` 또는 `null`(빌드 확인 실패) | `offsets.getProfile()` |
 
 정의: `src/main/index.ts:81-137`, `offsets:getProfile` `105-106`. preload `src/preload/index.ts:51-87`.
 
@@ -78,7 +79,7 @@
 | 채널 | 핸들러 역할 | preload API |
 |------|-------------|-------------|
 | `tsv:read` | `readTsv(path)` → `{ok, rows: SongRow[], headerColCount, mtime}` | `readTsv(path)` |
-| `tsv:clear` | `fs.truncate(path, 0)` — 내용만 비움(파일 유지). IIDX ID 전환 가드. ENOENT 는 정상 취급. `{ok, cleared}` | `clearTsv(path)` |
+| `tsv:clear` | `fs.truncate(path, 0)` — 지정 경로의 내용만 비움(파일 유지). 파일이 없으면 `{ok: true, cleared: false}`, 성공 시 `{ok: true, cleared: true}`. IIDX ID 전환 처리는 renderer 에서 기록 초기화 후 `reflux:restart` 를 호출하고, 재기동 완료 뒤 스냅샷을 20초간 차단함 | `clearTsv(path)` |
 
 정의: `src/main/index.ts:140-173`. preload `src/preload/index.ts:21-25`. 파싱 상세 [memory-reading.md](memory-reading.md) 2절, 가드 [data-flow.md](data-flow.md) 4절.
 
@@ -126,7 +127,7 @@
 | `remote:setUser` | invoke | renderer 가 계산한 오소리웹 user 객체(별값+charts_json)를 `remoteUser` 에 저장 + `notifyMeUpdate()`(SSE `me:update`). `GET /api/me` 가 노출. `{ok}` | `remote.setUser(user)` |
 | `server:info` | invoke | `serverConnectInfo()`(=http-server `connectInfo()`) → `ConnectInfo` 또는 null(http-server 미시작=dev). | `server.info()` |
 | `upload:final-request` | push (main→renderer) | 앱 창 close / before-quit / INFINITAS 종료 감지 시 main 이 "마지막 업로드 1회" 요청 | `upload.onFinalRequest(cb)` |
-| `upload:final-done` | send (renderer→main) | renderer 가 마지막 업로드 완료 후 ack. main `requestFinalUpload` 가 `ipcMain.once` 로 수신(또는 6초 timeout) | `upload.finalDone()` |
+| `upload:final-done` | send (renderer→main) | renderer 가 마지막 업로드를 마치면 필수 `UploadOutcome` 을 전달. main `requestFinalUpload` 가 `ipcMain.on` 으로 수신하며 기본 대기 제한은 30초 | `upload.finalDone(outcome)` |
 
 `ConnectInfo`(`src/main/http-server.ts:29-37`): `{ ip: string|null, port: number(=3000), port80: boolean, localName: string(=ohsorry.local), url: string|null(IP 기반 권장), nameUrl: string(이름 기반), qr: string|null(url 의 QR data URL — main qrcode 생성) }`.
 
