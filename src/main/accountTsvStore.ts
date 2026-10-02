@@ -3,7 +3,7 @@ import { promises as fsp } from 'fs';
 import { join } from 'path';
 import { readTsv } from './tsv';
 import { findProcessId } from './memory';
-import type { AccountMeta, AccountSnapshotRequest, AccountSnapshotResult } from '../shared/account';
+import { mergeAccountMeta, type AccountMeta, type AccountSnapshotRequest, type AccountSnapshotResult } from '../shared/account';
 import type { InfinitasSessionState } from '../shared/session';
 import type { TsvReadResult } from '../shared/types';
 
@@ -14,10 +14,11 @@ function usersRoot(): string { return join(app.getPath('userData'), 'users'); }
 function accountDir(iidxId: string): string { return join(usersRoot(), iidxId); }
 function viewerStatePath(): string { return join(app.getPath('userData'), 'viewer-state.json'); }
 
-async function writeMeta(iidxId: string, djName: string | null): Promise<void> {
+async function writeMeta(iidxId: string, profile: AccountSnapshotRequest['profile']): Promise<void> {
   let prev: Partial<AccountMeta> = {};
   try { prev = JSON.parse(await fsp.readFile(join(accountDir(iidxId), 'meta.json'), 'utf8')) as Partial<AccountMeta>; } catch { /* 신규/손상 메타 */ }
-  await fsp.writeFile(join(accountDir(iidxId), 'meta.json'), JSON.stringify({ iidxId, djName: djName ?? prev.djName ?? null, lastUpdatedAt: Date.now() }), 'utf8');
+  const next = mergeAccountMeta(iidxId, prev, profile, Date.now());
+  await fsp.writeFile(join(accountDir(iidxId), 'meta.json'), JSON.stringify(next), 'utf8');
 }
 
 export async function snapshotTsv(req: AccountSnapshotRequest, deps: { sourceTsvPath: string; getSession: () => InfinitasSessionState }): Promise<AccountSnapshotResult> {
@@ -64,7 +65,7 @@ export async function snapshotTsv(req: AccountSnapshotRequest, deps: { sourceTsv
         console.warn('[account:snapshot] 행 수 검사 실패:', e);
       }
     }
-    await fsp.rename(tmp, finalPath); await writeMeta(req.iidxId, req.djName);
+    await fsp.rename(tmp, finalPath); await writeMeta(req.iidxId, req.profile);
     return { ok: true, iidxId: req.iidxId, tsvMtime: st.mtimeMs, generation: s.generation };
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: false, reason: 'source-empty' };
@@ -78,7 +79,7 @@ export async function listAccounts(): Promise<AccountMeta[]> {
   const out: AccountMeta[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !IIDX_RE.test(entry.name)) continue;
-    try { const meta = JSON.parse(await fsp.readFile(join(accountDir(entry.name), 'meta.json'), 'utf8')) as Partial<AccountMeta>; await fsp.stat(join(accountDir(entry.name), 'tracker.tsv')); if (meta.iidxId !== entry.name) continue; out.push({ iidxId: entry.name, djName: meta.djName ?? null, lastUpdatedAt: meta.lastUpdatedAt ?? 0 }); } catch { /* 유효하지 않은 계정은 제외 */ }
+    try { const meta = JSON.parse(await fsp.readFile(join(accountDir(entry.name), 'meta.json'), 'utf8')) as Partial<AccountMeta>; await fsp.stat(join(accountDir(entry.name), 'tracker.tsv')); if (meta.iidxId !== entry.name) continue; out.push({ iidxId: entry.name, djName: meta.djName ?? null, lastUpdatedAt: meta.lastUpdatedAt ?? 0, spRank: meta.spRank, dpRank: meta.dpRank, spRankInt: meta.spRankInt, dpRankInt: meta.dpRankInt, spRadar: meta.spRadar, dpRadar: meta.dpRadar, profileCapturedAt: meta.profileCapturedAt }); } catch { /* 유효하지 않은 계정은 제외 */ }
   }
   return out.sort((a, b) => b.lastUpdatedAt - a.lastUpdatedAt);
 }
