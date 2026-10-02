@@ -185,6 +185,7 @@ function uploadReasonLabel(reason: string | undefined): string {
     case 'no-selected-account': return '선택한 계정 없음';
     case 'no-account-meta': return '선택한 계정 정보 없음';
     case 'snapshot-empty': return '선택한 계정에 기록 없음';
+    case 'rows-owner-mismatch': return '표시 중인 기록이 선택한 계정 것이 아님(로딩 중)';
     case 'no-snapshot-provenance': return '계정 스냅샷이 아직 없음(기록 인식 대기 중)';
     case 'bad-provenance-id': return '스냅샷 ID 형식 이상';
     case 'generation-advanced': return '게임 세션이 바뀜(재시작 감지)';
@@ -1394,12 +1395,50 @@ export default function App() {
 
   // ProfileCard 에 넘길 레이더 / 단위 — 게임 메모리 값이 있으면 그걸 쓰고, 없을 때만 supabase 저장값.
   //   메모리 = 지금 이 계정의 실시간 값 (SP/DP 둘 다), supabase = eagate 배치 스냅샷 (DP 만).
-  const memoryRadar = profile.spRadar || profile.dpRadar;
-  const cardRadar = memoryRadar
-    ? { source: 'memory' as const, sp: profile.spRadar, dp: profile.dpRadar }
-    : { source: 'eagate' as const, sp: null, dp: currentUserPublic.dpRadar };
-  const cardSpRank = profile.spRankInt ?? currentUserPublic.spRank;
-  const cardDpRank = profile.dpRankInt ?? currentUserPublic.dpRank;
+  // 선택 계정 TSV를 기본으로 표시하고, 같은 ID의 live 값만 null이 아닌 항목별로 우선한다.
+  const cardId = selectedViewerId;
+  const cardMeta = cardId ? accounts.find((entry) => entry.iidxId === cardId) ?? null : null;
+  const sameLive = cardId != null && session.pid != null && profile.iidxId === cardId;
+  const cardBase = cardId ? resolveAccountSnapshotProfile(cardId, cardMeta, sameLive ? profile : null) : null;
+  const formattedCardId = cardId ? `${cardId[0]}-${cardId.slice(1, 5)}-${cardId.slice(5, 9)}-${cardId.slice(9)}` : null;
+  const emptyCardProfile: ProfileInfo = {
+    djName: cardMeta?.djName ?? null, iidxId: cardId, iidxIdFormatted: formattedCardId,
+    spRank: cardMeta?.spRank ?? null, dpRank: cardMeta?.dpRank ?? null,
+    spRankInt: cardMeta?.spRankInt ?? null, dpRankInt: cardMeta?.dpRankInt ?? null,
+    spRadar: cardMeta?.spRadar ?? null, dpRadar: cardMeta?.dpRadar ?? null,
+  };
+  const cardProfile: ProfileInfo = cardId ? {
+    ...emptyCardProfile,
+    ...(cardBase ?? {}),
+    ...(sameLive ? {
+      djName: profile.djName ?? cardBase?.djName ?? emptyCardProfile.djName,
+      spRank: profile.spRank ?? cardBase?.spRank ?? null,
+      dpRank: profile.dpRank ?? cardBase?.dpRank ?? null,
+      spRankInt: profile.spRankInt ?? cardBase?.spRankInt ?? null,
+      dpRankInt: profile.dpRankInt ?? cardBase?.dpRankInt ?? null,
+      spRadar: profile.spRadar ?? cardBase?.spRadar ?? null,
+      dpRadar: profile.dpRadar ?? cardBase?.dpRadar ?? null,
+    } : {}),
+    iidxId: cardId, iidxIdFormatted: formattedCardId,
+  } : emptyCardProfile;
+  const publicFallbackAllowed = Boolean(cardId && userPublicScope
+    && userPublicScope.iidxId === accountScopeRef.current.iidxId
+    && userPublicScope.epoch === accountScopeRef.current.epoch
+    && rowsOwnerId === cardId);
+  const legacyPublicFallback = publicFallbackAllowed && !(typeof cardMeta?.profileCapturedAt === 'number' && Number.isFinite(cardMeta.profileCapturedAt));
+  const cardRankPublic = legacyPublicFallback ? currentUserPublic : { spRank: null, dpRank: null, dpRadar: null };
+  const cardSpRank = cardProfile.spRankInt ?? cardRankPublic.spRank;
+  const cardDpRank = cardProfile.dpRankInt ?? cardRankPublic.dpRank;
+  const liveCardRadar = sameLive && Boolean(profile.spRadar || profile.dpRadar);
+  const snapshotCardRadar = Boolean(cardMeta?.profileCapturedAt != null && (cardMeta.spRadar || cardMeta.dpRadar));
+  const legacyPublicRadar = legacyPublicFallback ? currentUserPublic.dpRadar : null;
+  const cardRadar = liveCardRadar
+    ? { source: 'memory' as const, sp: cardProfile.spRadar, dp: cardProfile.dpRadar }
+    : snapshotCardRadar
+      ? { source: 'snapshot' as const, sp: cardProfile.spRadar, dp: cardProfile.dpRadar }
+      : legacyPublicRadar
+        ? { source: 'eagate' as const, sp: null, dp: legacyPublicRadar }
+        : { source: 'snapshot' as const, sp: null, dp: null };
 
   // 실력값 추정 + Supabase 업로드 — tryUpload 정의 + 노출(스케줄러/콘솔/종료요청). 주기 자체는 아래 스케줄 effect.
   // tsv 재읽기는 위 실시간 reload effect(refluxState.lastTsvMtime 감지)가 담당 →
@@ -2307,11 +2346,11 @@ export default function App() {
             />
           )}
           <ProfileCard
-            profile={profile}
-            starResult={dp12StarResult}
-            osrStar={dp12StarResult?.nativeStar ?? null}
-            spStar={spStarResult?.star ?? null}
-            spCpi={spStarResult?.cpiInt ?? null}
+            profile={cardProfile}
+            starResult={cardId != null && cardId === rowsOwnerId ? dp12StarResult : null}
+            osrStar={cardId != null && cardId === rowsOwnerId ? dp12StarResult?.nativeStar ?? null : null}
+            spStar={cardId != null && cardId === rowsOwnerId ? spStarResult?.star ?? null : null}
+            spCpi={cardId != null && cardId === rowsOwnerId ? spStarResult?.cpiInt ?? null : null}
             spRadar={cardRadar.sp}
             dpRadar={cardRadar.dp}
             radarSource={cardRadar.source}

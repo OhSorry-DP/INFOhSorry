@@ -18,12 +18,12 @@ interface ProfileCardProps {
   spStar?: number | null;
   // SP 실력선 CPI 정수(sp_cpi) — SP ★ 아래 보조 표기. null 이면 미표시.
   spCpi?: number | null;
-  // 노트레이더 6지표. INFINITAS 메모리 우선, 없으면 supabase user_radars (DP만) fallback — App 이 골라 넘긴다.
+  // 노트레이더 6지표. 선택 계정의 TSV 메타가 기본이며, 같은 계정의 live 값과 구형 메타의 공개 DP 값은 App 에서 선택한다.
   //   null 이면 그 스타일의 레이더 영역만 숨김.
   spRadar?: DpRadarRow | null;
   dpRadar?: DpRadarRow | null;
-  // 레이더 출처 — 툴팁 표기용 ('memory' = 게임 메모리 실시간, 'eagate' = supabase 저장값).
-  radarSource?: 'memory' | 'eagate';
+  // 레이더 출처 — 툴팁 표기용 (live 메모리, 구형 메타의 공개값, 또는 계정 TSV 스냅샷).
+  radarSource?: 'memory' | 'eagate' | 'snapshot';
   // supabase users.sp_rank / dp_rank (int). null 이면 해당 단위 표시 숨김.
   // int 매핑 — setup_users.sql: 12=皆伝 / 11=中伝 / 10~1=十段~初段 / 0=一級 / -8~-1=九級~二級.
   spRank?: number | null;
@@ -58,8 +58,10 @@ function rankIntToKanji(rankInt: number | null | undefined): string | null {
 const KANJI_NUM: Record<string, number> = {
   一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9, 十: 10,
 };
-function radarSourceLabel(src: 'memory' | 'eagate'): string {
-  return src === 'memory' ? 'INFINITAS 메모리' : 'eagate djdata 기반';
+function radarSourceLabel(src: 'memory' | 'eagate' | 'snapshot'): string {
+  if (src === 'memory') return 'INFINITAS 메모리';
+  if (src === 'snapshot') return '계정 TSV 스냅샷';
+  return 'eagate djdata 기반';
 }
 
 function rankClass(rank: string | null): string {
@@ -106,8 +108,8 @@ export function ProfileCard({
     onStarClick();
     window.setTimeout(() => setStarCooling(false), STAR_CLICK_COOLDOWN_MS);
   };
-  const spRankStr = rankIntToKanji(spRank);
-  const dpRankStr = rankIntToKanji(dpRank);
+  const spRankStr = rankIntToKanji(spRank) ?? profile.spRank;
+  const dpRankStr = rankIntToKanji(dpRank) ?? profile.dpRank;
   // ★ 컬럼 클릭 시 재계산(tsv 재로드). SP/DP 컬럼 공통.
   const starInteractive: { onClick?: () => void; title?: string; style?: CSSProperties } = onStarClick
     ? {
