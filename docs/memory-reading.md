@@ -5,7 +5,7 @@
 
 메모리 데이터는 두 경로로 들어옵니다:
 
-1. **곡/점수 데이터** — INF오소리가 직접 메모리를 읽지 않습니다. 서드파티 **Reflux**(olji/Reflux)를 자식 프로세스로 띄워 `tracker.tsv` 를 dump 시키고, 그 TSV 를 파싱합니다.
+1. **곡/점수 데이터** — 서드파티 **Reflux**의 [OhSorry-DP fork](https://github.com/OhSorry-DP/Reflux)(원본 olji/Reflux)를 자식 프로세스로 띄워 `tracker.tsv`를 dump시키고, 검증된 계정 스냅샷 TSV를 파싱합니다.
 2. **프로필(DJ NAME / IIDX ID / SP·DP 단위)** — INF오소리가 koffi 로 직접 `bm2dx.exe` 메모리를 읽습니다(`memory.ts` + `useProfile`).
 
 ---
@@ -21,7 +21,7 @@
 
 ### `startAll()` 흐름 (`src/main/reflux.ts:293-317`)
 
-1. `Reflux.exe` 없으면 `install()` — GitHub `olji/Reflux` 최신 릴리즈에서 `reflux.exe` asset 다운로드(`src/main/reflux.ts:380-394`, API `src/main/reflux.ts:26`).
+1. `ensureInstalled()` — GitHub `OhSorry-DP/Reflux` 최신 릴리스 태그와 설치 태그를 비교해 설치·갱신합니다. 조회 실패 시 기존 exe가 있으면 그대로 사용하며, 교체 전 실행 중 Reflux를 종료합니다.
 2. `ensureConfig()` — `config.ini` 없으면 기본값 생성(`savelocal=true` 등, `src/main/reflux.ts:120-147`, `397-402`). 있으면 보존.
 3. `ensureOffsets()` — offsets.txt + 보조 파일 확보. **버전 비교로 자동 갱신**(아래 4절).
 4. offsets 가 갱신됐는데 Reflux 가 이미 떠 있으면 강제 재시작(새 offset 재로드, `src/main/reflux.ts:304-308`).
@@ -41,7 +41,7 @@ PowerShell `Start-Process -WindowStyle Hidden` 으로 띄웁니다(`src/main/ref
 
 - `tracker.tsv` — 파일 자체는 유지하고 내용만 `truncateSync(path, 0)` 으로 비움. Reflux 의 watch handle / 새 파일 생성 race 회피.
 - `tracker.db` / `sessions/` — `rmSync(recursive)` 로 제거.
-- 이 정리는 **process lifetime 의 첫 spawn 1회만**(`cleanedUp` 가드). 이후 재spawn(health check 자동 재시작, 사용자 stop→start)에서는 tsv 보존 — 앱 재시작 때마다 데이터가 비워지는 문제 방지.
+- `spawnReflux()`는 child가 없는 실제 spawn마다 기존 Reflux를 종료하고 `cleanupPreviousSession()`을 호출합니다. 작업 TSV 내용과 tracker.db/sessions를 정리하며, 계정별 정본(`users/{IIDX_ID}/tracker.tsv`, `meta.json`)은 별도로 보존합니다. 최초 spawn만 정리하는 가드는 현재 호출 경로에 없습니다.
 
 ### Health check (`src/main/reflux.ts:322-377`)
 
@@ -62,7 +62,7 @@ PowerShell `Start-Process -WindowStyle Hidden` 으로 띄웁니다(`src/main/ref
 
 ## 2. tracker.tsv 파싱 (`src/main/tsv.ts`)
 
-Reflux 의 TSV 를 곡별 `SongRow` 로 변환합니다. IPC `tsv:read` 가 호출(`src/main/index.ts:140-148`).
+Reflux TSV를 곡별 `SongRow`로 변환합니다. `tsv:read` IPC도 제공하지만 현재 앱의 주 읽기 흐름은 `account:snapshot`으로 검증·저장한 계정 정본을 `account:readTsv`로 읽는 경로입니다.
 
 ### 컬럼 구조 (`src/main/tsv.ts:1-7` 주석)
 
@@ -82,7 +82,7 @@ Reflux 의 TSV 를 곡별 `SongRow` 로 변환합니다. IPC `tsv:read` 가 호�
 
 ### tsv:clear (`src/main/index.ts:155-173`)
 
-IIDX ID 전환 시 옛 데이터가 새 ID 로 잘못 업로드되는 것을 막기 위해 `fs.truncate(path, 0)` 으로 내용만 비웁니다(파일은 유지 → Reflux watch handle 보존). 가드 로직 상세는 [data-flow.md](data-flow.md) 의 "IIDX ID 전환 가드".
+`tsv:clear` IPC는 지정 파일 내용을 truncate하는 기능으로 남아 있습니다. 현재 IIDX ID 전환은 이전 계정 업로드 스냅샷 캡처 후 `reflux.restart()`와 20초 스냅샷 안정화 가드로 처리하며 계정별 정본은 보존합니다. 상세는 [data-flow.md](data-flow.md)의 "IIDX ID·세션·계정 소유권 가드".
 
 ---
 
@@ -183,8 +183,8 @@ localStorage 키(`STORAGE_KEY`, `src/renderer/src/useProfile.ts:17-22`):
 
 `ProfileInfo` 반환: `djName` / `iidxId` / `iidxIdFormatted` / `spRank`·`dpRank`(표기 문자열) / `spRankInt`·`dpRankInt`(supabase 스케일 int) / `spRadar`·`dpRadar`(`RadarValues`, 실수값).
 
-> **supabase fallback 은 유지합니다.** `App.tsx` 가 메모리 값이 있으면 그걸 쓰고(`radarSource='memory'`), 없을 때만 Supabase `user_radars`/`users.sp_rank·dp_rank`(eagate djdata 기반, ohSorryAdmin/getInfRadar.js 가 채움)를 씁니다 — 게임 미실행/로그인 전이나 offset 이 패치로 깨졌을 때의 안전망. supabase 쪽은 **DP 레이더만** 있습니다(SP 레이더는 메모리에서만 나옵니다).
-> INF오소리 자체는 여전히 단위를 **업로드하지 않습니다**(`upsert_user` 에 `p_sp_rank:null`, `src/renderer/src/supabaseSync.ts:273-274`). 상세는 [data-flow.md](data-flow.md).
+> **프로필 출처**: 선택 계정 meta 세트를 기본으로, 같은 계정의 live non-null 값을 카드에 우선 표시합니다. Supabase DP 레이더·단위 fallback은 같은 rows/account epoch이고 프로필 세트가 없는 구 meta에서만 허용합니다.
+> INF오소리는 대상 계정 프로필 세트의 SP/DP 단위를 `upsert_user`의 `p_sp_rank`/`p_dp_rank`로 업로드하며, SP/DP 노트레이더도 스타일별로 업로드합니다. 상세는 [data-flow.md](data-flow.md).
 
 ---
 
@@ -206,13 +206,13 @@ URL: `gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw
 
 게임 패치로 깨진 메모리 offset 을 앱을 켜기만 해도(startAll) 자동 복구하는 핵심 로직입니다.
 
-후보 버전을 비교해 **가장 최신을 디스크에 덮어씁니다**:
+실행 게임 빌드가 gist의 build와 매칭되면 해당 빌드 값을 적용하며 다운그레이드도 허용합니다. 매칭하지 못했을 때만 아래 후보 버전의 최댓값을 비교합니다:
 1. **디스크** offsets.txt 의 버전(헤더 끝 10자리, `offsetsVersionNum` `src/main/reflux.ts:73-77`).
-2. **번들** `BUNDLED_OFFSETS`(코드에 박힌 최신값, `src/main/reflux.ts:62-72`, 현재 `2026060300`).
+2. **번들** `BUNDLED_OFFSETS`(코드 fallback, `BUNDLED_OFFSETS_VERSION = 2026080500`, `src/main/reflux.ts:88`).
 3. **우리 gist** `offsets.json` 의 reflux(`refluxObjToTxt` 로 텍스트 변환, `src/main/reflux.ts:79-87`).
 4. **olji/Reflux master** 의 `offsets.txt`(`src/main/reflux.ts:459-468`).
 
-우선순위 = `max(디스크, 번들, gist, olji)`. olji 가 우리 번들 이상으로 올라오면 olji 존중(`src/main/reflux.ts:443-471`). 디스크보다 최신이면 덮어쓰고 `true` 반환 → `startAll` 이 Reflux 재시작.
+게임 빌드가 `matched`이면 일치하는 build를 선택하고 디스크 버전과 다르면 덮어씁니다(다운그레이드 허용, olji 제외). `latest`/`blind`/`legacy` 또는 매칭 실패 시에만 `max(디스크, 번들, gist, olji)`를 적용합니다. 파일을 바꾸면 `true`를 반환해 Reflux가 새 offset을 읽도록 재시작.
 
 ### offsets.txt 파싱 (`readRefluxOffsets`, `src/main/reflux.ts:89-117`)
 
