@@ -69,6 +69,7 @@ import { SNAPSHOT_VERSION, type SnapshotReason, type UploadOutcome, type UploadS
 import { isFloorSeedCurrent, resolveAccountSnapshotProfile, type AccountScope, type AccountMeta, type TsvChangedEvent } from '../../shared/account';
 import type { InfinitasSessionState } from '../../shared/session';
 import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
+import { isUploadDue } from './uploadDue';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
 //   buildRecsWithPool / buildWeaknessRecs 의 raw row 를 기존 Recommendations / RecCard 가 쓰는 RecCandidate 로 변환.
@@ -135,16 +136,27 @@ function recRowToCandidate(r: any, stage: CardStage): RecCandidate {
 // 이전엔 하드코드 (0.0.12) 라 v0.0.13~v0.0.15 풀 때 supabase 업로드 버전이 옛 값으로 남음.
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
-// 실력값 추정 + Supabase 업로드 주기.
-// INF(데이터) 감지 후 첫 업로드는 INITIAL_UPLOAD_DELAY_MS(3분) 뒤 1회, 이후 STAR_REFRESH_INTERVAL_MS(10분) 주기.
+// 실력값 추정 + Supabase 업로드 주기 — 타이머를 쓰지 않는다.
+//   계정별 마지막 업로드 성공 시각(시스템 시간)을 localStorage 에 찍어 두고, TSV 스냅샷을 얻을 때마다
+//   「지금 − 마지막 업로드 ≥ STAR_REFRESH_INTERVAL_MS」면 올린다(isUploadDue). 기록이 없으면 바로 올린다.
+//   종래 「3분 뒤 첫 업로드 + 10분 setInterval」은 스냅샷이 ref 로만 들어와 무장 effect 가 다시 안 돌면
+//   타이머가 영영 안 걸려 자동 업로드가 통째로 멈췄다.
 //   추가로 앱 종료 / INFINITAS 종료 감지 시 main 이 마지막 업로드를 1회 요청(upload.onFinalRequest).
-//   ※ 리모트 실시간 푸시(me:update SSE) / TSV reload 는 이 타이머와 무관(별도 effect) — 주기 변경에 영향 없음.
+//   ※ 리모트 실시간 푸시(me:update SSE) / TSV reload 는 이 주기와 무관(별도 effect).
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
-const STAR_REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 정기 업로드 — 10분
-const INITIAL_UPLOAD_DELAY_MS = 3 * 60 * 1000;   // INF 감지(데이터 준비) 후 첫 업로드까지 대기 — 3분
+const STAR_REFRESH_INTERVAL_MS = 10 * 60 * 1000; // 정기 업로드 최소 간격 — 10분
 const MANUAL_UPLOAD_COOLDOWN_MS = 5 * 60 * 1000;
-const TSV_UPLOAD_DEBOUNCE_MS = 45 * 1000;    // tsv 변경 후 조용해지면(45초) 업로드 트리거
-const TSV_UPLOAD_COOLDOWN_MS = 3 * 60 * 1000; // 마지막 업로드로부터 최소 간격 — 미만이면 그 시점까지 지연
+const LAST_UPLOAD_KEY_PREFIX = 'infohsorry.lastUploadAt.';
+// 계정별 마지막 업로드 성공 시각. 읽기 실패·손상은 0(기록 없음 → 바로 업로드)으로 본다.
+function readLastUploadAt(iidxId: string): number {
+  try {
+    const value = Number(localStorage.getItem(LAST_UPLOAD_KEY_PREFIX + iidxId));
+    return Number.isFinite(value) && value > 0 ? value : 0;
+  } catch { return 0; }
+}
+function writeLastUploadAt(iidxId: string, at: number): void {
+  try { localStorage.setItem(LAST_UPLOAD_KEY_PREFIX + iidxId, String(at)); } catch { /* 저장 실패 시 다음 스냅샷에서 다시 올린다 */ }
+}
 const SNAPSHOT_RETRY_INTERVAL_MS = 15 * 1000;
 const SNAPSHOT_RETRY_REPORT_AFTER = 4;
 const ID_SWITCH_SNAPSHOT_BLOCK_MS = 20 * 1000; // Reflux 재기동 직후 부분 tracker.tsv 스냅샷 방지
@@ -337,11 +349,6 @@ export default function App() {
   //   prev(직전 tick)만 보면 B 도착 시 prev=null 이라 A→B 전환을 놓침(옛 계정 rows·별값 잔존).
   //   null 공백을 건너뛰고 "직전 유효 ID ≠ 새 유효 ID" 로 판정하기 위한 앵커.
   // useProfile가 게임 종료 뒤 null을 발행해도, doReset 직전의 identity/profile payload를 보존한다.
-  // 초기 supabase 업로드 1회 — 옛 ID transition 감지 시 false 로 리셋해 새 ID 정상 데이터 도착 즉시 재업로드.
-  // 정의는 여기 (transition useEffect 가 참조하므로 hoisting 순서 맞춤). useEffect 본체는 아래쪽.
-  const initialUploadDoneRef = useRef(false);
-  // 업로드 스케줄 타이머 핸들 — 초기 3분 setTimeout + 이후 15분 setInterval. ID 전환 재무장/언마운트 시 정리.
-  const schedTimersRef = useRef<{ initial: number | null; interval: number | null }>({ initial: null, interval: null });
   const snapshotRetryTimerRef = useRef<number | null>(null);
   const snapshotRetryFailuresRef = useRef(0);
   const lastSnapshotRetryReportRef = useRef<string | null>(null);
@@ -435,6 +442,7 @@ export default function App() {
   const lastUploadAtRef = useRef(0);
   const [manualUploadBusy, setManualUploadBusy] = useState(false);
   const manualUploadBusyRef = useRef(false);
+  const autoUploadBusyRef = useRef(false);
   const [manualUploadNow, setManualUploadNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -487,8 +495,6 @@ export default function App() {
   // 결과: 부팅 직후 잠시 빈 화면 → spawn 완료 (10~30초) 후 자동 채워짐 → 이후 tsv 변경마다 실시간 갱신.
   // (옛 동작: 마운트 즉시 옛 tsv 표시 → race condition 으로 stale 데이터 영구 노출 가능했음)
   const tsvChangedDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const tsvUploadDebounceRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
-  const tsvUploadCooldownTimerRef = useRef<ReturnType<typeof window.setTimeout> | null>(null);
   const captureSnapshot = useCallback(async (
     expect: { generation: number; pid: number | null },
     source: 'tsv-changed' | 'retry',
@@ -563,6 +569,8 @@ export default function App() {
         window.clearInterval(snapshotRetryTimerRef.current);
         snapshotRetryTimerRef.current = null;
       }
+      // 새 스냅샷마다 마지막 업로드 시각과 비교해 주기가 지났으면 올린다(타이머 없음).
+      (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue?.(res.iidxId);
       return { ok: true, iidxId: res.iidxId, generation: res.generation, tsvMtime: res.tsvMtime };
     } catch (err) {
       const error = (err as Error).message;
@@ -575,20 +583,6 @@ export default function App() {
     const offReflux = window.infohsorry.reflux.onState(setRefluxState);
     const viewer = window.infohsorry;
     const offSession = viewer.session.onState(setSession);
-    // TSV 변경 → 조용해지면 업로드, 단 마지막 업로드로부터 TSV_UPLOAD_COOLDOWN_MS 미만이면 그 시점까지 지연
-    const scheduleTsvUpload = (): void => {
-      // 첫 업로드 전(lastUploadAtRef=0)에는 건너뛴다 — 데이터 준비 대기(INITIAL_UPLOAD_DELAY_MS)를 지키기 위해
-      //   초기 업로드는 schedTimersRef 의 3분 스케줄에 맡기고, 이 경로는 그 뒤부터 동작한다.
-      if (lastUploadAtRef.current === 0) return;
-      if (tsvUploadCooldownTimerRef.current) { clearTimeout(tsvUploadCooldownTimerRef.current); tsvUploadCooldownTimerRef.current = null; }
-      const fire = (): void => {
-        const fn = (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto;
-        if (fn) fn();
-      };
-      const remaining = TSV_UPLOAD_COOLDOWN_MS - (Date.now() - lastUploadAtRef.current);
-      if (remaining <= 0) fire();
-      else tsvUploadCooldownTimerRef.current = window.setTimeout(fire, remaining);
-    };
     const offTsvChanged = viewer.reflux.onTsvChanged((e: TsvChangedEvent) => {
       console.log(`[tsvChanged] event mtime=${e.mtime} size=${e.size} generation=${e.generation} pid=${e.pid} browserRemote=${IS_BROWSER_REMOTE}`);
       if (IS_BROWSER_REMOTE) return;
@@ -597,8 +591,6 @@ export default function App() {
         { generation: e.generation, pid: e.pid },
         'tsv-changed',
       ), 400);
-      if (tsvUploadDebounceRef.current) clearTimeout(tsvUploadDebounceRef.current);
-      tsvUploadDebounceRef.current = window.setTimeout(() => scheduleTsvUpload(), TSV_UPLOAD_DEBOUNCE_MS);
     });
     void (async () => {
       // 목록 갱신이 더 최신 요청에 밀려도(false) 마지막 선택 계정 로드는 진행한다 — 목록은 최신 요청이 채운다.
@@ -609,8 +601,6 @@ export default function App() {
     return () => {
       offReflux(); offSession(); offTsvChanged();
       if (tsvChangedDebounceRef.current) clearTimeout(tsvChangedDebounceRef.current);
-      if (tsvUploadDebounceRef.current) clearTimeout(tsvUploadDebounceRef.current);
-      if (tsvUploadCooldownTimerRef.current) clearTimeout(tsvUploadCooldownTimerRef.current);
     };
   }, [captureSnapshot, loadViewerAccount, refreshAccounts]);
 
@@ -1287,10 +1277,6 @@ export default function App() {
   const clearLiveSessionState = useCallback(() => {
     lastSnapshotRef.current = null;
     invalidateAccountScope(selectedViewerIdRef.current, false);
-    initialUploadDoneRef.current = false;
-    if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
-    if (schedTimersRef.current.interval != null) window.clearInterval(schedTimersRef.current.interval);
-    schedTimersRef.current = { initial: null, interval: null };
   }, [invalidateAccountScope]);
   const prevSessionRef = useRef<InfinitasSessionState | null>(null);
   useEffect(() => {
@@ -1445,8 +1431,8 @@ export default function App() {
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime });
-  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime };
+  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData) });
+  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData) };
 
   function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
     const p = uploadStateRef.current.profile;
@@ -1554,6 +1540,7 @@ export default function App() {
         addDiagLine(`업로드 성공했지만 대기 기록 정리 실패(${cleared.error ?? '알 수 없는 오류'}) — 다음 시도에서 재전송`);
         return { kind: 'pending-clear-failed', error: cleared.error ?? 'pending clear failed', durationMs };
       }
+      if (trigger !== 'pending') writeLastUploadAt(snapshot.iidxId, Date.now());
       console.log(`[upload] success duration=${durationMs}ms -> pending cleared`);
       return { kind: 'success', durationMs };
     } catch (e) {
@@ -1659,7 +1646,18 @@ export default function App() {
       }
       return outcome;
     };
-    const runAuto = (): void => { void tryUpload('auto'); setTimeout(() => setVecRecomputeKey((k) => k + 1), 200); };
+    // 스냅샷 직후 호출 — 해당 계정의 마지막 업로드 시각이 주기를 넘었을 때만 올린다. 진행 중이면 겹치지 않는다.
+    const runIfDue = (iidxId: string): void => {
+      const lastAt = readLastUploadAt(iidxId);
+      if (!isUploadDue(lastAt, Date.now(), STAR_REFRESH_INTERVAL_MS)) return;
+      if (autoUploadBusyRef.current) return;
+      // 별값 계산 데이터(onlyOSR·rating·ereter) 로드 전이면 건너뛴다 — 시각을 안 찍으므로 다음 스냅샷에서 다시 판정.
+      if (!uploadStateRef.current.calcReady) { console.log(`[upload] due id=${iidxId} 보류: 계산 데이터 로드 전`); return; }
+      autoUploadBusyRef.current = true;
+      console.log(`[upload] due id=${iidxId} last=${lastAt ? new Date(lastAt).toISOString() : 'none'}`);
+      void tryUpload('auto').finally(() => { autoUploadBusyRef.current = false; });
+      setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
+    };
     const runManual = (): void => {
       if (manualUploadBusyRef.current || Date.now() - lastUploadAtRef.current < MANUAL_UPLOAD_COOLDOWN_MS) return;
       manualUploadBusyRef.current = true;
@@ -1671,41 +1669,16 @@ export default function App() {
     };
     (window as unknown as { updateSupabase: () => void }).updateSupabase = runManual;
     (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual = runManual;
-    (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto = runAuto;
+    (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue = runIfDue;
     const offFinal = window.infohsorry.upload.onFinalRequest(() => void (async () => {
       const outcome = await tryUpload('final');
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
       window.infohsorry.upload.finalDone(outcome);
     })());
-    return () => { offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto; };
+    return () => { offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
   }, []);
 
 
-  useEffect(() => {
-    if (IS_BROWSER_REMOTE) return;
-    if (initialUploadDoneRef.current) return;
-    if (!liveIidxId) { console.log('[sched] arm skip: liveIidxId 없음'); return; }
-    if (rows.length === 0) { console.log('[sched] arm skip: rows 비어있음'); return; }
-    if (lastSnapshotRef.current?.iidxId !== liveIidxId) {
-      console.log(`[sched] arm skip: 스냅샷 미획득 (snap=${lastSnapshotRef.current?.iidxId ?? 'null'} live=${liveIidxId})`);
-      return;
-    }
-    initialUploadDoneRef.current = true;
-    // 이전 유저 스케줄(있으면) 정리 후 재무장
-    if (schedTimersRef.current.initial != null) window.clearTimeout(schedTimersRef.current.initial);
-    if (schedTimersRef.current.interval != null) window.clearInterval(schedTimersRef.current.interval);
-    schedTimersRef.current.interval = null;
-    const runAuto = (): void => {
-      const fn = (window as unknown as { __tryUploadAuto?: () => void }).__tryUploadAuto;
-      if (fn) fn();
-    };
-    console.log(`[supabase] INF/데이터 감지 — ${INITIAL_UPLOAD_DELAY_MS / 1000}초 뒤 첫 업로드, 이후 ${STAR_REFRESH_INTERVAL_MS / 1000}초 주기`);
-    schedTimersRef.current.initial = window.setTimeout(() => {
-      runAuto();
-      schedTimersRef.current.interval = window.setInterval(runAuto, STAR_REFRESH_INTERVAL_MS);
-    }, INITIAL_UPLOAD_DELAY_MS);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [liveIidxId, rows.length, session.generation]);
 
   // 원격모드 본인 카드 — 실시간 push. TSV 변경으로 dp12(별값/매칭)가 재계산될 때마다 /api/me 를 갱신하고,
   //   main 이 SSE me:update 를 broadcast → PC2(오소리웹 ?remote)가 보고 있는 본인 카드를 조용히 다시 그림.
