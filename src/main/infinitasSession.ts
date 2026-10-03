@@ -1,6 +1,8 @@
 import { EventEmitter } from 'events';
 import type { InfinitasSessionState } from '../shared/session';
 import { findProcessId } from './memory';
+import { appendDiagLine } from './diagLogStore';
+import { exceedsThreshold } from '../shared/lagDiag';
 
 export class InfinitasSessionMonitor extends EventEmitter {
   private prevPid = 0;
@@ -10,6 +12,7 @@ export class InfinitasSessionMonitor extends EventEmitter {
 
   start(): void {
     if (this.timer) return;
+    appendDiagLine(`SESSION event=monitor-start pid=${this.prevPid || 'null'} generation=${this.generation}`);
     this.timer = setInterval(() => this.poll(), 1000);
     this.poll();
   }
@@ -24,9 +27,17 @@ export class InfinitasSessionMonitor extends EventEmitter {
   }
 
   private poll(): void {
-    const newPid = findProcessId('bm2dx.exe');
+    const start = performance.now();
+    let newPid: number;
+    try {
+      newPid = findProcessId('bm2dx.exe');
+    } finally {
+      const duration = performance.now() - start;
+      if (exceedsThreshold(duration)) appendDiagLine(`PERF event=session-poll durMs=${duration.toFixed(3)}`);
+    }
     const prev = this.prevPid;
     if (prev === newPid) return;
+    appendDiagLine(`SESSION event=pid-change prevPid=${prev || 'null'} pid=${newPid || 'null'} generation=${this.generation + (newPid > 0 ? 1 : 0)}`);
     if (prev === 0 && newPid > 0) {
       this.generation++;
       this.startedAt = Date.now();

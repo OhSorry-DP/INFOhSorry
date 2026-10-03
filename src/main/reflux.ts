@@ -23,6 +23,7 @@ import type { RefluxState } from '../shared/types';
 import type { InfinitasSessionState } from '../shared/session';
 import type { TsvChangedEvent } from '../shared/account';
 import { getRemoteOffsets, resolveBuild } from './offsetsRemote';
+import { appendDiagLine } from './diagLogStore';
 
 const execAsync = promisify(exec);
 
@@ -291,7 +292,11 @@ export class RefluxManager extends EventEmitter {
   }
 
   private setState(patch: Partial<RefluxState>): void {
+    const previousStage = this.state.stage;
     this.state = { ...this.state, ...patch };
+    if (previousStage !== this.state.stage) {
+      appendDiagLine(`REFLUX event=stage-change prevStage=${previousStage} stage=${this.state.stage} installed=${this.state.installed} spawned=${this.state.spawned}`);
+    }
     this.emit('state', this.getState());
   }
 

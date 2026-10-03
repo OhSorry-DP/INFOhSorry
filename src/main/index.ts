@@ -38,6 +38,17 @@ import { createRecommendBridge } from './recommendBridge';
 import { clearPending, loadAllPending, savePending } from './uploadPending';
 import type { UploadOutcome, UploadSnapshot } from '../shared/uploadSnapshot';
 import { appendDiagLine, appStartMarkerLine, diagLogPath } from './diagLogStore';
+import { recordGpuStatus, startMainHeartbeat } from './perfDiag';
+
+let stopMainHeartbeat: (() => void) | undefined;
+let gpuInfoReady = false;
+app.once('gpu-info-update', () => {
+  gpuInfoReady = true;
+  if (stopMainHeartbeat) recordGpuStatus('startup-ready');
+});
+app.on('child-process-gone', (_event, details) => {
+  if (details.type === 'GPU') recordGpuStatus('child-process-gone', details.reason, details.exitCode);
+});
 
 let mainWindow: BrowserWindow | null = null;
 const refluxManager = new RefluxManager();
@@ -746,6 +757,8 @@ app.whenReady().then(async () => {
   })) return;
   Menu.setApplicationMenu(null);
   appendDiagLine(appStartMarkerLine(app.getVersion()));
+  stopMainHeartbeat = startMainHeartbeat();
+  recordGpuStatus(gpuInfoReady ? 'startup-ready' : 'startup-pending');
   createWindow();
   // start 는 pid!=null 을 즉시 통보(뷰어가 "게임 ON" 을 빨리 인지) — Reflux 기동은 chain 에서 이어짐.
   sessionMonitor.on('start', () => { abortFinalUpload?.(); pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
@@ -797,6 +810,7 @@ app.on('before-quit', async (e) => {
   e.preventDefault();
   quitFinalizing = true;
   sessionMonitor.stop();
+  stopMainHeartbeat?.();
   const outcome = await requestFinalUpload();
   logFinalOutcome(outcome);
   if (refluxManager.getState().spawned) {
