@@ -2100,18 +2100,6 @@ export default function App() {
               if (selectedViewerId) void loadViewerAccount(selectedViewerId);
             }}
           />
-          <div role="status" aria-live="polite" className="hint">
-            DP★ {dpTask.task.status === 'pending' ? '계산 중' : dpTask.task.status === 'error' ? '계산 실패' : dpTask.value == null ? 'N/A' : ''}
-            {' · '}r★ {rTask.task.status === 'pending' ? '계산 중' : rTask.task.status === 'error' ? '계산 실패' : rTask.value == null ? 'N/A' : ''}
-            {' · '}SP★ {spTask.task.status === 'pending' ? '계산 중' : spTask.task.status === 'error' ? '계산 실패' : spTask.value == null ? 'N/A' : ''}
-            {[dpTask, rTask, spTask].some(task => task.task.status === 'error') && (
-              <button onClick={() => {
-                if (dpTask.task.status === 'error') dpTask.retry();
-                if (rTask.task.status === 'error') rTask.retry();
-                if (spTask.task.status === 'error') spTask.retry();
-              }}>다시 계산</button>
-            )}
-          </div>
           <nav className="tabs">
             {/* 표시 순서: RECENT → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
             <button
@@ -2171,6 +2159,22 @@ export default function App() {
                   · 갱신 {formatRelativeTime(tsvMtime)}
                 </span>
               )}
+              {/* 별값 계산 상태 — 계산 중·실패인 항목만 갱신 표시 옆에 띄우고, 전부 끝나면 숨긴다 */}
+              {(() => {
+                const starTasks = [['DP★', dpTask], ['r★', rTask], ['SP★', spTask]] as const;
+                const active = starTasks.filter(([, t]) => t.task.status === 'pending' || t.task.status === 'error');
+                if (active.length === 0) return null;
+                return (
+                  <span role="status" aria-live="polite" className="updated-at">
+                    {active.map(([label, t]) => ` · ${label} ${t.task.status === 'error' ? '계산 실패' : '계산 중'}`).join('')}
+                    {active.some(([, t]) => t.task.status === 'error') && (
+                      <button onClick={() => {
+                        for (const [, t] of active) if (t.task.status === 'error') t.retry();
+                      }}>다시 계산</button>
+                    )}
+                  </span>
+                );
+              })()}
               {!IS_BROWSER_REMOTE && (() => {
                 const remainingMs = Math.max(0, lastUploadAt + MANUAL_UPLOAD_COOLDOWN_MS - manualUploadNow);
                 const cooldownMinutes = Math.ceil(remainingMs / 60_000);
