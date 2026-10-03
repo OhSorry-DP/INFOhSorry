@@ -1,0 +1,15 @@
+{
+  "modules/normTitle.js": "48857b0ccdea09580fd10b619a0d1ed0db32a39bd3f78e7c6ca20ffa5bb06364",
+  "modules/OSR13.5+.js": "e91b36ade871531173044b769787abdf71b1a67d73ad5baa4d329fce646fee80",
+  "modules/onlyOSR.js": "ebf369900fcb98bd19b5408952d8fda4303bdd7a4623f1a4dced0ee1a01b9221",
+  "modules/onlyOSRtoEreter.js": "0b2e2252b64f6e0530ec880b7a8154a44b4cfdbc0465947cf24f56922042a98d",
+  "modules/userRateStar.js": "2070f484c0f46a843fb7cf68a04e24a242062e8f8e32e32b525186372c080799",
+  "modules/cpiStar.js": "9c124c4a115b67fa12b072ee5a49ffa5619984c08c12a86f222ef15d7222499f",
+  "modules/spSkillCpi.js": "65a13eee84db6c216e7b97b0831043ea07a6d98f87cea278c469769da7626760",
+  "modules/calcWeakness.js": "3b7f2e7f7af5802ebfb2d2fed6414f6091344d37bf0778dc44079ca722ff29ef",
+  "dist/ohSorryRating.json": "1fa2975f7b5fb2db7029559059c4ce87650b562cec01b5b4ab33b2780adf7a7d",
+  "ereter-data.json": "4fb093018df129ee5c6d4a4ce38711bb4428787e74e41435d704baac743113e3",
+  "dist/cpi.json": "ca2886aaacf69f67dc18af151a83f522047fb5be9811ceee3fe70f6076b25e54",
+  "dist/patterns-dp-1112.json": "2f628956b8f0d099baae02a22010b4b0be57e0904caf1ac0d7632b5c5c684f67",
+  "zasa-data.json": "cd95e561e1e325862ff420d0b7126acf6f7035db46cdeb4bf683519836c6e555"
+}
