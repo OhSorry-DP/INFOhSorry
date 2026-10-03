@@ -101,9 +101,43 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
           result = recommendations.query(contextKey, payload.options as never);
         } else result = context;
       } else result = request.kind === 'weakness' && !analysis ? libs.userVec : await runKernel(request.kind, input.data, payload.options, libs);
+      const encodeStart = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : undefined;
       const value = encodeValue(result);
+      const encodeEnd = encodeStart === undefined ? undefined : performance.now();
+      const dtoStart = encodeEnd;
       if (!isPlainDto(value)) throw new Error('NON_DTO_RESULT');
-      post({ ...envelope, type: 'result', status: 'ready', value });
+      const dtoEnd = dtoStart === undefined ? undefined : performance.now();
+      const diag: Record<string, number> = { version: 1 };
+      if (encodeStart !== undefined && encodeEnd !== undefined) diag.encodeMs = Number((encodeEnd - encodeStart).toFixed(3));
+      if (dtoStart !== undefined && dtoEnd !== undefined) diag.dtoValidateMs = Number((dtoEnd - dtoStart).toFixed(3));
+      if (value !== null && typeof value === 'object') {
+        if (Array.isArray(value)) diag.entriesCount = value.length;
+        else diag.topLevelKeyCount = Object.keys(value).length;
+        if (Array.isArray(value)) {
+          // PlayData vectors and encoded scalar arrays both remain arrays.
+        }
+        else if ('vec' in value) {
+          const vec = (value as { vec?: unknown }).vec;
+          if (Array.isArray(vec)) diag.entriesCount = vec.length;
+          const charts = (value as { allCharts?: unknown }).allCharts;
+          if (Array.isArray(charts)) diag.allChartsCount = charts.length;
+        }
+        else if (Array.isArray((value as { __entries?: unknown }).__entries)) {
+          diag.entriesCount = ((value as { __entries: unknown[] }).__entries).length;
+        }
+      }
+      if (request.kind === 'weakness') {
+        const sizeStart = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : undefined;
+        try {
+          const serialized = JSON.stringify(value);
+          if (serialized !== undefined) diag.valueBytes = new TextEncoder().encode(serialized).byteLength;
+        } catch { /* Diagnostic only: preserve successful compute results. */ }
+        if (sizeStart !== undefined) diag.sizeMeasureMs = Number((performance.now() - sizeStart).toFixed(3));
+      }
+      const workerReadyEpochMs = typeof performance !== 'undefined' && typeof performance.now === 'function'
+        && Number.isFinite(performance.timeOrigin) ? performance.timeOrigin + performance.now() : undefined;
+      if (workerReadyEpochMs !== undefined) diag.workerReadyEpochMs = workerReadyEpochMs;
+      post({ ...envelope, type: 'result', status: 'ready', value, diag });
     } catch (error) {
       post({ ...envelope, type: 'error', status: 'error', code: 'COMPUTE_FAILED', message: String(error) });
     }

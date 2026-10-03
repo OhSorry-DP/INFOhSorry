@@ -8,6 +8,17 @@ import { decodeValue, isInstalledInput, isS1Kind } from './workerBoundary';
 import type { InstalledInput } from './workerBoundary';
 import type { KernelOptions, S1Kind } from './kernels';
 import type { ResourceManifest, ResourceSpec } from './workerResources';
+import { perfEvent } from '../perfDiag';
+
+type ResultStage = Record<string, string | number | boolean | null>;
+function recordResultStages(stages: ResultStage[]): void {
+  try {
+    for (const stage of stages) perfEvent('compute-result-stage', stage);
+  } catch { /* diagnostics must not affect result delivery */ }
+}
+const monoNow = () => typeof performance === 'undefined' ? 0 : performance.now();
+const epochNow = () => typeof performance === 'undefined' ? 0 : performance.timeOrigin + performance.now();
+const duration = (start: number, end: number) => Math.max(0, end - start).toFixed(3);
 
 export interface WorkerPort {
   postMessage(message: unknown): void;
@@ -62,6 +73,7 @@ export function createComputeClient(config: {
   const laneKey = (spec: ComputeSubmission) => makeOptionsKey([spec.kind, spec.lane ?? spec.kind]);
   const affinity = new Map<string, Slot>();
   const cache = createResultCache<unknown>();
+  const receivedStages = new WeakMap<object, ResultStage[]>();
   const manifests = createResourceCache<ResourceManifest>();
   let sequence = 0, generation = 0, disposed = false;
   const counters = { cacheHit: 0, run: 0, stale: 0, retry: 0 };
@@ -84,17 +96,37 @@ export function createComputeClient(config: {
   };
   const errorResponse = (job: Job, code: string, message: string): JobResponse => ({ protocol: 1,
     workerGeneration: 0, requestId: job.id, kind: job.spec.kind, stamp: job.spec.stamp, status: 'error', code, message });
-  const finish = (job: Job, response: JobResponse) => {
+  const finish = (job: Job, response: JobResponse, trace?: { stages: ResultStage[]; start: number; origin: 'worker' | 'cache' }) => {
+    const finishStart = monoNow();
+    const cloneStart = monoNow(); let cloneCount = 0;
     if (jobs.get(job.key) === job) jobs.delete(job.key);
     for (const subscriber of job.subscribers) {
       const current = !subscriber.cancelled && latest.get(laneKey(job.spec)) === job.id && currentInput(job.spec) && subscriber.current();
       if (current) {
-        subscriber.received = structuredClone(response);
+        subscriber.received = structuredClone(response); cloneCount++;
         subscriber.resolve(subscriber.received);
       }
       else { counters.stale++; subscriber.resolve(errorResponse(job, 'STALE_RESULT', 'Calculation superseded or cancelled')); }
     }
-    pruneSnapshots();
+    const finishEnd = monoNow();
+    const pruneStart = monoNow(); pruneSnapshots();
+    if (trace) {
+      const cloneEnd = monoNow();
+      trace.stages.push({ requestId: job.id, workerGeneration: response.workerGeneration, kind: job.spec.kind,
+        rowsRev: job.spec.stamp.rowsRevision, epoch: job.spec.stamp.scope.epoch, stage: 'subscriber-clone',
+        durMs: duration(cloneStart, cloneEnd), startMonoMs: cloneStart.toFixed(3), endMonoMs: cloneEnd.toFixed(3),
+        origin: trace.origin, subscriberCount: job.subscribers.length, cloneCount });
+      const end = monoNow();
+      trace.stages.push({ requestId: job.id, workerGeneration: response.workerGeneration, kind: job.spec.kind,
+        rowsRev: job.spec.stamp.rowsRevision, epoch: job.spec.stamp.scope.epoch, stage: 'prune',
+        durMs: duration(pruneStart, end), startMonoMs: pruneStart.toFixed(3), endMonoMs: end.toFixed(3),
+        origin: trace.origin, subscriberCount: job.subscribers.length });
+      trace.stages.push({ requestId: job.id, workerGeneration: response.workerGeneration, kind: job.spec.kind,
+        rowsRev: job.spec.stamp.rowsRevision, epoch: job.spec.stamp.scope.epoch, stage: 'finish',
+        durMs: duration(finishStart, finishEnd), startMonoMs: finishStart.toFixed(3), endMonoMs: finishEnd.toFixed(3),
+        origin: trace.origin, subscriberCount: job.subscribers.length });
+      recordResultStages(trace.stages);
+    }
   };
   const waitFor = (slot: Slot, message: unknown, match: (value: Record<string, unknown>) => boolean) =>
     new Promise<Record<string, unknown>>((resolve, reject) => {
@@ -113,9 +145,38 @@ export function createComputeClient(config: {
   const spawn = (): Slot => {
     const slot: Slot = { worker: factory(), generation: ++generation, busy: false, inputs: new Set() };
     slot.worker.onmessage = event => {
+      const start = monoNow(), receiverEntryEpochMs = epochNow();
+      const trace: ResultStage[] = [];
+      const base = (stage: string, stageStart: number, end: number): ResultStage => ({ requestId: 0, workerGeneration: slot.generation,
+        kind: 'unknown', rowsRev: 0, epoch: 0, stage, durMs: duration(stageStart, end), startMonoMs: stageStart.toFixed(3), endMonoMs: end.toFixed(3), origin: 'worker', subscriberCount: 0 });
+      const dataStart = monoNow();
       const value = event.data as Record<string, unknown>;
+      const dataEnd = monoNow();
+      trace.push(base('receiver-entry', start, start), base('event-data-access', dataStart, dataEnd));
       const pending = slot.pending;
+      const matchStart = monoNow();
+      // 매칭 안 되는 메시지(prepare 응답 등)는 기록하지 않는다 — 결과 수신 구간만 잰다
       if (!value || value.protocol !== 1 || !pending || !pending.match(value)) return;
+      const matchEnd = monoNow(); trace.push(base('pending-match', matchStart, matchEnd));
+      const response = value as unknown as JobResponse;
+      const job = [...jobs.values()].find(candidate => candidate.id === response.requestId);
+      const common = job ? { requestId: job.id, workerGeneration: response.workerGeneration, kind: job.spec.kind,
+        rowsRev: job.spec.stamp.rowsRevision, epoch: job.spec.stamp.scope.epoch, origin: 'worker' as const,
+        subscriberCount: job.subscribers.length } : null;
+      if (common) {
+        for (const item of trace) Object.assign(item, common);
+        const diag = (value as Record<string, unknown>).diag as Record<string, unknown> | undefined;
+        if (diag?.version === 1 && typeof diag.workerReadyEpochMs === 'number' && Number.isFinite(diag.workerReadyEpochMs)) {
+          const upper = receiverEntryEpochMs - diag.workerReadyEpochMs;
+          const fields: ResultStage = { ...common, stage: 'transport-upper', available: upper >= 0,
+            ...(upper >= 0 ? { transportUpperMs: upper.toFixed(3) } : {}) };
+          for (const key of ['valueBytes', 'entriesCount', 'allChartsCount', 'encodeMs', 'dtoValidateMs', 'sizeMeasureMs']) {
+            const n = diag[key]; if (typeof n === 'number' && Number.isFinite(n)) fields[key] = n;
+          }
+          trace.push(fields);
+        }
+        receivedStages.set(value as object, trace);
+      }
       clearTimeout(pending.timer); slot.pending = undefined; pending.resolve(value);
     };
     slot.worker.onerror = event => fail(slot, new Error(event.message || 'WORKER_ERROR'));
@@ -164,13 +225,29 @@ export function createComputeClient(config: {
         && value.workerGeneration === request.workerGeneration && value.requestId === request.requestId
         && value.kind === request.kind && stampsEqual(value.stamp, request.stamp));
       const response = v as unknown as JobResponse;
+      const trace = receivedStages.get(v as object) ?? [];
+      const continuation = monoNow();
+      const stageFields = (stage: string, start: number, end: number, origin: 'worker' | 'cache' = 'worker'): ResultStage => ({
+        requestId: job.id, workerGeneration: response.workerGeneration, kind: spec.kind, rowsRev: spec.stamp.rowsRevision,
+        epoch: spec.stamp.scope.epoch, stage, durMs: duration(start, end), startMonoMs: start.toFixed(3), endMonoMs: end.toFixed(3), origin,
+        subscriberCount: job.subscribers.length });
+      trace.push(stageFields('promise-continuation-entry', continuation, continuation));
       if (response.status === 'ready') {
         if (latest.get(laneKey(spec)) === job.id && currentInput(spec) && job.subscribers.some(s => !s.cancelled && s.current())) {
-          cache.set(job.key, response.value, new TextEncoder().encode(JSON.stringify(response.value)).byteLength,
-            makeOptionsKey(spec.stamp.scope));
+          // 캐시에 넣을 때만 크기를 잰다(계측 때문에 stale 결과까지 직렬화하지 않는다)
+          const stringifyStart = monoNow();
+          const serialized = JSON.stringify(response.value);
+          const stringifyEnd = monoNow(); trace.push(stageFields('cache-stringify', stringifyStart, stringifyEnd));
+          const bytesStart = monoNow();
+          const byteLength = new TextEncoder().encode(serialized).byteLength;
+          const bytesEnd = monoNow(); trace.push(stageFields('cache-utf8-bytes', bytesStart, bytesEnd));
+          const cacheSetStart = monoNow(); cache.set(job.key, response.value, byteLength, makeOptionsKey(spec.stamp.scope));
+          const cacheSetEnd = monoNow(); trace.push(stageFields('cache-set', cacheSetStart, cacheSetEnd));
         }
-        finish(job, { ...response, value: decodeValue(response.value) });
-      } else finish(job, response);
+        const decodeStart = monoNow(); const decoded = decodeValue(response.value); const decodeEnd = monoNow();
+        trace.push(stageFields('decode', decodeStart, decodeEnd));
+        finish(job, { ...response, value: decoded }, { stages: trace, start: continuation, origin: 'worker' });
+      } else { trace.push(stageFields('error-response', continuation, monoNow())); finish(job, response, { stages: trace, start: continuation, origin: 'worker' }); }
       if (spec.kind === 'weakness' || spec.kind === 'layout' || spec.kind.startsWith('rec-')) affinity.set(spec.inputHandle, slot);
     } catch (error) {
       if (item.prepare) item.prepare.reject(error as Error);
@@ -271,10 +348,23 @@ export function createComputeClient(config: {
         jobs.set(key, job);
         if (cache.has(key)) {
           counters.cacheHit++;
+          const cacheStart = monoNow();
           const hit = structuredClone(cache.get(key));
+          const cacheEnd = monoNow();
           const cachedJob = job;
-          queueMicrotask(() => finish(cachedJob, { protocol: 1, requestId: cachedJob.id, workerGeneration: generation,
-            kind: spec.kind, stamp: spec.stamp, status: 'ready', value: decodeValue(hit) }));
+          const decodeStart = monoNow(); const decoded = decodeValue(hit); const decodeEnd = monoNow();
+          const response: JobResponse = { protocol: 1, requestId: cachedJob.id, workerGeneration: generation,
+            kind: spec.kind, stamp: spec.stamp, status: 'ready', value: decoded };
+          const start = monoNow();
+          queueMicrotask(() => {
+            const stages: ResultStage[] = [{ requestId: cachedJob.id, workerGeneration: generation, kind: spec.kind,
+              rowsRev: spec.stamp.rowsRevision, epoch: spec.stamp.scope.epoch, stage: 'cache-hit-clone-decode', durMs: duration(cacheStart, cacheEnd),
+              startMonoMs: cacheStart.toFixed(3), endMonoMs: cacheEnd.toFixed(3), origin: 'cache', subscriberCount: cachedJob.subscribers.length }];
+            stages.push({ requestId: cachedJob.id, workerGeneration: generation, kind: spec.kind, rowsRev: spec.stamp.rowsRevision,
+              epoch: spec.stamp.scope.epoch, stage: 'decode', durMs: duration(decodeStart, decodeEnd), startMonoMs: decodeStart.toFixed(3),
+              endMonoMs: decodeEnd.toFixed(3), origin: 'cache', subscriberCount: cachedJob.subscribers.length });
+            finish(cachedJob, response, { stages, start, origin: 'cache' });
+          });
         } else {
           queue.push({ kind: spec.kind, handle: spec.affinityHandle ?? spec.inputHandle, priority: spec.priority ?? (spec.kind.endsWith('star') ? 0 : 1),
             queuedAt: Date.now(), order: job.id, job }); pump();

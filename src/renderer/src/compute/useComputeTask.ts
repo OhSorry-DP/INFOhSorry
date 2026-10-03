@@ -8,7 +8,7 @@ import type { AcceptedTask } from './acceptedBundle';
 import { makeOptionsKey } from './revisionKey';
 import { previousDisplay } from './rendererState';
 import type { DisplayTask } from './rendererState';
-import { beginPerf, endPerf } from '../perfDiag';
+import { beginPerf, endPerf, perfEvent } from '../perfDiag';
 
 /** Exact App data snapshots, rather than an independent remote JSON version. */
 export function useSnapshotResources(kind: S1Kind, snapshots: Record<string, unknown>) {
@@ -58,19 +58,60 @@ export function useComputeTask<T>(kind: S1Kind, input: ReturnType<typeof rendere
         const perf = beginPerf(calc, rowsRevision, scope.epoch, scope.iidxId, diagnosticExtra);
         ticket = computeClient.submit({ kind, stamp, inputHandle: input.handle, affinityHandle: input.affinityHandle,
           options, resources, isCurrent: valid });
+        const perfNow = () => {
+          try { return typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : undefined; }
+          catch { return undefined; }
+        };
+        const promiseWaitStart = perfNow();
         const response = await ticket.promise;
+        const stage = (name: string, start: number | undefined, fields: Record<string, string | number | boolean> = {}, end = perfNow()) => {
+          const startMonoMs = start?.toFixed(3), endMonoMs = end?.toFixed(3);
+          try { perfEvent('compute-adopt-stage', { requestId: response.requestId, workerGeneration: response.workerGeneration,
+            kind, rowsRev: rowsRevision, epoch: scope.epoch, stage: name,
+            ...(startMonoMs !== undefined ? { startMonoMs } : {}), ...(endMonoMs !== undefined ? { endMonoMs } : {}),
+            ...(start !== undefined && end !== undefined ? { durMs: (end - start).toFixed(3) } : {}), ...fields }); } catch { /* diagnostics must not affect adoption */ }
+        };
+        stage('promise-resume', promiseWaitStart);
         let applied = false;
+        const acceptStart = perfNow();
+        const acceptCallbackStart = perfNow();
         ticket.accept(response, accepted => {
+          const acceptStageStart = acceptCallbackStart;
+          stage('accept-total', acceptStageStart, { accepted: true });
           applied = true;
+          const createStart = perfNow();
           const task: AcceptedTask<T> = { status: accepted.status, stamp, inputHandle: input.handle,
             requestId: accepted.requestId, workerGeneration: accepted.workerGeneration,
             ...(accepted.status === 'ready' ? { value: accepted.value as T | null } : {}) };
+          stage('task-create', createStart);
           if (accepted.status === 'ready') {
+            const previousStart = perfNow();
             previous.current = { scope, value: task.value ?? null };
-            current.current.onReady?.(task.value ?? null);
+            const previousEnd = perfNow();
+            stage('previous-current', previousStart, {}, previousEnd);
+            const onReady = current.current.onReady;
+            const onReadyStart = perfNow();
+            if (onReady) onReady(task.value ?? null);
+            const onReadyEnd = perfNow();
+            stage('onReady', onReadyStart, { called: !!onReady }, onReadyEnd);
           }
+          const setStateStart = perfNow();
           setState({ token, task });
+          const setStateEnd = perfNow();
+          stage('set-state', setStateStart, {}, setStateEnd);
         });
+        if (!applied) {
+          const rejectEnd = perfNow();
+          try { perfEvent('compute-adopt-stage', { requestId: response.requestId, workerGeneration: response.workerGeneration,
+            kind, rowsRev: rowsRevision, epoch: scope.epoch, stage: 'accept-total', accepted: false,
+            ...(acceptStart !== undefined ? { startMonoMs: acceptStart.toFixed(3) } : {}),
+            ...(rejectEnd !== undefined ? { endMonoMs: rejectEnd.toFixed(3) } : {}),
+            ...(acceptStart !== undefined && rejectEnd !== undefined ? { durMs: (rejectEnd - acceptStart).toFixed(3) } : {}) }); } catch { /* diagnostics must not affect adoption */ }
+        }
+        const beforeEnd = perfNow();
+        try { perfEvent('compute-adopt-stage', { requestId: response.requestId, workerGeneration: response.workerGeneration,
+          kind, rowsRev: rowsRevision, epoch: scope.epoch, stage: 'before-end',
+          ...(beforeEnd !== undefined ? { startMonoMs: beforeEnd.toFixed(3), endMonoMs: beforeEnd.toFixed(3), durMs: '0.000' } : {}) }); } catch { /* diagnostics must not affect adoption */ }
         endPerf(calc, perf, rowsRevision, scope.epoch, scope.iidxId, applied && response.status === 'ready' ? 'ok' : 'error', { ...diagnosticExtra, ...(applied ? {} : { outcome: 'cancel' }) });
       } catch (error) {
         if (valid()) setState({ token, task: { status: 'error', stamp: { ...input.stamp, optionsKey } } });
