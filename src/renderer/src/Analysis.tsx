@@ -175,8 +175,9 @@ function computeOsPercentilesFromList(
 //   backfill-pattern-score.js (ohSorryRating) 및 ohSorry dbConn 과 동일 알고리즘을 calcWeakness 가 통합 제공.
 //   diff 매핑 (NORMAL/HYPER/ANOTHER/LEGGENDARIA) 필요 — songChartsToWeaknessCharts 의 SLOT_TO_DIFF 그대로 활용.
 
-// RPC 시그니처: migration_ohsorry_36feat.sql 의 37 인자 (text + 36 numeric).
+// RPC 시그니처: migration_ohsorry_36feat.sql 의 39 인자 (text + 36 numeric + p_play_style + p_os_hands).
 //   기존 28 dim 뒤에 신규 8 dim(겹계단/계마/양손계단) append. 신규값은 gist calcWeakness+feature-scores 가 36키로 배포된 뒤 산출.
+//   이 컴포넌트는 DP(play_style=1) 전용 — p_play_style 은 DEFAULT 1 이라 생략, p_os_hands 는 vec.HANDS 그대로 전송.
 async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): Promise<boolean> {
   const numOrNull = (v: number | undefined): number | null =>
     typeof v === 'number' && isFinite(v) ? v : null;
@@ -221,6 +222,7 @@ async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): 
         p_os_keima_l: numOrNull(vec.KEIMA_L), p_os_keima_r: numOrNull(vec.KEIMA_R),
         p_os_hstair_onehand: numOrNull(vec.HSTAIR_ONEHAND), p_os_hstair_sync: numOrNull(vec.HSTAIR_SYNC),
         p_os_hstair_sameshape: numOrNull(vec.HSTAIR_SAMESHAPE), p_os_hstair_diffshape: numOrNull(vec.HSTAIR_DIFFSHAPE),
+        p_os_hands: numOrNull(vec.HANDS),
       }),
     });
     return res.ok;
