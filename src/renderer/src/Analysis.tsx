@@ -11,7 +11,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SongChart, RatingData, ZasaData } from '../../shared/types';
 import { IS_BROWSER_REMOTE } from './api';
-import { loadGistModuleSource, loadJson } from './gistLib';
+import { loadGistModuleSource, loadJsonSource } from './gistLib';
 import type { GistSource } from './gistLib';
 import type { rendererInput } from './compute/rendererService';
 import { useComputeTask } from './compute/useComputeTask';
@@ -223,6 +223,7 @@ const ANALYSIS_OPTIONS = { adapter: 'analysis-songcharts-v1' };
 interface AnalysisBundle {
   weaknessLib: AnyLib; normLib: AnyLib; renderLib: AnyLib;
   patternsMap: AnyLib; rateRef: AnyLib; featureScores: AnyLib;
+  jsonSources?: { patterns: string; rateRef: string; featureScores?: string };
   normSource: GistSource; weaknessSource: GistSource;
 }
 interface AnalysisProps {
@@ -312,11 +313,18 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
           const source = spec.key === 'OhsorryNorm' ? bundle.normSource.source
             : spec.key === 'OhsorryWeakness' ? bundle.weaknessSource.source : undefined;
           const value = snapshots[spec.key];
-          const url = source === undefined && value == null ? null
-            : URL.createObjectURL(new Blob([source ?? JSON.stringify(value)],
-              { type: source === undefined ? 'application/json' : 'text/javascript' }));
+          const jsonSource = spec.key === 'patterns' ? bundle.jsonSources?.patterns
+            : spec.key === 'rateRef' ? bundle.jsonSources?.rateRef
+              : spec.key === 'featureScores' ? bundle.jsonSources?.featureScores : undefined;
+          const sourceKind = source !== undefined ? 'module' : jsonSource !== undefined ? 'raw-json'
+            : value == null ? 'null' : 'object-json';
+          const sourceText = source ?? jsonSource;
+          const url = sourceText === undefined && value == null ? null
+            : URL.createObjectURL(new Blob([sourceText ?? JSON.stringify(value)],
+              { type: source !== undefined ? 'text/javascript' : 'application/json' }));
           if (url) urls.push(url);
           shared.set(spec.key, { ...spec, url, adapter: 'analysis-songcharts-v1' });
+          try { perfEvent('analysis-snapshot-resource', { key: spec.key, sourceKind, durMs: '0.000', rawChars: sourceText?.length }); } catch { /* diagnostics are optional */ }
         }
       }
       setResourceState({ token: resourceToken,
@@ -363,13 +371,15 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
         const normSource = await loadGistModuleSource(NORM_TITLE_URL, 'OhsorryNorm', force);
         const weaknessSource = await loadGistModuleSource(CALC_WEAKNESS_URL, 'OhsorryWeakness', force);
         const renderSource = await loadGistModuleSource(ANALYSIS_RENDER_URL, 'OhsorryAnalysisRender', force);
-        const [patternsMap, rateRef, featureScores] = await Promise.all([
-          loadJson(PATTERNS_URL), loadJson(RATE_REF_URL),
-          loadJson(FEATURE_SCORES_URL).catch(() => null),
+        const [patterns, rate, scores] = await Promise.all([
+          loadJsonSource(PATTERNS_URL), loadJsonSource(RATE_REF_URL),
+          loadJsonSource(FEATURE_SCORES_URL).then(result => result, () => null),
         ]);
         if (cancelled || currentGeneration !== generation) { finish('analysisLoad', p, false); return; }
         setBundle(Object.freeze({ weaknessLib: weaknessSource.value, normLib: normSource.value,
-          renderLib: renderSource.value, normSource, weaknessSource, patternsMap, rateRef, featureScores }));
+          renderLib: renderSource.value, normSource, weaknessSource, patternsMap: patterns.value, rateRef: rate.value,
+          featureScores: scores?.value ?? null,
+          jsonSources: { patterns: patterns.source, rateRef: rate.source, ...(scores ? { featureScores: scores.source } : {}) } }));
         setError(null);
         finish('analysisLoad', p);
         isFirst = false;

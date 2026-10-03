@@ -44,6 +44,14 @@ export async function loadJson<T>(url: string): Promise<T> {
   return res.json();
 }
 
+export interface JsonSource<T> { source: string; value: T }
+export async function loadJsonSource<T>(url: string): Promise<JsonSource<T>> {
+  const res = await fetch(`${url}?t=${Date.now()}`);
+  if (!res.ok) throw new Error(`JSON fetch HTTP ${res.status}`);
+  const source = await res.text();
+  return { source, value: JSON.parse(source) as T };
+}
+
 // TSV slot → calcWeakness / recommend.js 가 쓰는 diff 이름.
 export const SLOT_TO_DIFF_KEY: Record<string, string> = {
   DPN: 'NORMAL', DPH: 'HYPER', DPA: 'ANOTHER', DPL: 'LEGGENDARIA',
