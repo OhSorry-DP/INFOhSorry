@@ -70,6 +70,7 @@ import { isFloorSeedCurrent, resolveAccountSnapshotProfile, type AccountScope, t
 import type { InfinitasSessionState } from '../../shared/session';
 import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 import { isUploadDue } from './uploadDue';
+import { calculateScoped, transferFloor, reuseOsrInput, type ScopedCalculation } from './scopedCalculation';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
 //   buildRecsWithPool / buildWeaknessRecs 의 raw row 를 기존 Recommendations / RecCard 가 쓰는 RecCandidate 로 변환.
@@ -246,6 +247,7 @@ export default function App() {
   const rows = rowsState.rows;
   const rowsOwnerId = rowsState.scope.iidxId;
   const rowsRef = useRef<SongRow[]>([]);
+  const rowsScopeRef = useRef<AccountScope>(rowsState.scope);
   const accountScopeRef = useRef<AccountScope>({ iidxId: null, epoch: 0 });
   const viewerReadSeqRef = useRef(0);
   const [tsvMtime, setTsvMtime] = useState<number>(0);
@@ -281,13 +283,15 @@ export default function App() {
     const scope = { iidxId: nextId, epoch: previous.epoch + 1 };
     accountScopeRef.current = scope;
     viewerReadSeqRef.current += 1;
-    setFloorState({ scope, starFloor: null, rStarFloor: null });
+    const previousRowsOwner = rowsScopeRef.current;
+    setFloorState((floor) => transferFloor(floor, previous, previousRowsOwner, scope, clearRows));
     setUserPublic({ dpRadar: null, star: null, rStar: null, spRank: null, dpRank: null });
     setUserPublicScope(null);
     osrAccumRef.current.clear();
     osrAccumScopeRef.current = scope;
     const nextRows = clearRows || previous.iidxId !== nextId ? [] : rowsRef.current;
     rowsRef.current = nextRows;
+    rowsScopeRef.current = scope;
     setRowsState({ rows: nextRows, scope });
     if (clearRows) {
       tsvMtimeRef.current = 0;
@@ -301,6 +305,7 @@ export default function App() {
       || sessionRef.current.pid !== expectedSession.pid
       || sessionRef.current.generation !== expectedSession.generation) return false;
     rowsRef.current = nextRows;
+    rowsScopeRef.current = expectedScope;
     setRowsState({ rows: nextRows, scope: expectedScope });
     tsvMtimeRef.current = mtime;
     setTsvMtime(mtime);
@@ -1100,6 +1105,7 @@ export default function App() {
   //   Reflux 덤프가 일부 채보 unlock/lamp 를 순간 0 으로 읽어 별값(전체곡 50% native)이 5.49~5.6 으로 흔들리던 wobble 제거.
   //   key=title|diff, 값=세션 최대 lampNum. DB make_grid_data 도 lamp_best(채보별 최대 lamp) 라 산식 일치 → 같은 값(5.6)으로 수렴.
   //   ⚠ 유저(iidx_id) 전환/세션 리셋 시 반드시 clear(아래 doReset) — 안 그러면 이전 유저 클리어가 섞여 별값 오염.
+  const osrInputCacheRef = useRef<{ owner: string | null; input: { title: string; diff: string; lampNum: number }[] } | null>(null);
   const osrChartsInput = useMemo(() => {
     if (!isFloorSeedCurrent(rowsState.scope, osrAccumScopeRef.current)) {
       osrAccumRef.current.clear();
@@ -1118,7 +1124,9 @@ export default function App() {
         if (!prev || ln > prev.lampNum) osrAccumRef.current.set(key, { title: r.title, diff, lampNum: ln });
       }
     }
-    return Array.from(osrAccumRef.current.values());
+    const input = reuseOsrInput(osrInputCacheRef.current, rowsOwnerId, Array.from(osrAccumRef.current.values()));
+    osrInputCacheRef.current = { owner: rowsOwnerId, input };
+    return input;
   }, [rows, rowsState.scope.iidxId, rowsState.scope.epoch]);
 
   // ── 별값(★) — v3.4.0 onlyOSRtoEreter.inferEreter (본체 calcOhsorryCore 와 동일) ──
@@ -1185,7 +1193,10 @@ export default function App() {
   //   계수/난이도축 재배포 후 재기준화는 래칫을 안 타는 backfillStars.js --apply 로 한다.
 
   // 표시 별값(ereterStar) + 추천 native base(ohsorryStar) 를 inferEreter 한 번에 산출.
-  const dp12StarResult = useMemo<StarResult | null>(() => {
+  const dpResultCacheRef = useRef<ScopedCalculation<StarResult | null> | null>(null);
+  const dpScopedResult = useMemo(() => {
+    const result = calculateScoped(dpResultCacheRef.current, rowsState.scope,
+      [rows, onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor], () => {
     if (!onlyOSR2eLib || !ratingData || !ereterData || osrChartsInput.length === 0) return null;
     try {
       const r = onlyOSR2eLib.inferEreter(
@@ -1201,7 +1212,11 @@ export default function App() {
       console.warn('[★] inferEreter 실패:', (e as Error).message);
       return null;
     }
-  }, [onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
+    });
+    dpResultCacheRef.current = result;
+    return result;
+  }, [rows, onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
+  const dp12StarResult = isFloorSeedCurrent(dpScopedResult.scope, rowsState.scope) ? dpScopedResult.value : null;
 
   // 세션 래칫 — 계산값이 하한보다 높으면 하한을 끌어올린다(단조 증가라 루프는 한 번에 수렴).
   useEffect(() => {
@@ -1214,7 +1229,10 @@ export default function App() {
 
   // 사용자 r★ — 크롤러와 동일한 userRateStar.inferUserRStar 커널에 INF DP EX SCORE/노트수를 전달한다.
   // 계산 실패·표본부족이면 null로 두어 업로드 RPC의 COALESCE가 기존 users.r_star를 보존한다.
-  const userRStar = useMemo<number | null>(() => {
+  const rResultCacheRef = useRef<ScopedCalculation<number | null> | null>(null);
+  const rScopedResult = useMemo(() => {
+    const result = calculateScoped(rResultCacheRef.current, rowsState.scope,
+      [rows, userRateStarLib, ratingData, dpAllCharts, rStarFloor], () => {
     if (!userRateStarLib || !ratingData || dpAllCharts.length === 0) return null;
     try {
       const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
@@ -1239,7 +1257,11 @@ export default function App() {
       console.warn('[r★] inferUserRStar 실패 — 기존 users.r_star 보존:', (e as Error).message);
       return null;
     }
-  }, [userRateStarLib, ratingData, dpAllCharts, rStarFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
+    });
+    rResultCacheRef.current = result;
+    return result;
+  }, [rows, userRateStarLib, ratingData, dpAllCharts, rStarFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
+  const userRStar = isFloorSeedCurrent(rScopedResult.scope, rowsState.scope) ? rScopedResult.value : null;
 
   useEffect(() => {
     const scope = rowsState.scope;
