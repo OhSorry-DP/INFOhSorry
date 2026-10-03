@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, ipcMain, shell } from 'electron';
+import { app, BrowserWindow, Menu, ipcMain, shell, dialog } from 'electron';
+import { passAdminGate } from './adminGate';
 import { join } from 'path';
 import { readTsv } from './tsv';
 
@@ -723,7 +724,26 @@ async function onSessionEnd(): Promise<void> {
 }
 function pushSessionState(): void { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('session:state', sessionMonitor.getState()); }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (!await passAdminGate({
+    isPackaged: app.isPackaged,
+    probe: async () => {
+      const { probeCurrentProcessElevation } = await import('./processElevation');
+      return probeCurrentProcessElevation();
+    },
+    notify: () => {
+      dialog.showMessageBoxSync({
+        type: 'warning',
+        title: 'ohSorryScoreINF',
+        message: '관리자 권한으로 실행해 주세요',
+        detail: '앱 아이콘 우클릭 → 「관리자 권한으로 실행」을 선택해 주세요.\n또는 바로가기 속성 → 호환성 → 「관리자 권한으로 이 프로그램 실행」을 선택해 주세요.',
+        buttons: ['확인'],
+        defaultId: 0,
+        noLink: true,
+      });
+    },
+    quit: () => app.exit(0),
+  })) return;
   Menu.setApplicationMenu(null);
   appendDiagLine(appStartMarkerLine(app.getVersion()));
   createWindow();
