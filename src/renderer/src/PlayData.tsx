@@ -555,7 +555,7 @@ export default function PlayData({ rows, rowsRev, epoch, accountId, isWorkerCurr
     })) : [],
   }, playInput.handle), [rows, rowsRev, epoch, accountId, songsById, playInput]);
   const weaknessResources = useSnapshotResources('weakness', { rating: ratingData, zasa: zasaData });
-  const weaknessTask = useComputeTask<unknown>('weakness', playInput, {}, weaknessResources,
+  const weaknessTask = useComputeTask<{ entriesCount: number }>('weakness', playInput, { resultShape: 'playdata-status-v1' }, weaknessResources,
     true, isWorkerCurrent);
   const layoutTask = useComputeTask<[string, string][]>('layout', layoutInput, { style, layoutMode },
     weaknessResources, !!songsById && style === 'dp' && layoutMode && weaknessTask.task.status === 'ready',

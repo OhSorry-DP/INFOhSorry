@@ -305,7 +305,7 @@ test('renderer structural boundary: Worker calls replace star/PlayData/recommend
   assert.match(app, /isUploadReady\(state.acceptedBundle, state.expectedBundle\)/);
   assert.match(app, /state.rowsRevision !== rowsRevisionRef.current/);
   assert.match(app, /computeClient.invalidateScope\(\)/);
-  assert.match(play, /useComputeTask<unknown>\('weakness'/);
+  assert.match(play, /useComputeTask<\{ entriesCount: number \}>\('weakness', playInput, \{ resultShape: 'playdata-status-v1' \}/);
   assert.match(play, /useComputeTask<\[string, string\]\[]>\('layout'/);
   assert.doesNotMatch(play, /\.calcUserWeakness\(|\.chartStrengthMatch8Way\(/);
   assert.match(play, /new Map\(layoutTask.value\)/);

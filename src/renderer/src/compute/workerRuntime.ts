@@ -101,8 +101,12 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
           result = recommendations.query(contextKey, payload.options as never);
         } else result = context;
       } else result = request.kind === 'weakness' && !analysis ? libs.userVec : await runKernel(request.kind, input.data, payload.options, libs);
+      const wireResult = request.kind === 'weakness' && !analysis && payload.options.resultShape === 'playdata-status-v1'
+        ? result == null ? null : { entriesCount: Array.isArray((result as { __entries?: unknown } | null)?.__entries)
+          ? ((result as { __entries: unknown[] }).__entries).length : 0 }
+        : result;
       const encodeStart = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : undefined;
-      const value = encodeValue(result);
+      const value = encodeValue(wireResult);
       const encodeEnd = encodeStart === undefined ? undefined : performance.now();
       const dtoStart = encodeEnd;
       if (!isPlainDto(value)) throw new Error('NON_DTO_RESULT');
@@ -131,6 +135,9 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
         }
         else if (Array.isArray((value as { __entries?: unknown }).__entries)) {
           diag.entriesCount = ((value as { __entries: unknown[] }).__entries).length;
+        }
+        else if (typeof (value as { entriesCount?: unknown }).entriesCount === 'number') {
+          diag.entriesCount = (value as { entriesCount: number }).entriesCount;
         }
       }
       if (request.kind === 'weakness' && valueBytes !== undefined) diag.valueBytes = valueBytes;
