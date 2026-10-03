@@ -9,19 +9,33 @@ import { LAMP_TO_NUM } from '../../shared/match';
 
 // gist 스크립트를 fetch → eval 해서 window[globalKey] 에 심고 그 객체를 돌려준다.
 //   force=true 면 이미 로드돼 있어도 다시 fetch (Analysis 의 새로고침 버튼용).
-export async function loadGistModule(
+export interface GistSource { source: string; generation: number; value: unknown }
+const moduleSources = new Map<string, GistSource>();
+const moduleGenerations = new Map<string, number>();
+export async function loadGistModuleSource(
   url: string,
   globalKey: string,
   force = false,
-): Promise<unknown> {
+): Promise<GistSource> {
   const w = window as unknown as Record<string, unknown>;
-  if (!force && w[globalKey]) return w[globalKey];
+  const key = url + '|' + globalKey;
+  const cached = moduleSources.get(key);
+  if (!force && cached && cached.value === w[globalKey]) return cached;
+  const generation = (moduleGenerations.get(key) ?? 0) + 1;
+  moduleGenerations.set(key, generation);
   const res = await fetch(`${url}?t=${Date.now()}`);
   if (!res.ok) throw new Error(`${globalKey} fetch HTTP ${res.status}`);
   const text = await res.text();
+  if (moduleGenerations.get(key) !== generation) throw new Error('STALE_MODULE_LOAD');
   // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
   new Function(text)();
-  return w[globalKey];
+  if (!w[globalKey]) throw new Error(`UMD_EXPORT_MISSING:${globalKey}`);
+  const record = Object.freeze({ source: text, generation, value: w[globalKey] });
+  moduleSources.set(key, record);
+  return record;
+}
+export async function loadGistModule(url: string, globalKey: string, force = false): Promise<unknown> {
+  return (await loadGistModuleSource(url, globalKey, force)).value;
 }
 
 export async function loadJson<T>(url: string): Promise<T> {

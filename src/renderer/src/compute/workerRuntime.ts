@@ -68,8 +68,10 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
       const payload = request.payload as { options: KernelOptions; resources?: ResourceSpec[] };
       if (!payload || !isPlainDto(payload.options) || makeOptionsKey(payload.options) !== request.stamp.optionsKey) throw new Error('OPTIONS_STALE');
       const { libs, manifest } = await resources.load(request.kind, payload.resources);
+      const analysis = payload.options.adapter === 'analysis-songcharts-v1';
+      if (analysis !== !!payload.resources?.some(spec => spec.adapter === 'analysis-songcharts-v1')) throw new Error('PROFILE_RESOURCE_MISMATCH');
       if (manifest.modelRevision !== request.stamp.modelRevision || manifest.dataRevision !== request.stamp.dataRevision) throw new Error('RESOURCE_DRIFT');
-      if (request.kind === 'weakness' || (request.kind === 'layout' && payload.options.style !== 'sp' && payload.options.layoutMode)) {
+      if (!analysis && (request.kind === 'weakness' || (request.kind === 'layout' && payload.options.style !== 'sp' && payload.options.layoutMode))) {
         // Song metadata affects labels, not weakness. Reuse the exact rows vector
         // when layout installs a later songs snapshot for the same account.
         const vectorKey = makeOptionsKey([input.stamp.scope, rowsDigests.get(request.inputHandle), manifest]);
@@ -98,7 +100,7 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
           if (payload.options.contextHandle !== contextKey) throw new Error('CONTEXT_STALE');
           result = recommendations.query(contextKey, payload.options as never);
         } else result = context;
-      } else result = request.kind === 'weakness' ? libs.userVec : runKernel(request.kind, input.data, payload.options, libs);
+      } else result = request.kind === 'weakness' && !analysis ? libs.userVec : await runKernel(request.kind, input.data, payload.options, libs);
       const value = encodeValue(result);
       if (!isPlainDto(value)) throw new Error('NON_DTO_RESULT');
       post({ ...envelope, type: 'result', status: 'ready', value });

@@ -21,6 +21,7 @@ import Analysis from './Analysis';
 import Recent from './Recent';
 import PlayData from './PlayData';
 import { computeClient, rendererInput } from './compute/rendererService';
+import { analysisUploadLedger } from './compute/analysisUploadGate';
 import { useComputeTask, useSnapshotResources } from './compute/useComputeTask';
 import { starBundle } from './compute/rendererState';
 import { isUploadReady } from './compute/acceptedBundle';
@@ -51,7 +52,7 @@ import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 import { isUploadDue } from './uploadDue';
 import { INITIAL_AUTO_UPLOAD_STABLE_MS } from './initialAutoUpload';
 import { transferFloor, reuseOsrInput } from './scopedCalculation';
-import { perfEvent } from './perfDiag';
+import { perfEvent, perfScopeId } from './perfDiag';
 
 // 원격 프로필 push 변경 감지에 사용하는 레이더 문자열.
 function radarSig(r: RadarValues | null | undefined): string {
@@ -220,6 +221,7 @@ export default function App() {
     accountScopeRef.current = scope;
     uploadStateRef.current.bundleReady = false;
     computeClient.invalidateScope();
+    analysisUploadLedger.clear();
     viewerReadSeqRef.current += 1;
     const previousRowsOwner = rowsScopeRef.current;
     setFloorState((floor) => transferFloor(floor, previous, previousRowsOwner, scope, clearRows));
@@ -249,7 +251,8 @@ export default function App() {
     rowsScopeRef.current = expectedScope;
     setRowsState({ rows: nextRows, scope: expectedScope });
     tsvMtimeRef.current = mtime;
-    perfEvent('rows-commit', { source: 'account-read', rowsRev: rowsRevisionRef.current, rowsCount: nextRows.length, epoch: expectedScope.epoch });
+    perfEvent('rows-commit', { source: 'account-read', rowsRev: rowsRevisionRef.current, rowsCount: nextRows.length, epoch: expectedScope.epoch,
+      scopeId: perfScopeId(expectedScope.iidxId) });
     setTsvMtime(mtime);
     return true;
   }, []);
@@ -1073,6 +1076,10 @@ export default function App() {
     rows, osrCharts: osrChartsInput, notInInf: Array.from(notInInfSet), songs: [],
   }), [rows, osrChartsInput, notInInfSet, rowsState.scope.iidxId, rowsState.scope.epoch]);
   const dpResources = useSnapshotResources('dp-star', { rating: ratingData, ereter: ereterData });
+  const analysisCharts = useMemo(() => [...dp12Charts, ...dp11Charts], [dp12Charts, dp11Charts]);
+  const analysisInput = useMemo(() => rendererInput(rowsState.scope, rowsRevisionRef.current, {
+    rows, osrCharts: [], notInInf: [], songs: null, analysisCharts,
+  }), [rows, analysisCharts, rowsState.scope.iidxId, rowsState.scope.epoch]);
   const rResources = useSnapshotResources('r-star', { rating: ratingData });
   const spResources = useSnapshotResources('sp-star', {});
   const workerCurrent = () => isFloorSeedCurrent(workerInput.stamp.scope, accountScopeRef.current)
@@ -1104,6 +1111,14 @@ export default function App() {
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
+  const analysisLive = useRef({ input: analysisInput, profileId: profile.iidxId });
+  analysisLive.current = { input: analysisInput, profileId: profile.iidxId };
+  const analysisCurrent = () => analysisLive.current.input === analysisInput
+    && isFloorSeedCurrent(analysisInput.stamp.scope, accountScopeRef.current)
+    && isFloorSeedCurrent(analysisInput.stamp.scope, rowsScopeRef.current)
+    && selectedViewerIdRef.current === analysisInput.stamp.scope.iidxId
+    && rowsRevisionRef.current === analysisInput.stamp.rowsRevision
+    && analysisLive.current.profileId?.replace(/-/g, '') === analysisInput.stamp.scope.iidxId?.replace(/-/g, '');
   const liveIidxId = session.pid != null && profile.iidxId && VALID_IIDX_ID.test(profile.iidxId) ? profile.iidxId : null;
   const clearLiveSessionState = useCallback(() => {
     lastSnapshotRef.current = null;
@@ -2203,7 +2218,9 @@ export default function App() {
               />
             ) : tab === 'analysis' ? (
               <Analysis
-                charts={[...dp12Charts, ...dp11Charts]}
+                charts={analysisCharts}
+                input={analysisInput}
+                isCurrent={analysisCurrent}
                 ratingData={ratingData}
                 zasaData={zasaData}
                 iidxId={profile.iidxId || undefined}

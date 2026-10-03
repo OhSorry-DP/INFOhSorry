@@ -1,9 +1,12 @@
 import type { SongRow } from '../../../shared/types';
 import { extractCharts, DP_SLOTS, SP_SLOTS } from '../../../shared/types';
+import type { SongChart } from '../../../shared/types';
+import { runAnalysisWeakness, runAnalysisPatternScore } from './analysisEngine';
 
-export const S1_KINDS = ['dp-star', 'r-star', 'sp-star', 'weakness', 'layout', 'rec-context', 'rec-query'] as const;
+export const S1_KINDS = ['dp-star', 'r-star', 'sp-star', 'weakness', 'pattern-score', 'layout', 'rec-context', 'rec-query'] as const;
 export type S1Kind = typeof S1_KINDS[number];
 export interface ComputeInput {
+  analysisCharts?: SongChart[];
   rows: SongRow[];
   osrCharts: { title: string; diff: string; lampNum: number }[];
   notInInf: string[];
@@ -40,6 +43,15 @@ export function rowsToWeaknessCharts(rows: SongRow[]) {
 }
 
 export function runKernel(kind: S1Kind, input: ComputeInput, options: KernelOptions, libs: KernelResources): unknown {
+  if (options.adapter !== undefined && options.adapter !== 'analysis-songcharts-v1') throw new Error('INVALID_ADAPTER');
+  if (options.adapter === 'analysis-songcharts-v1') {
+    if (!Array.isArray(input.analysisCharts)) throw new Error('ANALYSIS_CHARTS_REQUIRED');
+    const analysisLibs = { ...libs, OhsorryNorm: libs.OhsorryNorm, OhsorryWeakness: libs.OhsorryWeakness, patterns: libs.patterns };
+    if (kind === 'weakness') return runAnalysisWeakness(input.analysisCharts, analysisLibs);
+    if (kind === 'pattern-score') return runAnalysisPatternScore(input.analysisCharts, analysisLibs);
+    throw new Error('INVALID_ANALYSIS_KIND');
+  }
+  if (kind === 'pattern-score') throw new Error('ANALYSIS_PROFILE_REQUIRED');
   const normFn = libs.OhsorryNorm.norm as (s: string) => string;
   const excluded = new Set(input.notInInf);
   switch (kind) {

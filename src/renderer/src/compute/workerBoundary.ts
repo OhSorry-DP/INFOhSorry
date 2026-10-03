@@ -8,7 +8,8 @@ export function isInstalledInput(value: unknown): value is InstalledInput {
   if (!isPlainDto(value) || !value || typeof value !== 'object') return false;
   const v = value as InstalledInput;
   return isInputStamp(v.stamp) && !!v.data && Array.isArray(v.data.rows) && Array.isArray(v.data.osrCharts)
-    && Array.isArray(v.data.notInInf) && (v.data.songs === null || Array.isArray(v.data.songs));
+    && Array.isArray(v.data.notInInf) && (v.data.songs === null || Array.isArray(v.data.songs))
+    && (v.data.analysisCharts === undefined || Array.isArray(v.data.analysisCharts));
 }
 export function isS1Kind(kind: unknown): kind is S1Kind { return (S1_KINDS as readonly unknown[]).includes(kind); }
 

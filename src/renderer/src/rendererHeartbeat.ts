@@ -7,11 +7,14 @@ type LongTaskObserver = { observe(options: { type: string; buffered?: boolean })
 type LongTaskObserverConstructor = (new (callback: (list: { getEntries(): LongTaskEntry[] }) => void) => LongTaskObserver) & { supportedEntryTypes?: readonly string[] };
 type ObserverWindow = Window & { PerformanceObserver?: LongTaskObserverConstructor };
 
+// VM 테스트 harness 에는 window 가 없을 수 있다 — 있으면 window, 없으면 globalThis.
+const hostWindow = (): Window => (typeof window !== 'undefined' ? window : globalThis as unknown) as Window;
+
 function sanitizeSource(value: unknown): string {
   if (typeof value !== 'string' || !value) return 'unknown';
   try {
-    const url = new URL(value, window.location.href);
-    if (url.origin !== window.location.origin) return 'unknown';
+    const url = new URL(value, hostWindow().location?.href);
+    if (url.origin !== hostWindow().location?.origin) return 'unknown';
     return encodeURIComponent(`${url.origin}${url.pathname}`).slice(0, 160);
   } catch { return 'unknown'; }
 }
@@ -25,7 +28,7 @@ export function startRendererHeartbeat(): () => void {
   let suppressed = 0;
   let stallSeq = 0;
   const reset = (): void => { previous = null; };
-  const observerWindow = window as ObserverWindow;
+  const observerWindow = hostWindow() as ObserverWindow;
   const supported = observerWindow.PerformanceObserver?.supportedEntryTypes;
   if (supported?.includes('longtask') && observerWindow.PerformanceObserver) {
     try {

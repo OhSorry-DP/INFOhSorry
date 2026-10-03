@@ -46,7 +46,7 @@ test('renderer heartbeat logs only visible long gaps and cleans up', () => {
     removeEventListener: (_event, listener) => { assert.equal(listener, visibilityListener); visibilityListener = null; },
   };
   const { startRendererHeartbeat } = load('../renderer/src/rendererHeartbeat.ts', {
-    require: name => name.includes('lagDiag') ? rules : { perfEvent: (event, fields) => lines.push({ event, ...fields }) },
+    require: name => name.includes('lagDiag') ? rules : { perfEvent: (event, fields) => lines.push({ event, ...fields }), recordLongTask: () => {}, flushStallContext: () => {} },
     document, performance: { now: () => now },
     requestAnimationFrame: cb => { callback = cb; return 1; },
     cancelAnimationFrame: () => { cancelled = true; },

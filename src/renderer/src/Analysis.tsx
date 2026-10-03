@@ -4,15 +4,24 @@
 // 흐름:
 //   1. mount 시 gist fetch (calcWeakness + normTitle + patterns + rateRef + analysisRender)
 //   2. SongChart (TSV) → calcWeakness chart 형식
-//   3. calcUserWeakness → userVec
+//   3. Worker analysis weakness / pattern-score → accepted userVec
 //   4. supabase upsert + percentile fetch
 //   5. window.OhsorryAnalysisRender.attachClickHandlers(panel, opts, handlers)
 //      → 모듈이 panel.innerHTML 채우고 클릭 위임. 곡 클릭 시 onPickChart 호출.
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { SongChart, RatingData, ZasaData } from '../../shared/types';
-import { LAMP_TO_NUM } from '../../shared/match';
 import { IS_BROWSER_REMOTE } from './api';
-import { loadGistModule, loadJson } from './gistLib';
+import { loadGistModuleSource, loadJson } from './gistLib';
+import type { GistSource } from './gistLib';
+import type { rendererInput } from './compute/rendererService';
+import { useComputeTask } from './compute/useComputeTask';
+import { DEFAULT_RESOURCES } from './compute/workerResources';
+import type { ResourceSpec } from './compute/workerResources';
+import { canUploadAnalysis, analysisUploadKey, analysisUploadLedger } from './compute/analysisUploadGate';
+import type { AnalysisWeaknessValue, AnalysisPatternValue } from './compute/analysisUploadGate';
+import type { AnalysisUploadExpectation } from './compute/analysisUploadGate';
+import type { AcceptedTask } from './compute/acceptedBundle';
+import { beginPerf, endPerf, perfEvent, perfScopeId } from './perfDiag';
 import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
 
 // 평소 11·12 만 fetch (7MB→1.8MB). 약점 분석은 고렙 기준이라 1112 로 충분.
@@ -34,27 +43,6 @@ const SLOT_TO_DIFF: Record<string, string> = {
 const DIFF_TO_SLOT: Record<string, string> = {
   NORMAL: 'DPN', HYPER: 'DPH', ANOTHER: 'DPA', LEGGENDARIA: 'DPL',
 };
-function songChartsToWeaknessCharts(charts: SongChart[]): {
-  title: string; diff: string; exScore: number; noteCount: number;
-  scorePercent: number; lampNum: number;
-}[] {
-  const out: { title: string; diff: string; exScore: number; noteCount: number;
-    scorePercent: number; lampNum: number; }[] = [];
-  for (const c of charts) {
-    const diff = SLOT_TO_DIFF[c.slot];
-    if (!diff) continue;
-    if (!c.noteCount || c.noteCount <= 0) continue;
-    out.push({
-      title: c.title, diff,
-      exScore: c.exScore || 0,
-      noteCount: c.noteCount,
-      scorePercent: ((c.exScore || 0) / (c.noteCount * 2)) * 100,
-      lampNum: LAMP_TO_NUM[c.lamp] ?? 0,
-    });
-  }
-  return out;
-}
-
 // 본인 user_ohsorry_radars 10 feature score (quantile score 평균, 0~100). 빈 {} 가능.
 type UserFeatureScore = Record<string, number | null>;
 
@@ -178,7 +166,7 @@ function computeOsPercentilesFromList(
 // RPC 시그니처: migration_ohsorry_36feat.sql 의 39 인자 (text + 36 numeric + p_play_style + p_os_hands).
 //   기존 28 dim 뒤에 신규 8 dim(겹계단/계마/양손계단) append. 신규값은 gist calcWeakness+feature-scores 가 36키로 배포된 뒤 산출.
 //   이 컴포넌트는 DP(play_style=1) 전용 — p_play_style 은 DEFAULT 1 이라 생략, p_os_hands 는 vec.HANDS 그대로 전송.
-async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): Promise<boolean> {
+export async function upsertFeatureScore(iidxId: string, vec: Record<string, number>, isCurrent: () => boolean = () => true): Promise<boolean> {
   const numOrNull = (v: number | undefined): number | null =>
     typeof v === 'number' && isFinite(v) ? v : null;
   // payload 직전 신규 8값 로그 (검증용 — window.__OHSORRY_DEBUG_FEAT 켜면 출력)
@@ -191,6 +179,7 @@ async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): 
     });
   }
   try {
+    if (!isCurrent()) return false;
     const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_feature_score`, {
       method: 'POST',
       headers: { apikey: SUPABASE_KEY, Authorization: `Bearer ${SUPABASE_KEY}`, 'Content-Type': 'application/json' },
@@ -225,17 +214,56 @@ async function upsertFeatureScore(iidxId: string, vec: Record<string, number>): 
         p_os_hands: numOrNull(vec.HANDS),
       }),
     });
-    return res.ok;
+    return res.ok && isCurrent();
   } catch { return false; }
 }
 
+let nextEntry = 0;
+const ANALYSIS_OPTIONS = { adapter: 'analysis-songcharts-v1' };
+interface AnalysisBundle {
+  weaknessLib: AnyLib; normLib: AnyLib; renderLib: AnyLib;
+  patternsMap: AnyLib; rateRef: AnyLib; featureScores: AnyLib;
+  normSource: GistSource; weaknessSource: GistSource;
+}
 interface AnalysisProps {
+  input: ReturnType<typeof rendererInput>;
+  isCurrent: () => boolean;
   charts: SongChart[];
   ratingData: RatingData | null;
   zasaData: ZasaData | null;
   iidxId?: string;
   recomputeKey?: number;
   onPickChart?: (title: string, slot: string) => void;
+}
+
+export async function sendAnalysisUpload(weakness: AcceptedTask<AnalysisWeaknessValue>,
+  pattern: AcceptedTask<AnalysisPatternValue>, expected: AnalysisUploadExpectation,
+  isCurrent: () => boolean): Promise<boolean> {
+  const valid = () => isCurrent() && analysisPairCanUpload(weakness, pattern, expected);
+  await Promise.resolve();
+  if (!valid() || !pattern.value) return false;
+  const token = analysisUploadLedger.reserve(analysisUploadKey(expected, pattern.value.digest));
+  if (token === null) return false;
+  try {
+    const ok = await upsertFeatureScore(expected.targetId, pattern.value.vec, valid);
+    const current = valid();
+    analysisUploadLedger.finish(token, ok, current);
+    return ok && current;
+  } finally { analysisUploadLedger.release(token); }
+}
+
+// The upload gate consumes a numeric readiness DTO. The UMD vector also owns
+// object entries and private DOM caches; preserve those in the accepted result,
+// and summarize only the entries for this gate's numeric schema.
+function analysisPairCanUpload(weakness: AcceptedTask<AnalysisWeaknessValue>,
+  pattern: AcceptedTask<AnalysisPatternValue>, expected: AnalysisUploadExpectation): boolean {
+  const value = weakness.value;
+  if (!value) return canUploadAnalysis(weakness, pattern, expected);
+  const entries = (value.vec as AnyLib).__entries;
+  if (!Array.isArray(entries)) return false;
+  const vec: AnyLib = Object.fromEntries(Object.entries(value.vec).filter(([key]) => !key.startsWith('__')));
+  vec.__entries = entries.map((entry, index) => typeof entry === 'number' ? entry : index);
+  return canUploadAnalysis({ ...weakness, value: { vec, allCharts: value.allCharts } }, pattern, expected);
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -246,17 +274,79 @@ interface RenderController {
 }
 
 export default function Analysis(props: AnalysisProps): JSX.Element {
-  const { charts, ratingData, zasaData, iidxId, recomputeKey = 0, onPickChart } = props;
-  const [libsReady, setLibsReady] = useState(false);
-  const [userFeatureScore, setUserFeatureScore] = useState<UserFeatureScore | null>(null);
-  const [percentiles, setPercentiles] = useState<Record<string, { rank: number; total: number; percentile: number | null }> | null>(null);
+  const { charts, input, isCurrent, ratingData, zasaData, iidxId, recomputeKey = 0, onPickChart } = props;
+  const [entryId] = useState(() => ++nextEntry);
+  const [loadRetry, setLoadRetry] = useState(0);
+  const extra = { entryId, chartsRev: input.stamp.chartsRevision };
+  const scopeKey = input.stamp.scope.epoch + ':' + input.stamp.scope.iidxId;
+  const live = useRef({ input, isCurrent, recomputeKey, scopeKey });
+  live.current = { input, isCurrent, recomputeKey, scopeKey };
+  const span = (calc: string) => beginPerf(calc, input.stamp.rowsRevision, input.stamp.scope.epoch, input.stamp.scope.iidxId, extra);
+  const finish = (calc: string, p: ReturnType<typeof beginPerf>, ok = true) =>
+    endPerf(calc, p, input.stamp.rowsRevision, input.stamp.scope.epoch, input.stamp.scope.iidxId, ok ? 'ok' : 'error', extra);
+  useEffect(() => {
+    perfEvent('analysis-enter', {
+      ...extra, rowsRev: input.stamp.rowsRevision, epoch: input.stamp.scope.epoch, scopeId: perfScopeId(input.stamp.scope.iidxId),
+    });
+  }, [entryId, input]);
+  const [bundle, setBundle] = useState<AnalysisBundle>();
+  const libsReady = !!bundle;
+  const resourceToken = useMemo(() => ({}), [bundle, ratingData, zasaData]);
+  const [resourceState, setResourceState] = useState<{ token: object; weakness: ResourceSpec[]; pattern: ResourceSpec[] }>();
+  const resources = resourceState?.token === resourceToken ? resourceState : undefined;
+  const bundleLive = useRef(resourceToken);
+  bundleLive.current = resourceToken;
+  useEffect(() => {
+    if (!bundle) return;
+    const urls: string[] = [];
+    const p = span('analysisSnapshot');
+    try {
+      const snapshots: Record<string, unknown> = {
+        patterns: bundle.patternsMap, rateRef: bundle.rateRef, featureScores: bundle.featureScores,
+        rating: ratingData, zasa: zasaData,
+      };
+      const shared = new Map<string, ResourceSpec>();
+      for (const kind of ['weakness', 'pattern-score'] as const) {
+        for (const spec of DEFAULT_RESOURCES[kind]) {
+          if (shared.has(spec.key)) continue;
+          const source = spec.key === 'OhsorryNorm' ? bundle.normSource.source
+            : spec.key === 'OhsorryWeakness' ? bundle.weaknessSource.source : undefined;
+          const value = snapshots[spec.key];
+          const url = source === undefined && value == null ? null
+            : URL.createObjectURL(new Blob([source ?? JSON.stringify(value)],
+              { type: source === undefined ? 'application/json' : 'text/javascript' }));
+          if (url) urls.push(url);
+          shared.set(spec.key, { ...spec, url, adapter: 'analysis-songcharts-v1' });
+        }
+      }
+      setResourceState({ token: resourceToken,
+        weakness: DEFAULT_RESOURCES.weakness.map(s => shared.get(s.key)!),
+        pattern: DEFAULT_RESOURCES['pattern-score'].map(s => shared.get(s.key)!) });
+      finish('analysisSnapshot', p);
+    } catch (e) { finish('analysisSnapshot', p, false); setError((e as Error).message); }
+    return () => urls.forEach(url => URL.revokeObjectURL(url));
+  }, [resourceToken]);
+  const [personal, setPersonal] = useState<{ scopeKey: string; score: UserFeatureScore | null }>();
+  const userFeatureScore = personal?.scopeKey === scopeKey && isCurrent() ? personal.score : null;
+  const setUserFeatureScore = (score: UserFeatureScore | null) => setPersonal({ scopeKey, score });
+  const [percentileState, setPercentileState] = useState<{ scopeKey: string; score: UserFeatureScore | null;
+    value: Record<string, { rank: number; total: number; percentile: number | null }> | null }>();
+  const percentiles = percentileState?.scopeKey === scopeKey && percentileState.score === userFeatureScore
+    ? percentileState.value : null;
+  const setPercentiles = (value: Record<string, { rank: number; total: number; percentile: number | null }> | null) =>
+    setPercentileState({ scopeKey, score: userFeatureScore, value });
   // 인라인 랭킹표 (피처별 랭킹보기 토글) 용 — fetchAllUsersFeatureScores 결과 그대로.
   const [allUserScores, setAllUserScores] = useState<AllUserScoreRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const libsRef = useRef<{ weaknessLib?: any; normLib?: any; renderLib?: any; patternsMap?: any; rateRef?: any; featureScores?: any }>({});
+  const libsRef = useRef<Partial<AnalysisBundle>>({});
+  libsRef.current = bundle ?? {};
   const panelRef = useRef<HTMLDivElement | null>(null);
   const controllerRef = useRef<RenderController | null>(null);
+  const attachPanel = useCallback((element: HTMLDivElement | null) => {
+    if (panelRef.current !== element) controllerRef.current = null;
+    panelRef.current = element;
+  }, []);
   // 콜백 ref — attachClickHandlers 가 마운트 1회만 부착되므로, props 변경에도 최신 onPickChart 가 호출되도록 ref 통과.
   const handlerRef = useRef<{ onChartClick: (title: string, diff: string) => void }>({ onChartClick: () => {} });
 
@@ -264,51 +354,43 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     let isFirst = true;
+    let generation = 0;
     const loadAll = async (): Promise<void> => {
+      const currentGeneration = ++generation;
+      const p = span('analysisLoad');
       try {
-        // 10분 polling 호출 (= force=true) 시 모듈 JS 도 다시 fetch + eval — gist 의 normTitle / weakness /
-        //   analysisRender 갱신 반영. 첫 호출은 force=false (cache 활용 — 마운트 시 빠른 진입).
         const force = !isFirst;
-        await loadGistModule(NORM_TITLE_URL, 'OhsorryNorm', force);
-        await loadGistModule(CALC_WEAKNESS_URL, 'OhsorryWeakness', force);
-        await loadGistModule(ANALYSIS_RENDER_URL, 'OhsorryAnalysisRender', force);
-        const w = window as unknown as Record<string, unknown>;
+        const normSource = await loadGistModuleSource(NORM_TITLE_URL, 'OhsorryNorm', force);
+        const weaknessSource = await loadGistModuleSource(CALC_WEAKNESS_URL, 'OhsorryWeakness', force);
+        const renderSource = await loadGistModuleSource(ANALYSIS_RENDER_URL, 'OhsorryAnalysisRender', force);
         const [patternsMap, rateRef, featureScores] = await Promise.all([
-          loadJson(PATTERNS_URL),
-          loadJson(RATE_REF_URL),
-          loadJson(FEATURE_SCORES_URL).catch((e) => {
-            console.warn('[Analysis] feature-scores fetch 실패 (곡 점수 fallback):', e?.message);
-            return null;
-          }),
+          loadJson(PATTERNS_URL), loadJson(RATE_REF_URL),
+          loadJson(FEATURE_SCORES_URL).catch(() => null),
         ]);
-        if (cancelled) return;
-        libsRef.current = {
-          weaknessLib: w.OhsorryWeakness,
-          normLib: w.OhsorryNorm,
-          renderLib: w.OhsorryAnalysisRender,
-          patternsMap,
-          rateRef,
-          featureScores,
-        };
-        setLibsReady(true);
+        if (cancelled || currentGeneration !== generation) { finish('analysisLoad', p, false); return; }
+        setBundle(Object.freeze({ weaknessLib: weaknessSource.value, normLib: normSource.value,
+          renderLib: renderSource.value, normSource, weaknessSource, patternsMap, rateRef, featureScores }));
+        setError(null);
+        finish('analysisLoad', p);
         isFirst = false;
       } catch (e) {
-        if (!cancelled) setError((e as Error).message);
+        finish('analysisLoad', p, false);
+        if (!cancelled && currentGeneration === generation) { setBundle(undefined); setError((e as Error).message); }
       }
     };
     void loadAll();
     // 10분마다 재호출 — gist patterns / rate-ref / feature-scores 신곡 반영. 모듈 JS 도 force=true 로 재 eval.
     const interval = setInterval(() => void loadAll(), 10 * 60 * 1000);
     return () => { cancelled = true; clearInterval(interval); };
-  }, []);
+  }, [loadRetry]);
 
   // 2. 본인 user_ohsorry_radars feature score fetch — iidxId 변경 시 + recomputeKey (App timer) 마다
   useEffect(() => {
-    if (!iidxId) { setUserFeatureScore(null); return; }
+    if (!iidxId || !isCurrent()) { setUserFeatureScore(null); return; }
     let cancelled = false;
-    fetchUserFeatureScore(iidxId).then((p) => { if (!cancelled) setUserFeatureScore(p); });
+    fetchUserFeatureScore(iidxId).then((p) => { if (!cancelled && live.current.scopeKey === scopeKey && live.current.isCurrent()) setUserFeatureScore(p); });
     return () => { cancelled = true; };
-  }, [iidxId, recomputeKey]);
+  }, [iidxId, recomputeKey, scopeKey]);
 
   // 2.5. percentile 계산 — 처음 마운트 시 1회 fetch + 10분 interval 자동 refetch.
   //   목록 표시는 안 함 (목록 UI 없음). 분석탭 헤더 "X위 / Y명" 행 + 막대그래프 percentile 평균 대비 ± 만 갱신.
@@ -319,8 +401,10 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     const refresh = async () => {
       try {
         const all = await fetchAllUsersFeatureScores();
-        if (cancelled) return;
+        if (cancelled || live.current.scopeKey !== scopeKey || !live.current.isCurrent()) return;
+        const p = span('analysisPercentiles');
         const pcts = computeOsPercentilesFromList(userFeatureScore, all);
+        finish('analysisPercentiles', p);
         setPercentiles(pcts);
         setAllUserScores(all);
       } catch (e) {
@@ -330,56 +414,32 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     refresh();
     const timer = setInterval(refresh, ALL_USERS_FS_TTL_MS);  // 10분마다 자동 갱신
     return () => { cancelled = true; clearInterval(timer); };
-  }, [iidxId, userFeatureScore]);
+  }, [iidxId, userFeatureScore, scopeKey]);
 
-  // 3. vec 계산
-  const vecResult = useMemo(() => {
-    if (!libsReady) return null;
-    const { weaknessLib, normLib, patternsMap, rateRef } = libsRef.current;
-    if (!weaknessLib || !normLib) return null;
-    const allCharts = songChartsToWeaknessCharts(charts);
-    if (allCharts.length === 0) return null;
-    try {
-      const vec = weaknessLib.calcUserWeakness({
-        allCharts, patternsMap, normFn: normLib.norm,
-        ratingMap: ratingData?.ratings || null,
-        zasaMap: zasaData?.charts || null,
-        rateRef,
-      });
-      if (!vec || !vec.__entries) return null;
-      return { vec, allCharts };
-    } catch (e) {
-      console.warn('[Analysis] calcUserWeakness 실패:', e);
-      return null;
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libsReady, charts, ratingData, zasaData, recomputeKey]);
-
-  // 4. supabase upsert — weaknessLib.computePatternScoreVec (chart_score × score_rate top 30 가중합).
-  //    backfill 알고리즘과 동일. 이전엔 vecResult.vec (calcWeakness 잔차, -1~1) 을 그대로 upsert → 형식 불일치 → 수정.
-  const lastUpsertedRef = useRef<string | null>(null);
+  const current = () => live.current.input === input && live.current.isCurrent()
+    && bundleLive.current === resourceToken && !!resources;
+  const weakness = useComputeTask<AnalysisWeaknessValue>('weakness', input, ANALYSIS_OPTIONS,
+    resources?.weakness, !!resources, current, undefined, extra);
+  const pattern = useComputeTask<AnalysisPatternValue>('pattern-score', input, ANALYSIS_OPTIONS,
+    resources?.pattern, !!resources, current, undefined, extra);
+  const vecResult = current() && weakness.task.status === 'ready' ? weakness.task.value ?? null : null;
+  const [uploadRetry, setUploadRetry] = useState(0);
+  const accepted = useRef({ weakness: weakness.task, pattern: pattern.task, resourceToken, recomputeKey });
+  accepted.current = { weakness: weakness.task, pattern: pattern.task, resourceToken, recomputeKey };
   useEffect(() => {
-    if (IS_BROWSER_REMOTE || !iidxId || !vecResult) return;
-    const libs = libsRef.current;
-    if (!libs.weaknessLib || !libs.featureScores || !libs.patternsMap || !libs.normLib) return;
-    // diff 키 (NORMAL/HYPER/ANOTHER/LEGGENDARIA) 로 변환된 charts 가 필요 — songChartsToWeaknessCharts 결과 활용 가능.
-    const weaknessCharts = songChartsToWeaknessCharts(charts);
-    const patternVec = libs.weaknessLib.computePatternScoreVec({
-      charts: weaknessCharts,
-      featureScores: libs.featureScores,
-      patternsMap: libs.patternsMap,
-      normFn: libs.normLib.norm,
-    });
-    if (!patternVec) return;
-    const key = iidxId + ':' + (patternVec.NOTES || 0).toFixed(2) + ':' + recomputeKey;
-    if (lastUpsertedRef.current === key) return;
-    lastUpsertedRef.current = key;
-    upsertFeatureScore(iidxId, patternVec).then((ok: boolean) => {
-      if (ok) console.log('[Analysis] feature score upsert 성공 (NOTES=' + (patternVec.NOTES || 0).toFixed(1) + ')');
-      else console.warn('[Analysis] feature score upsert 실패');
-    });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [iidxId, vecResult, recomputeKey]);
+    if (!iidxId) return;
+    const expected = { targetId: iidxId, remote: IS_BROWSER_REMOTE, scope: input.stamp.scope,
+      inputHandle: input.handle, weaknessStamp: weakness.task.stamp, patternStamp: pattern.task.stamp,
+      intentToken: recomputeKey };
+    const valid = () => current() && live.current.recomputeKey === recomputeKey
+      && accepted.current.resourceToken === resourceToken
+      && accepted.current.weakness === weakness.task && accepted.current.pattern === pattern.task
+      && analysisPairCanUpload(weakness.task, pattern.task, expected);
+    if (!valid() || !pattern.task.value) return;
+    let cancelled = false;
+    void sendAnalysisUpload(weakness.task, pattern.task, expected, () => !cancelled && valid());
+    return () => { cancelled = true; };
+  }, [input, resourceToken, weakness.task, pattern.task, iidxId, recomputeKey, uploadRetry]);
 
   // noteCount lookup — title + diff → noteCount.
   const noteCountMap = useMemo(() => {
@@ -404,7 +464,9 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
 
   // 5. attachClickHandlers (마운트 1회) + opts 변경 시 setOpts
   useEffect(() => {
-    if (!libsReady || !vecResult || !panelRef.current) return;
+    if (!libsReady || !vecResult || !panelRef.current || !current()) { controllerRef.current = null; return; }
+    const p = span('analysisDOM');
+    try {
     const libs = libsRef.current;
     const opts = {
       userVec: vecResult.vec,
@@ -437,8 +499,8 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       featureScores: libs.featureScores,
       // 피처별 랭킹보기 — percentiles + allUserScores + myIidxId 셋 다 넘기면 analysisRender 가 "랭킹보기" 토글 노출.
       //   supabase iidx_id 는 하이픈 없는 형식이라 myIidxId 도 동일하게 정규화.
-      percentiles,
-      allUserScores,
+      percentiles: userFeatureScore ? percentiles : null,
+      allUserScores: userFeatureScore ? allUserScores : null,
       myIidxId: iidxId ? iidxId.replace(/-/g, '') : null,
     };
     if (!controllerRef.current) {
@@ -450,15 +512,22 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
     } else {
       controllerRef.current.setOpts(opts);
     }
+    finish('analysisDOM', p);
+    } catch (e) { finish('analysisDOM', p, false); controllerRef.current = null; setError((e as Error).message); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [libsReady, vecResult, userFeatureScore, percentiles, allUserScores, ratingData, zasaData, noteCountMap, iidxId]);
+  }, [bundle, vecResult, userFeatureScore, percentiles, allUserScores, ratingData, zasaData, noteCountMap, iidxId, scopeKey]);
 
+  const retry = () => { weakness.retry(); pattern.retry(); setUploadRetry(v => v + 1); };
+  if (weakness.task.status === 'error' || pattern.task.status === 'error') {
+    if (weakness.task.status === 'error') return <div style={{ padding: 20 }}>분석 계산 실패 <button onClick={retry}>다시 계산</button></div>;
+  }
   if (error) {
-    return <div style={{ padding: 20, color: '#ff6b6b' }}>오류: {error}</div>;
+    return <div style={{ padding: 20, color: '#ff6b6b' }}>오류: {error} <button onClick={() => setLoadRetry(v => v + 1)}>다시 로드</button></div>;
   }
   if (!libsReady) {
     return <div style={{ padding: 20, color: '#888' }}>분석 lib 로딩 중...</div>;
   }
+  if (!current() || weakness.task.status === 'pending') return <div style={{ padding: 20 }}>분석 계산 중...</div>;
   if (!vecResult) {
     return (
       <div style={{ padding: 20, color: '#888' }}>
@@ -466,5 +535,12 @@ export default function Analysis(props: AnalysisProps): JSX.Element {
       </div>
     );
   }
-  return <div ref={panelRef} style={{ padding: 16 }} />;
+  return <div>
+    {pattern.task.status === 'pending' && <div>점수 계산 중...</div>}
+    {pattern.task.status === 'ready' && pattern.task.value == null && <div>점수 분석 데이터 부족</div>}
+    {pattern.task.status === 'error' && <div>점수 계산 실패 <button onClick={retry}>다시 계산</button></div>}
+    {!IS_BROWSER_REMOTE && <button disabled={pattern.task.status !== 'ready' || pattern.task.value == null}
+      onClick={() => setUploadRetry(v => v + 1)}>재전송</button>}
+    <div key={scopeKey} ref={attachPanel} style={{ padding: 16 }} />
+  </div>;
 }

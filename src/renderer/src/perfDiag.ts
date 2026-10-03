@@ -17,7 +17,7 @@ function append(fields: string): void {
 function safeFields(fields: Record<string, DiagValue>): Record<string, string | number | boolean | null> {
   const clean: Record<string, string | number | boolean | null> = {};
   for (const [key, value] of Object.entries(fields)) {
-    if (value === undefined || /account|rows|payload|token/i.test(key)) continue;
+    if (value === undefined || /^(account|accountId|iidxId|rows|payload|token)$/i.test(key)) continue;
     if (typeof value === 'string') clean[key] = value.slice(0, 160);
     else if (typeof value === 'number' || typeof value === 'boolean' || value === null) clean[key] = value;
   }
@@ -59,7 +59,7 @@ export function beginPerf(calc: string, rowsRev: number, epoch: number, accountI
 
 export function endPerf(calc: string, span: { seq: number; start: number }, rowsRev: number, epoch: number, accountId: string | null, status: 'ok' | 'error', extra: Record<string, DiagValue> = {}): void {
   const monoMs = performance.now();
-  const fields = safeFields({ durMs: Number((monoMs - span.start).toFixed(3)), rowsRev, scopeId: perfScopeId(accountId), epoch, status, ...extra });
+  const fields = safeFields({ durMs: (monoMs - span.start).toFixed(3), rowsRev, scopeId: perfScopeId(accountId), epoch, status, ...extra });
   remember({ kind: 'perf', monoMs, seq: span.seq, phase: 'end', calc: calc.slice(0, 80), fields });
   append(`run=${run} phase=end calc=${calc} seq=${span.seq} wallMs=${Date.now()} monoMs=${monoMs.toFixed(3)} ${stringify(fields)}`);
 }
