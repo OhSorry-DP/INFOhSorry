@@ -1,15 +1,16 @@
 import type { SongRow } from '../../../shared/types';
 import { extractCharts, DP_SLOTS, SP_SLOTS } from '../../../shared/types';
 
-export const S1_KINDS = ['dp-star', 'r-star', 'sp-star', 'weakness', 'layout'] as const;
+export const S1_KINDS = ['dp-star', 'r-star', 'sp-star', 'weakness', 'layout', 'rec-context', 'rec-query'] as const;
 export type S1Kind = typeof S1_KINDS[number];
 export interface ComputeInput {
   rows: SongRow[];
   osrCharts: { title: string; diff: string; lampNum: number }[];
   notInInf: string[];
-  songs: { title: string; ac: number | null; legen: number | null }[];
+  songs: { title: string; ac: number | null; legen: number | null }[] | null;
 }
 export interface KernelOptions {
+  [key: string]: unknown;
   prevStar?: number | null;
   prevRStar?: number | null;
   style?: 'sp' | 'dp';
@@ -92,7 +93,7 @@ export function runKernel(kind: S1Kind, input: ComputeInput, options: KernelOpti
         if (k && !titleToPatternId[k]) titleToPatternId[k] = id;
       }
       const out = new Map<string, string>();
-      for (const meta of input.songs) {
+      for (const meta of input.songs ?? []) {
         if (!meta.title || typeof meta.ac !== 'number' || (meta.ac & 2) === 0) continue;
         const sid = titleToPatternId[normFn(meta.title)];
         const sp = sid && libs.patterns[sid];

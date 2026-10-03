@@ -25,14 +25,16 @@ export function createRealm(extra = {}) {
   const base = path.dirname(fileURLToPath(import.meta.url));
   function load(name, from = base) {
     let filename = path.resolve(from, name);
-    if (!path.extname(filename)) filename += '.ts';
+    if (!path.extname(filename)) filename += fs.existsSync(filename + '.ts') ? '.ts' : '.js';
     if (modules.has(filename)) return modules.get(filename);
     const source = fs.readFileSync(filename, 'utf8').replaceAll('import.meta.url', JSON.stringify(import.meta.url));
-    const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS } }).outputText;
+    const compiled = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS, esModuleInterop: true } }).outputText;
     const exports = {}; modules.set(filename, exports);
-    vm.runInContext(`(function(exports, require) { ${compiled}\n})`, context, { filename })(exports,
-      name => load(name, path.dirname(filename)));
-    return exports;
+    const module = { exports };
+    vm.runInContext(`(function(exports, require, module) { ${compiled}\n})`, context, { filename })(exports,
+      name => load(name, path.dirname(filename)), module);
+    modules.set(filename, module.exports);
+    return module.exports;
   }
   const dto = value => { context.__dto = JSON.stringify(value); return vm.runInContext('JSON.parse(__dto)', context); };
   return { context, load, dto, eval: source => vm.runInContext(source, context) };

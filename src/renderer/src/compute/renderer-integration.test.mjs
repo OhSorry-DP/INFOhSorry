@@ -293,14 +293,15 @@ test('manual intent waits for current ready bundle and stops on scope/error inst
   assert.equal(await waitForBundle(() => 'pending', 1), false);
 });
 
-test('renderer structural boundary: Worker calls replace star/PlayData kernels; recommendation and Analysis remain sync', () => {
+test('renderer structural boundary: Worker calls replace star/PlayData/recommendation kernels', () => {
   const app = fs.readFileSync(new URL('../App.tsx', import.meta.url), 'utf8');
   const play = fs.readFileSync(new URL('../PlayData.tsx', import.meta.url), 'utf8');
   assert.match(app, /useComputeTask<StarResult>\('dp-star'/);
   assert.match(app, /useComputeTask<number>\('r-star'/);
   assert.match(app, /useComputeTask<SpSkillResult>\('sp-star'/);
   assert.doesNotMatch(app, /onlyOSR2eLib|userRateStarLib|spSkillLib|calculateScoped/);
-  assert.match(app, /return createRecCtx\(/);
+  assert.match(app, /useRecommendService\(recInput/);
+  assert.doesNotMatch(app, /createRecCtx\(|\.buildRecsWithPool\(|\.buildWeaknessRecs\(|\.chartStrengthMatchByHand\(|\.computeChartTags\(|\.computeRecHashtags\(/);
   assert.match(app, /isUploadReady\(state.acceptedBundle, state.expectedBundle\)/);
   assert.match(app, /state.rowsRevision !== rowsRevisionRef.current/);
   assert.match(app, /computeClient.invalidateScope\(\)/);

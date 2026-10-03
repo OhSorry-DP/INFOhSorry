@@ -1,45 +1,17 @@
-import { isJobRequest, isPlainDto, isWorkerCommand, isInputStamp } from './protocol';
-import type { InputStamp, JobRequest } from './protocol';
+import { isJobRequest, isPlainDto, isWorkerCommand } from './protocol';
+import type { JobRequest } from './protocol';
 import { makeOptionsKey, scopesEqual } from './revisionKey';
-import { runKernel, S1_KINDS } from './kernels';
-import type { ComputeInput, KernelOptions, S1Kind } from './kernels';
+import { runKernel } from './kernels';
+import type { KernelOptions } from './kernels';
 import { createWorkerResources, sha256 } from './workerResources';
 import type { ResourceSpec } from './workerResources';
+import { createRecommendEngine } from './recommendEngine';
+import { handleRecommendRequest } from './recommendBridgeHandler';
 
-export interface InstalledInput { stamp: InputStamp; data: ComputeInput }
-export function isInstalledInput(value: unknown): value is InstalledInput {
-  if (!isPlainDto(value) || !value || typeof value !== 'object') return false;
-  const v = value as InstalledInput;
-  return isInputStamp(v.stamp) && !!v.data && Array.isArray(v.data.rows) && Array.isArray(v.data.osrCharts)
-    && Array.isArray(v.data.notInInf) && Array.isArray(v.data.songs);
-}
-export function isS1Kind(kind: unknown): kind is S1Kind { return (S1_KINDS as readonly unknown[]).includes(kind); }
-
-// Wire values remain plain DTOs while preserving undefined/NaN in UMD outputs.
-export function encodeValue(value: unknown): unknown {
-  if (value === undefined) return { __computeScalar: 'undefined' };
-  if (typeof value === 'number' && !Number.isFinite(value)) return { __computeScalar: String(value) };
-  if (Array.isArray(value)) return value.map(encodeValue);
-  if (value && typeof value === 'object') {
-    if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) throw new Error('NON_DTO_RESULT');
-    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, encodeValue(item)]));
-  }
-  return value;
-}
-export function decodeValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(decodeValue);
-  if (value && typeof value === 'object') {
-    const v = value as Record<string, unknown>;
-    if (Object.keys(v).length === 1 && typeof v.__computeScalar === 'string') {
-      if (v.__computeScalar === 'undefined') return undefined;
-      if (v.__computeScalar === 'NaN') return NaN;
-      if (v.__computeScalar === 'Infinity') return Infinity;
-      if (v.__computeScalar === '-Infinity') return -Infinity;
-    }
-    return Object.fromEntries(Object.entries(v).map(([key, item]) => [key, decodeValue(item)]));
-  }
-  return value;
-}
+import { encodeValue, isInstalledInput, isS1Kind } from './workerBoundary';
+import type { InstalledInput } from './workerBoundary';
+export { encodeValue, decodeValue, isInstalledInput, isS1Kind } from './workerBoundary';
+export type { InstalledInput } from './workerBoundary';
 
 export function createWorkerRuntime(post: (message: unknown) => void) {
   let generation = -1;
@@ -47,6 +19,7 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
   const rowsDigests = new Map<string, string>();
   const vectors = new Map<string, { key: string; value: unknown }>();
   const resources = createWorkerResources();
+  const recommendations = createRecommendEngine();
   let tail: Promise<unknown> = Promise.resolve();
   const handle = async (message: unknown) => {
     const m = message as Record<string, unknown>;
@@ -79,7 +52,7 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
         inputs.delete(m.inputHandle as string); rowsDigests.delete(m.inputHandle as string);
         if (!inputs.size) vectors.clear();
         return;
-      case 'dispose-context': return; // S1 has no recommendation contexts.
+      case 'dispose-context': recommendations.clear(); return;
       case 'run': break;
       default: throw new Error('INVALID_COMMAND');
     }
@@ -108,7 +81,24 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
         }
         libs.userVec = vector.value;
       }
-      const result = request.kind === 'weakness' ? libs.userVec : runKernel(request.kind, input.data, payload.options, libs);
+      let result: unknown;
+      if (request.kind === 'rec-query' && payload.options.operation === 'targets') {
+        const options = payload.options as any;
+        if (options.request?.kind !== 'targets') throw new Error('INVALID_TARGET_REQUEST');
+        result = handleRecommendRequest(options.request, { recCtx: null, ratingData: libs.rating,
+          baseStar: options.bridge?.baseStar ?? null, userRStar: options.bridge?.userRStar ?? null,
+          userCharts: options.bridge?.userCharts ?? [], normFn: libs.OhsorryNorm.norm, coreVersion: null });
+      } else if (request.kind === 'rec-context' || request.kind === 'rec-query') {
+        // Content identity is computed off the renderer. Metadata arrival with
+        // identical bytes reuses the mutable context and its candidate indexes.
+        const contextKey = await sha256(makeOptionsKey([input.stamp.scope,
+          rowsDigests.get(request.inputHandle), manifest, input.data.notInInf, input.data.songs]));
+        const context = recommendations.context(contextKey, input.data, libs);
+        if (request.kind === 'rec-query') {
+          if (payload.options.contextHandle !== contextKey) throw new Error('CONTEXT_STALE');
+          result = recommendations.query(contextKey, payload.options as never);
+        } else result = context;
+      } else result = request.kind === 'weakness' ? libs.userVec : runKernel(request.kind, input.data, payload.options, libs);
       const value = encodeValue(result);
       if (!isPlainDto(value)) throw new Error('NON_DTO_RESULT');
       post({ ...envelope, type: 'result', status: 'ready', value });

@@ -4,8 +4,8 @@ import { createResourceCache } from './resourceCache';
 import { isJobResponse, isPlainDto, isInputStamp } from './protocol';
 import type { InputStamp, JobResponse, JobRequest } from './protocol';
 import { makeJobKey, makeOptionsKey, stampsEqual } from './revisionKey';
-import { decodeValue, isInstalledInput, isS1Kind } from './workerRuntime';
-import type { InstalledInput } from './workerRuntime';
+import { decodeValue, isInstalledInput, isS1Kind } from './workerBoundary';
+import type { InstalledInput } from './workerBoundary';
 import type { KernelOptions, S1Kind } from './kernels';
 import type { ResourceManifest, ResourceSpec } from './workerResources';
 
@@ -22,6 +22,8 @@ export interface ComputeSubmission {
   inputHandle: string;
   /** Layout can reuse the Worker that computed weakness for the same rows. */
   affinityHandle?: string;
+  /** Independent UI stages and remote requests must not supersede each other. */
+  lane?: string;
   options: KernelOptions;
   resources?: ResourceSpec[];
   priority?: number;
@@ -56,7 +58,8 @@ export function createComputeClient(config: {
   const snapshotRevisions = new Map<string, string>();
   const queue: QueueItem[] = [];
   const jobs = new Map<string, Job>();
-  const latest = new Map<S1Kind, number>();
+  const latest = new Map<string, number>();
+  const laneKey = (spec: ComputeSubmission) => makeOptionsKey([spec.kind, spec.lane ?? spec.kind]);
   const affinity = new Map<string, Slot>();
   const cache = createResultCache<unknown>();
   const manifests = createResourceCache<ResourceManifest>();
@@ -84,7 +87,7 @@ export function createComputeClient(config: {
   const finish = (job: Job, response: JobResponse) => {
     if (jobs.get(job.key) === job) jobs.delete(job.key);
     for (const subscriber of job.subscribers) {
-      const current = !subscriber.cancelled && latest.get(job.spec.kind) === job.id && currentInput(job.spec) && subscriber.current();
+      const current = !subscriber.cancelled && latest.get(laneKey(job.spec)) === job.id && currentInput(job.spec) && subscriber.current();
       if (current) {
         subscriber.received = structuredClone(response);
         subscriber.resolve(subscriber.received);
@@ -142,7 +145,7 @@ export function createComputeClient(config: {
       if (!job) return;
       const { spec } = job;
       const input = snapshots.get(spec.inputHandle);
-      if (!input || latest.get(spec.kind) !== job.id || !job.subscribers.some(s => !s.cancelled && s.current())) {
+      if (!input || latest.get(laneKey(spec)) !== job.id || !job.subscribers.some(s => !s.cancelled && s.current())) {
         finish(job, errorResponse(job, 'STALE_INPUT', 'Input is no longer current')); return;
       }
       if (!slot.inputs.has(spec.inputHandle)) {
@@ -162,17 +165,17 @@ export function createComputeClient(config: {
         && value.kind === request.kind && stampsEqual(value.stamp, request.stamp));
       const response = v as unknown as JobResponse;
       if (response.status === 'ready') {
-        if (latest.get(spec.kind) === job.id && currentInput(spec) && job.subscribers.some(s => !s.cancelled && s.current())) {
+        if (latest.get(laneKey(spec)) === job.id && currentInput(spec) && job.subscribers.some(s => !s.cancelled && s.current())) {
           cache.set(job.key, response.value, new TextEncoder().encode(JSON.stringify(response.value)).byteLength,
             makeOptionsKey(spec.stamp.scope));
         }
         finish(job, { ...response, value: decodeValue(response.value) });
       } else finish(job, response);
-      if (spec.kind === 'weakness' || spec.kind === 'layout') affinity.set(spec.inputHandle, slot);
+      if (spec.kind === 'weakness' || spec.kind === 'layout' || spec.kind.startsWith('rec-')) affinity.set(spec.inputHandle, slot);
     } catch (error) {
       if (item.prepare) item.prepare.reject(error as Error);
       else if (job) {
-        if (!disposed && job.attempts++ === 0 && latest.get(job.spec.kind) === job.id
+        if (!disposed && job.attempts++ === 0 && latest.get(laneKey(job.spec)) === job.id
           && job.subscribers.some(s => !s.cancelled && s.current())) {
           counters.retry++; queue.push({ ...item, queuedAt: Date.now() });
         } else finish(job, errorResponse(job, 'WORKER_FAILED', String(error)));
@@ -194,6 +197,14 @@ export function createComputeClient(config: {
     while (queue.length) {
       const item = queue[0];
       let slot = item.handle ? affinity.get(item.handle) : undefined;
+      if (slot?.busy && item.kind.startsWith('rec-')) {
+        // Leave this affinity queue serial, but allow independent star jobs.
+        const runnable = queue.findIndex(other => !other.handle || !affinity.get(other.handle)?.busy);
+        if (runnable <= 0) return;
+        const [next] = queue.splice(runnable, 1);
+        queue.unshift(next);
+        continue;
+      }
       if (slot?.busy) slot = undefined;
       slot ??= slots.find(s => !s.busy);
       if (!slot && slots.length >= cap) return;
@@ -204,6 +215,7 @@ export function createComputeClient(config: {
         else item.prepare?.reject(error as Error);
         continue;
       }
+      if (item.handle && item.kind.startsWith('rec-')) affinity.set(item.handle, slot);
       queue.shift(); void execute(slot, item);
     }
   };
@@ -244,16 +256,16 @@ export function createComputeClient(config: {
       if (makeOptionsKey([input.stamp.scope, input.stamp.rowsRevision, input.stamp.chartsRevision]) !==
         makeOptionsKey([spec.stamp.scope, spec.stamp.rowsRevision, spec.stamp.chartsRevision])) throw new Error('INPUT_STALE');
       spec = { ...spec, stamp: structuredClone(spec.stamp), options: structuredClone(spec.options), resources: spec.resources && structuredClone(spec.resources) };
-      const key = makeJobKey(spec.kind, spec.stamp);
+      const key = makeOptionsKey([makeJobKey(spec.kind, spec.stamp), laneKey(spec)]);
       let job = jobs.get(key);
       let subscriber!: Subscriber;
       const promise = new Promise<JobResponse>(resolve => { subscriber = { resolve, current: spec.isCurrent, cancelled: false }; });
-      if (job && latest.get(spec.kind) === job.id) { job.subscribers.push(subscriber); }
+      if (job && latest.get(laneKey(spec)) === job.id) { job.subscribers.push(subscriber); }
       else {
         job = { id: ++sequence, key, spec, subscribers: [subscriber], attempts: 0 };
-        latest.set(spec.kind, job.id);
+        latest.set(laneKey(spec), job.id);
         // Keep one latest pending request per kind; running jobs are logically cancelled.
-        for (let i = queue.length - 1; i >= 0; i--) if (queue[i].job?.spec.kind === spec.kind) {
+        for (let i = queue.length - 1; i >= 0; i--) if (queue[i].job && laneKey(queue[i].job!.spec) === laneKey(spec)) {
           const stale = queue.splice(i, 1)[0].job!; finish(stale, errorResponse(stale, 'SUPERSEDED', 'New input queued'));
         }
         jobs.set(key, job);
@@ -270,7 +282,7 @@ export function createComputeClient(config: {
       }
       const ownedJob = job;
       return { promise, accept(response, apply) {
-        if (disposed || subscriber.cancelled || response !== subscriber.received || latest.get(spec.kind) !== ownedJob.id
+        if (disposed || subscriber.cancelled || response !== subscriber.received || latest.get(laneKey(spec)) !== ownedJob.id
           || !currentInput(spec) || !subscriber.current() || !stampsEqual(response.stamp, spec.stamp)) return false;
         apply(response);
         return true;
@@ -279,6 +291,7 @@ export function createComputeClient(config: {
         subscriber.cancelled = true;
         subscriber.resolve(errorResponse(ownedJob, 'CANCELLED', 'Subscription cancelled'));
         if (ownedJob.subscribers.every(s => s.cancelled)) {
+          if (spec.lane?.startsWith('bridge:') && latest.get(laneKey(spec)) === ownedJob.id) latest.delete(laneKey(spec));
           const index = queue.findIndex(item => item.job === ownedJob);
           if (index >= 0) { queue.splice(index, 1); if (jobs.get(key) === ownedJob) jobs.delete(key); }
         }
@@ -291,9 +304,12 @@ export function createComputeClient(config: {
       for (let i = queue.length - 1; i >= 0; i--) if (queue[i].job) queue.splice(i, 1);
       for (const slot of [...slots]) {
         if (slot.busy) fail(slot, new Error('SCOPE_INVALIDATED'));
-        else for (const handle of [...slot.inputs]) if (handle !== '__ready__') {
-          slot.inputs.delete(handle);
-          slot.worker.postMessage({ protocol: 1, type: 'release-input', inputHandle: handle });
+        else {
+          slot.worker.postMessage({ protocol: 1, type: 'dispose-context', contextHandle: '*' });
+          for (const handle of [...slot.inputs]) if (handle !== '__ready__') {
+            slot.inputs.delete(handle);
+            slot.worker.postMessage({ protocol: 1, type: 'release-input', inputHandle: handle });
+          }
         }
       }
       pump();

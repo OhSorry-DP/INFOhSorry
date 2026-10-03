@@ -52,7 +52,7 @@ export function useComputeTask<T>(kind: S1Kind, input: ReturnType<typeof rendere
         const manifest = await computeClient.prepare(kind, resources);
         if (!valid()) return;
         const stamp = { ...input.stamp, ...manifest, optionsKey };
-        const calc = ({ 'dp-star': 'dp', 'r-star': 'r', 'sp-star': 'sp', weakness: 'playDataWeakness', layout: 'playDataLayout' })[kind];
+        const calc = ({ 'dp-star': 'dp', 'r-star': 'r', 'sp-star': 'sp', weakness: 'playDataWeakness', layout: 'playDataLayout', 'rec-context': 'recCtx', 'rec-query': 'recommend' })[kind];
         const { rowsRevision, scope } = stamp;
         const perf = beginPerf(calc, rowsRevision, scope.epoch, scope.iidxId);
         ticket = computeClient.submit({ kind, stamp, inputHandle: input.handle, affinityHandle: input.affinityHandle,

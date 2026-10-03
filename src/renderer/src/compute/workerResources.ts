@@ -3,12 +3,18 @@ import { createResourceCache } from './resourceCache';
 import { makeOptionsKey } from './revisionKey';
 import type { KernelResources, S1Kind } from './kernels';
 
-export interface ResourceSpec { key: string; url: string | null; globalKey?: string; digest?: string }
+export interface ResourceSpec { key: string; url: string | null; globalKey?: string; digest?: string; optional?: boolean }
 export interface ResourceManifest { modelRevision: string; dataRevision: string }
 const moduleSpec = (file: string, globalKey: string): ResourceSpec => ({ key: globalKey, url: `${LIB_BASE}/${file}`, globalKey });
 const norm = moduleSpec('normTitle.js', 'OhsorryNorm');
 const weak = moduleSpec('calcWeakness.js', 'OhsorryWeakness');
 const json = (key: string, file: string): ResourceSpec => ({ key, url: `${DATA_BASE}/${file}` });
+const recommendation = [norm, weak, moduleSpec('recommend.js', 'OhsorryRecommend'),
+  json('patterns', 'patterns-dp-1112.json'), json('rateRef', 'rate-reference-slim.json'),
+  json('featureScores', 'feature-scores-slim.json'), json('textageMeta', 'textage-meta.json'),
+  { key: 'seriesNames', url: 'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw/series-name.json', optional: true },
+  { ...json('weaknessPopMean', 'weakness-popmean.json'), optional: true },
+  json('rating', 'ohSorryRating.json'), json('zasa', 'zasa-data.json'), json('ereter', 'ereter-data.json')];
 export const DEFAULT_RESOURCES: Record<S1Kind, ResourceSpec[]> = {
   'dp-star': [norm, moduleSpec('OSR13.5%2B.js', 'OSR135'), moduleSpec('onlyOSR.js', 'onlyOSR'),
     moduleSpec('onlyOSRtoEreter.js', 'onlyOSRtoEreter'), json('rating', 'ohSorryRating.json'), json('ereter', 'ereter-data.json')],
@@ -18,6 +24,8 @@ export const DEFAULT_RESOURCES: Record<S1Kind, ResourceSpec[]> = {
     json('rating', 'ohSorryRating.json'), json('zasa', 'zasa-data.json')],
   layout: [norm, weak, json('patterns', 'patterns-dp-1112.json'), json('rateRef', 'rate-reference-slim.json'),
     json('rating', 'ohSorryRating.json'), json('zasa', 'zasa-data.json')],
+  'rec-context': recommendation,
+  'rec-query': recommendation,
 };
 
 export async function sha256(text: string): Promise<string> {
@@ -45,12 +53,18 @@ export function createWorkerResources() {
             data.push([spec.key, null]);
             continue;
           }
-          const source = await sources.load(makeOptionsKey([spec.url, spec.digest]), async () => {
+          let source;
+          try { source = await sources.load(makeOptionsKey([spec.url, spec.digest]), async () => {
             const response = await fetch(spec.url!);
             if (!response.ok) throw new Error(`RESOURCE_HTTP:${response.status}:${spec.key}`);
             const text = await response.text();
             return { text, digest: await sha256(text) };
-          });
+          }); } catch (error) {
+            if (!spec.optional) throw error;
+            libs[spec.key] = spec.key === 'seriesNames' ? {} : null;
+            data.push([spec.key, null]);
+            continue;
+          }
           if (spec.digest && source.digest !== spec.digest) throw new Error(`RESOURCE_DRIFT:${spec.key}`);
           if (spec.globalKey) {
             const old = installedGlobals.get(spec.globalKey);
@@ -64,12 +78,17 @@ export function createWorkerResources() {
             libs[spec.key] = lib;
             models.push([spec.key, source.digest]);
           } else {
-            libs[spec.key] = await parsed.load(makeOptionsKey([spec.url, source.digest]), async () => JSON.parse(source.text));
+            try {
+              libs[spec.key] = await parsed.load(makeOptionsKey([spec.url, source.digest]), async () => JSON.parse(source.text));
+            } catch (error) {
+              if (!spec.optional) throw error;
+              libs[spec.key] = spec.key === 'seriesNames' ? {} : null;
+            }
             data.push([spec.key, source.digest]);
           }
         }
         const sort = <T extends string | null>(items: [string, T][]) => items.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
-        return { libs, manifest: { modelRevision: makeOptionsKey(['s1-adapter-1', sort(models)]),
+        return { libs, manifest: { modelRevision: makeOptionsKey([kind.startsWith('rec-') ? 's3-adapter-1' : 's1-adapter-1', sort(models)]),
           dataRevision: makeOptionsKey(sort(data)) } };
       });
       tail = task.catch(() => {});

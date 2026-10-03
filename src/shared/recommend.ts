@@ -103,6 +103,8 @@ export interface RecCandidate {
   // 본체 hashtag / 배치 뱃지 (recommend.js 결과 그대로).
   hashtags?: string[];
   bestLabel?: string;
+  cardHashtags?: string;
+  cardBestLabel?: string;
 }
 
 export type RecStage = 'ec' | 'hc' | 'exh';
