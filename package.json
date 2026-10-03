@@ -56,7 +56,6 @@
     "win": {
       "icon": "ohsorry.ico",
       "verifyUpdateCodeSignature": false,
-      "requestedExecutionLevel": "requireAdministrator",
       "target": [
         {
           "target": "nsis",
