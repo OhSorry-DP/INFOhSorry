@@ -98,12 +98,21 @@ export function createComputeClient(config: {
     workerGeneration: 0, requestId: job.id, kind: job.spec.kind, stamp: job.spec.stamp, status: 'error', code, message });
   const finish = (job: Job, response: JobResponse, trace?: { stages: ResultStage[]; start: number; origin: 'worker' | 'cache' }) => {
     const finishStart = monoNow();
-    const cloneStart = monoNow(); let cloneCount = 0;
+    const cloneStart = monoNow(); let cloneCount = 0, decodeMs = 0, cloneMs = 0;
     if (jobs.get(job.key) === job) jobs.delete(job.key);
     for (const subscriber of job.subscribers) {
       const current = !subscriber.cancelled && latest.get(laneKey(job.spec)) === job.id && currentInput(job.spec) && subscriber.current();
       if (current) {
-        subscriber.received = structuredClone(response); cloneCount++;
+        // The cache and worker envelope retain encoded data. Rebuild one independent
+        // decoded value and stamp for each subscriber without cloning the full tree.
+        if (response.status === 'ready') {
+          const stampStart = monoNow(); const stamp = structuredClone(response.stamp); cloneMs += monoNow() - stampStart;
+          const valueStart = monoNow(); const value = decodeValue(response.value); decodeMs += monoNow() - valueStart;
+          const envelopeStart = monoNow(); subscriber.received = { ...response, stamp, value }; cloneMs += monoNow() - envelopeStart;
+        } else {
+          const errorCloneStart = monoNow(); subscriber.received = structuredClone(response); cloneMs += monoNow() - errorCloneStart;
+        }
+        cloneCount++;
         subscriber.resolve(subscriber.received);
       }
       else { counters.stale++; subscriber.resolve(errorResponse(job, 'STALE_RESULT', 'Calculation superseded or cancelled')); }
@@ -113,8 +122,12 @@ export function createComputeClient(config: {
     if (trace) {
       const cloneEnd = monoNow();
       trace.stages.push({ requestId: job.id, workerGeneration: response.workerGeneration, kind: job.spec.kind,
+        rowsRev: job.spec.stamp.rowsRevision, epoch: job.spec.stamp.scope.epoch, stage: 'decode',
+        durMs: decodeMs.toFixed(3), startMonoMs: cloneStart.toFixed(3), endMonoMs: (cloneStart + decodeMs).toFixed(3),
+        origin: trace.origin, subscriberCount: job.subscribers.length });
+      trace.stages.push({ requestId: job.id, workerGeneration: response.workerGeneration, kind: job.spec.kind,
         rowsRev: job.spec.stamp.rowsRevision, epoch: job.spec.stamp.scope.epoch, stage: 'subscriber-clone',
-        durMs: duration(cloneStart, cloneEnd), startMonoMs: cloneStart.toFixed(3), endMonoMs: cloneEnd.toFixed(3),
+        durMs: cloneMs.toFixed(3), startMonoMs: cloneStart.toFixed(3), endMonoMs: (cloneStart + cloneMs).toFixed(3),
         origin: trace.origin, subscriberCount: job.subscribers.length, cloneCount });
       const end = monoNow();
       trace.stages.push({ requestId: job.id, workerGeneration: response.workerGeneration, kind: job.spec.kind,
@@ -250,9 +263,7 @@ export function createComputeClient(config: {
           const cacheSetStart = monoNow(); cache.set(job.key, response.value, byteLength, makeOptionsKey(spec.stamp.scope));
           const cacheSetEnd = monoNow(); trace.push(stageFields('cache-set', cacheSetStart, cacheSetEnd));
         }
-        const decodeStart = monoNow(); const decoded = decodeValue(response.value); const decodeEnd = monoNow();
-        trace.push(stageFields('decode', decodeStart, decodeEnd));
-        finish(job, { ...response, value: decoded }, { stages: trace, start: continuation, origin: 'worker' });
+        finish(job, response, { stages: trace, start: continuation, origin: 'worker' });
       } else { trace.push(stageFields('error-response', continuation, monoNow())); finish(job, response, { stages: trace, start: continuation, origin: 'worker' }); }
       if (spec.kind === 'weakness' || spec.kind === 'layout' || spec.kind.startsWith('rec-')) affinity.set(spec.inputHandle, slot);
     } catch (error) {
@@ -354,21 +365,15 @@ export function createComputeClient(config: {
         jobs.set(key, job);
         if (cache.has(key)) {
           counters.cacheHit++;
-          const cacheStart = monoNow();
-          const hit = structuredClone(cache.get(key));
-          const cacheEnd = monoNow();
           const cachedJob = job;
-          const decodeStart = monoNow(); const decoded = decodeValue(hit); const decodeEnd = monoNow();
+          const cacheStart = monoNow(); const hit = cache.get(key); const cacheEnd = monoNow();
           const response: JobResponse = { protocol: 1, requestId: cachedJob.id, workerGeneration: generation,
-            kind: spec.kind, stamp: spec.stamp, status: 'ready', value: decoded };
+            kind: spec.kind, stamp: spec.stamp, status: 'ready', value: hit };
           const start = monoNow();
           queueMicrotask(() => {
             const stages: ResultStage[] = [{ requestId: cachedJob.id, workerGeneration: generation, kind: spec.kind,
               rowsRev: spec.stamp.rowsRevision, epoch: spec.stamp.scope.epoch, stage: 'cache-hit-clone-decode', durMs: duration(cacheStart, cacheEnd),
               startMonoMs: cacheStart.toFixed(3), endMonoMs: cacheEnd.toFixed(3), origin: 'cache', subscriberCount: cachedJob.subscribers.length }];
-            stages.push({ requestId: cachedJob.id, workerGeneration: generation, kind: spec.kind, rowsRev: spec.stamp.rowsRevision,
-              epoch: spec.stamp.scope.epoch, stage: 'decode', durMs: duration(decodeStart, decodeEnd), startMonoMs: decodeStart.toFixed(3),
-              endMonoMs: decodeEnd.toFixed(3), origin: 'cache', subscriberCount: cachedJob.subscribers.length });
             finish(cachedJob, response, { stages, start, origin: 'cache' });
           });
         } else {
