@@ -70,6 +70,7 @@ import { isFloorSeedCurrent, resolveAccountSnapshotProfile, type AccountScope, t
 import type { InfinitasSessionState } from '../../shared/session';
 import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 import { isUploadDue } from './uploadDue';
+import { INITIAL_AUTO_UPLOAD_STABLE_MS, isInitialAutoUploadReady } from './initialAutoUpload';
 import { calculateScoped, transferFloor, reuseOsrInput, type ScopedCalculation } from './scopedCalculation';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
@@ -147,6 +148,7 @@ const APP_VERSION = __APP_VERSION__;
 //   ※ 리모트 실시간 푸시(me:update SSE) / TSV reload 는 이 주기와 무관(별도 effect).
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
 const AUTO_UPLOAD_MIN_GAP_MS = 3 * 60 * 1000; // 기록 변경 업로드 최소 간격 — 3분(dump-user 20~26초라 겹치지 않는다)
+const INITIAL_AUTO_UPLOAD_DELAY_MS = INITIAL_AUTO_UPLOAD_STABLE_MS;
 const MANUAL_UPLOAD_COOLDOWN_MS = 5 * 60 * 1000;
 const LAST_UPLOAD_KEY_PREFIX = 'infohsorry.lastUploadAt.';
 // 계정별 마지막 업로드 성공 시각. 읽기 실패·손상은 0(기록 없음 → 바로 업로드)으로 본다.
@@ -247,6 +249,7 @@ export default function App() {
   const rows = rowsState.rows;
   const rowsOwnerId = rowsState.scope.iidxId;
   const rowsRef = useRef<SongRow[]>([]);
+  const rowsRevisionRef = useRef(0);
   const rowsScopeRef = useRef<AccountScope>(rowsState.scope);
   const accountScopeRef = useRef<AccountScope>({ iidxId: null, epoch: 0 });
   const viewerReadSeqRef = useRef(0);
@@ -291,6 +294,7 @@ export default function App() {
     osrAccumScopeRef.current = scope;
     const nextRows = clearRows || previous.iidxId !== nextId ? [] : rowsRef.current;
     rowsRef.current = nextRows;
+    rowsRevisionRef.current += 1;
     rowsScopeRef.current = scope;
     setRowsState({ rows: nextRows, scope });
     if (clearRows) {
@@ -305,6 +309,7 @@ export default function App() {
       || sessionRef.current.pid !== expectedSession.pid
       || sessionRef.current.generation !== expectedSession.generation) return false;
     rowsRef.current = nextRows;
+    rowsRevisionRef.current += 1;
     rowsScopeRef.current = expectedScope;
     setRowsState({ rows: nextRows, scope: expectedScope });
     tsvMtimeRef.current = mtime;
@@ -449,6 +454,7 @@ export default function App() {
   const [manualUploadBusy, setManualUploadBusy] = useState(false);
   const manualUploadBusyRef = useRef(false);
   const autoUploadBusyRef = useRef(false);
+  const initialAutoUploadSucceededRef = useRef(false);
   const [manualUploadNow, setManualUploadNow] = useState(() => Date.now());
 
   useEffect(() => {
@@ -1454,8 +1460,8 @@ export default function App() {
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData) });
-  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData) };
+  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData), dpCalcScope: dpScopedResult.scope, rCalcScope: rScopedResult.scope, rowsRevision: rowsRevisionRef.current, spReady: spSkillLib != null && cpiData != null });
+  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData), dpCalcScope: dpScopedResult.scope, rCalcScope: rScopedResult.scope, rowsRevision: rowsRevisionRef.current, spReady: spSkillLib != null && cpiData != null };
 
   function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
     const p = uploadStateRef.current.profile;
@@ -1666,20 +1672,82 @@ export default function App() {
         const uploadedAt = Date.now();
         lastUploadAtRef.current = uploadedAt;
         setLastUploadAt(uploadedAt);
+        if (trigger === 'auto') initialAutoUploadSucceededRef.current = true;
       }
       return outcome;
     };
     // 스냅샷 직후 호출 — 해당 계정의 마지막 업로드 시각이 주기를 넘었을 때만 올린다. 진행 중이면 겹치지 않는다.
+    let initialTimer: number | null = null;
+    let initialKey = '';
+    const cancelInitialTimer = (): void => {
+      if (initialTimer != null) window.clearTimeout(initialTimer);
+      initialTimer = null;
+      initialKey = '';
+    };
     const runIfDue = (iidxId: string): void => {
-      const lastAt = readLastUploadAt(iidxId);
-      if (!isUploadDue(lastAt, Date.now(), AUTO_UPLOAD_MIN_GAP_MS)) return;
-      if (autoUploadBusyRef.current) return;
-      // 별값 계산 데이터(onlyOSR·rating·ereter) 로드 전이면 건너뛴다 — 시각을 안 찍으므로 다음 스냅샷에서 다시 판정.
-      if (!uploadStateRef.current.calcReady) { console.log(`[upload] due id=${iidxId} 보류: 계산 데이터 로드 전`); return; }
-      autoUploadBusyRef.current = true;
-      console.log(`[upload] due id=${iidxId} last=${lastAt ? new Date(lastAt).toISOString() : 'none'}`);
-      void tryUpload('auto').finally(() => { autoUploadBusyRef.current = false; });
-      setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
+      const state = uploadStateRef.current;
+      const activeSession = sessionRef.current;
+      const snap = lastSnapshotRef.current;
+      const ready = isInitialAutoUploadReady({
+        rowsPresent: rowsRef.current.length > 0,
+        dpReady: isFloorSeedCurrent(state.dpCalcScope, state.scope),
+        rReady: isFloorSeedCurrent(state.rCalcScope, state.scope),
+        spReady: state.spReady,
+        modelsReady: state.calcReady,
+      });
+      const key = JSON.stringify([iidxId, state.scope.iidxId, state.scope.epoch, state.rowsRevision, activeSession.pid, activeSession.generation]);
+      if (!ready || !snap || snap.iidxId !== iidxId || snap.generation !== activeSession.generation
+        || state.scope.iidxId !== iidxId || !isFloorSeedCurrent(state.scope, accountScopeRef.current)
+        || selectedViewerIdRef.current !== iidxId || activeSession.pid == null) {
+        cancelInitialTimer();
+        if (!ready) console.log(`[upload] due id=${iidxId} 보류: 계산 준비 전`);
+        return;
+      }
+      if (initialAutoUploadSucceededRef.current) {
+        cancelInitialTimer();
+        const firstSuccessAt = readLastUploadAt(iidxId);
+        if (!isUploadDue(firstSuccessAt, Date.now(), AUTO_UPLOAD_MIN_GAP_MS) || autoUploadBusyRef.current) return;
+        autoUploadBusyRef.current = true;
+        console.log(`[upload] due id=${iidxId} last=${firstSuccessAt ? new Date(firstSuccessAt).toISOString() : 'none'}`);
+        void tryUpload('auto').then((outcome) => {
+          if (outcome.kind === 'success') initialAutoUploadSucceededRef.current = true;
+        }).finally(() => { autoUploadBusyRef.current = false; });
+        setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
+        return;
+      }
+      if (initialTimer != null && initialKey === key) return;
+      cancelInitialTimer();
+      initialKey = key;
+      initialTimer = window.setTimeout(() => {
+        initialTimer = null;
+        initialKey = '';
+        const current = uploadStateRef.current;
+        const currentSession = sessionRef.current;
+        const currentSnapshot = lastSnapshotRef.current;
+        if (JSON.stringify([iidxId, current.scope.iidxId, current.scope.epoch, current.rowsRevision, currentSession.pid, currentSession.generation]) !== key
+          || !currentSnapshot || currentSnapshot.iidxId !== iidxId || currentSnapshot.generation !== currentSession.generation
+          || currentSession.pid == null || current.scope.iidxId !== iidxId
+          || !isFloorSeedCurrent(current.scope, accountScopeRef.current)
+          || !isFloorSeedCurrent(current.dpCalcScope, current.scope) || !isFloorSeedCurrent(current.rCalcScope, current.scope)
+          || !current.calcReady || !current.spReady || rowsRef.current.length === 0
+          || selectedViewerIdRef.current !== iidxId || autoUploadBusyRef.current) {
+          runIfDue(iidxId);
+          return;
+        }
+        const lastAt = readLastUploadAt(iidxId);
+        if (!isUploadDue(lastAt, Date.now(), AUTO_UPLOAD_MIN_GAP_MS)) return;
+        const provenanceOk = (() => {
+          const gate = uploadIdentityOk('auto');
+          return gate.ok && gate.id === iidxId;
+        })();
+        if (!provenanceOk) return;
+        autoUploadBusyRef.current = true;
+        console.log(`[upload] initial due id=${iidxId} stable=${INITIAL_AUTO_UPLOAD_DELAY_MS}ms`);
+        void tryUpload('auto').then((outcome) => {
+          if (outcome.kind === 'success') initialAutoUploadSucceededRef.current = true;
+        }).finally(() => { autoUploadBusyRef.current = false; });
+        setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
+      }, INITIAL_AUTO_UPLOAD_DELAY_MS);
     };
     const runManual = (): void => {
       if (manualUploadBusyRef.current || Date.now() - lastUploadAtRef.current < MANUAL_UPLOAD_COOLDOWN_MS) return;
@@ -1698,8 +1766,14 @@ export default function App() {
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
       window.infohsorry.upload.finalDone(outcome);
     })());
-    return () => { offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
+    return () => { cancelInitialTimer(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
   }, []);
+
+  // Readiness can change after the last snapshot, so it must arm/recheck the timer itself.
+  useEffect(() => {
+    const id = lastSnapshotRef.current?.iidxId;
+    if (id) (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue?.(id);
+  }, [rows, rowsState.scope.iidxId, rowsState.scope.epoch, dp12StarResult, userRStar, spStarResult, onlyOSR2eLib, ratingData, ereterData, spSkillLib, cpiData, session.pid, session.generation]);
 
 
 
