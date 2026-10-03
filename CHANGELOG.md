@@ -2,9 +2,9 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 2026-10-03 — 분석 피처 점수 업로드에 HANDS 전송 (미릴리스)
+### v0.0.135 — 2026-10-03 분석 피처 점수 업로드에 HANDS 전송
 
-- `Analysis.tsx` `upsertFeatureScore` 에 `p_os_hands` 추가 — HANDS(DP 11번째 대표 피처)가 업로드로 갱신되지 않던 문제. 다음 릴리스에 포함.
+- `Analysis.tsx` `upsertFeatureScore` 에 `p_os_hands` 추가 — HANDS(DP 11번째 대표 피처)가 업로드로 갱신되지 않던 문제.
 
 ### 2026-10-03 — 문서를 현행 코드에 맞춤 (앱 변경 없음, 버전 무관)
 
