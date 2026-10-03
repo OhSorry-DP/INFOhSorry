@@ -1111,14 +1111,15 @@ export default function App() {
 
   // 프로필 (DJ NAME / IIDX ID / SP / DP rank) — 메모리에서 polling
   const profile = useProfile(refluxState);
-  const analysisLive = useRef({ input: analysisInput, profileId: profile.iidxId });
-  analysisLive.current = { input: analysisInput, profileId: profile.iidxId };
+  // Analysis computes the selected account even without a running game profile.
+  // Upload ownership is checked separately by the Analysis upload gate.
+  const analysisLive = useRef({ input: analysisInput });
+  analysisLive.current = { input: analysisInput };
   const analysisCurrent = () => analysisLive.current.input === analysisInput
     && isFloorSeedCurrent(analysisInput.stamp.scope, accountScopeRef.current)
     && isFloorSeedCurrent(analysisInput.stamp.scope, rowsScopeRef.current)
     && selectedViewerIdRef.current === analysisInput.stamp.scope.iidxId
-    && rowsRevisionRef.current === analysisInput.stamp.rowsRevision
-    && analysisLive.current.profileId?.replace(/-/g, '') === analysisInput.stamp.scope.iidxId?.replace(/-/g, '');
+    && rowsRevisionRef.current === analysisInput.stamp.rowsRevision;
   const liveIidxId = session.pid != null && profile.iidxId && VALID_IIDX_ID.test(profile.iidxId) ? profile.iidxId : null;
   const clearLiveSessionState = useCallback(() => {
     lastSnapshotRef.current = null;
@@ -3101,6 +3102,4 @@ function StageSpinner({ state }: { state: RefluxState }): JSX.Element | null {
     </span>
   );
 }
-
-
 
