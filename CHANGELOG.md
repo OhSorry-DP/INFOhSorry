@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.140 — 2026-10-04 Analysis 계산도 백그라운드(Worker)로 · 멈춤 구간 진단 보강
+
+- Analysis 탭의 약점 vec(calcUserWeakness)·pattern-score vec(computePatternScoreVec) 계산을 Worker 로. renderer 가 성공 로드한 normTitle·calcWeakness 원문과 patterns·rate-ref·feature-scores·rating·zasa 의 같은 snapshot 을 Worker 에 넘겨 두 realm 이 다른 자료를 쓰지 않게 했다. 두 작업은 서로 기다리지 않고 독립 실행. DOM 출력(analysisRender)은 화면 스레드에 그대로.
+- feature score 업로드는 renderer 가 계속 하되, 결과 채택 시·발송 직전·응답 후에 계정/epoch·입력 revision·모델/자료 stamp 를 다시 검증하고 대상 ID 를 고정한다. 중복 판정은 NOTES 소수 2자리 대신 pattern-score 전체 digest + 자료 stamp + 갱신 주기 intent 기준, 실패는 재시도 가능. 원격 브라우저 모드는 계속 업로드하지 않는다.
+- 게임이 꺼져 있어도(저장된 계정만 볼 때) Analysis 계산이 돈다 — 계산 조건에 게임 프로필을 넣지 않는다(업로드는 기존처럼 소유자 일치 시에만).
+- 진단: 화면 정지(renderer-stall) 때 직전 1초의 PERF 와 겹친 long task 를 `renderer-stall-context` 로 함께 기록. 100ms 이상 long task 는 초당 1줄로 제한해 따로 기록. Analysis 진입·로드·snapshot·DOM·percentile 구간 PERF 추가.
+- 패리티: 고정 fixture 로 기존 동기 경로와 약점 `__entries`·모든 축, pattern-score 모든 축 exact equality(Worker 1~4개). 포장 exe 스모크(합성 400곡, ANALYSIS 탭 실제 클릭·업로드 RPC stub): 두 계산 Worker status=ok(약점 0.57초·pattern-score 0.03초). 남은 화면 정지 0.23초는 약점 결과를 받아 채택하는 구간(결과 메시지 역직렬화 추정)으로 좁혀짐 — 다음 단계.
+
 ### v0.0.139 — 2026-10-04 추천 계산도 백그라운드(Worker)로
 
 - 추천 context(createRecCtx)·EC/HC/EXH·약점·연습·사다리·성장 추천과 카드 태그/해시태그 계산을 Worker 로. context 는 계정/epoch 별 affinity Worker 하나에서 직렬 실행(setLayoutMode 명시), 리롤 토큰별 결과·후보 풀 캐시, 자료 polling 은 리롤을 올리지 않는다(drop+refill 유지). 원격 bridge(meta/clear/practice/ladder/growth/targets)는 비동기 facade 로 같은 payload 계약.
