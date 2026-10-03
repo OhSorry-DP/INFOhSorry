@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.139 — 2026-10-04 추천 계산도 백그라운드(Worker)로
+
+- 추천 context(createRecCtx)·EC/HC/EXH·약점·연습·사다리·성장 추천과 카드 태그/해시태그 계산을 Worker 로. context 는 계정/epoch 별 affinity Worker 하나에서 직렬 실행(setLayoutMode 명시), 리롤 토큰별 결과·후보 풀 캐시, 자료 polling 은 리롤을 올리지 않는다(drop+refill 유지). 원격 bridge(meta/clear/practice/ladder/growth/targets)는 비동기 facade 로 같은 payload 계약.
+- 같은 내용의 자료가 다시 도착하면(URL/객체만 다름) 내용 digest 로 기존 context 를 재사용. 실제 패턴·필터가 바뀌면 새로 만든다.
+- 패리티: 고정 RNG 로 기존 동기 경로와 picked/pool·tags·손배치·bridge payload deep-equal. 포장 exe 스모크(합성 400곡): recCtx 0.55~0.59초·추천 쿼리 0.03~0.28초 모두 Worker status=ok, 시작 직후 화면 정지 6회 → 1회(0.25초).
+
 ### v0.0.138 — 2026-10-04 무거운 계산을 백그라운드(Worker)로 · 멈춤 진단 기록
 
 - **별값 DP★·r★·SP★ 와 PlayData 약점 벡터·배치 라벨 계산을 module Web Worker 풀로**(코어 수 −1, 최대 4). 계산 중에도 화면이 멈추지 않고, 같은 계정이면 이전 값을 「계산 중」 표시와 함께 유지, 계정이 바뀌면 즉시 제거. 같은 입력은 결과 캐시로 재계산하지 않는다. Worker 결과는 요청 ID·계정/epoch·입력 revision 이 모두 현재일 때만 채택(오래된 응답은 화면·하한·업로드에 영향 없음).
