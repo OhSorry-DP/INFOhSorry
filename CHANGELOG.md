@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### v0.0.137 — 2026-10-03 항상 관리자 권한으로 실행
+### v0.0.137 — 2026-10-03 항상 관리자 권한으로 실행 (🔴 철회 — 실행되지 않아 릴리스 내림, 다음 버전에서 되돌림)
 
 - Windows 실행 파일 매니페스트에 `requestedExecutionLevel: requireAdministrator`(electron-builder `build.win`). 게임(bm2dx.exe)이 관리자 권한으로 뜨는 환경에서 일반 권한 앱이 프로세스를 감지·읽지 못하던 문제 — 사용자 INF PC 에서 관리자 실행으로만 감지되는 것을 확인. 켤 때마다 UAC 창이 뜬다.
 
