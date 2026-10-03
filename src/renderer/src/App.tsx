@@ -72,6 +72,7 @@ import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 import { isUploadDue } from './uploadDue';
 import { INITIAL_AUTO_UPLOAD_STABLE_MS, isInitialAutoUploadReady } from './initialAutoUpload';
 import { calculateScoped, transferFloor, reuseOsrInput, type ScopedCalculation } from './scopedCalculation';
+import { beginPerf, endPerf, perfEvent } from './perfDiag';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
 //   buildRecsWithPool / buildWeaknessRecs 의 raw row 를 기존 Recommendations / RecCard 가 쓰는 RecCandidate 로 변환.
@@ -256,6 +257,13 @@ export default function App() {
   const [tsvMtime, setTsvMtime] = useState<number>(0);
   const tsvMtimeRef = useRef<number>(0);
   const [floorState, setFloorState] = useState<{ scope: AccountScope; starFloor: number | null; rStarFloor: number | null }>({ scope: { iidxId: null, epoch: 0 }, starFloor: null, rStarFloor: null });
+  const floorLogRef = useRef(floorState);
+  useEffect(() => {
+    const old = floorLogRef.current;
+    if (old.starFloor !== floorState.starFloor) perfEvent('floor-update', { origin: 'effect', calc: 'dp', old: old.starFloor, new: floorState.starFloor, changed: true, epoch: floorState.scope.epoch });
+    if (old.rStarFloor !== floorState.rStarFloor) perfEvent('floor-update', { origin: 'effect', calc: 'r', old: old.rStarFloor, new: floorState.rStarFloor, changed: true, epoch: floorState.scope.epoch });
+    floorLogRef.current = floorState;
+  }, [floorState]);
   const floorCurrent = isFloorSeedCurrent(floorState.scope, rowsState.scope);
   const starFloor = floorCurrent ? floorState.starFloor : null;
   const rStarFloor = floorCurrent ? floorState.rStarFloor : null;
@@ -294,8 +302,8 @@ export default function App() {
     osrAccumScopeRef.current = scope;
     const nextRows = clearRows || previous.iidxId !== nextId ? [] : rowsRef.current;
     rowsRef.current = nextRows;
-    rowsRevisionRef.current += 1;
     rowsScopeRef.current = scope;
+    perfEvent('scope-invalidate', { reason: 'account', previousEpoch: previous.epoch, epoch: scope.epoch, clearRows });
     setRowsState({ rows: nextRows, scope });
     if (clearRows) {
       tsvMtimeRef.current = 0;
@@ -313,6 +321,7 @@ export default function App() {
     rowsScopeRef.current = expectedScope;
     setRowsState({ rows: nextRows, scope: expectedScope });
     tsvMtimeRef.current = mtime;
+    perfEvent('rows-commit', { source: 'account-read', rowsRev: rowsRevisionRef.current, rowsCount: nextRows.length, epoch: expectedScope.epoch });
     setTsvMtime(mtime);
     return true;
   }, []);
@@ -1204,6 +1213,8 @@ export default function App() {
     const result = calculateScoped(dpResultCacheRef.current, rowsState.scope,
       [rows, onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor], () => {
     if (!onlyOSR2eLib || !ratingData || !ereterData || osrChartsInput.length === 0) return null;
+    const perf = beginPerf('dp', rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId);
+    let perfStatus: 'ok' | 'error' = 'ok';
     try {
       const r = onlyOSR2eLib.inferEreter(
         osrChartsInput, ratingData, { charts: ereterData.charts, players: {} },
@@ -1215,8 +1226,11 @@ export default function App() {
       console.log(`[★] ereterStar=${r.ereterStar.toFixed(2)}${r.ratcheted ? ` (래칫 — 계산값 ${raw.toFixed(2)})` : ''} native(onlyOSR)=${nativeStar.toFixed(2)} tier=${r.tier ?? '-'} nFit12=${r.nFit12 ?? '?'}`);
       return { star: r.ereterStar, starRaw: raw, ratcheted: r.ratcheted, nativeStar, tier: r.tier ?? null, nFit12: r.nFit12 ?? null };
     } catch (e) {
+      perfStatus = 'error';
       console.warn('[★] inferEreter 실패:', (e as Error).message);
       return null;
+    } finally {
+      endPerf('dp', perf, rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId, perfStatus);
     }
     });
     dpResultCacheRef.current = result;
@@ -1240,6 +1254,8 @@ export default function App() {
     const result = calculateScoped(rResultCacheRef.current, rowsState.scope,
       [rows, userRateStarLib, ratingData, dpAllCharts, rStarFloor], () => {
     if (!userRateStarLib || !ratingData || dpAllCharts.length === 0) return null;
+    const perf = beginPerf('r', rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId);
+    let perfStatus: 'ok' | 'error' = 'ok';
     try {
       const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
       const charts = dpAllCharts.map((c) => ({
@@ -1260,8 +1276,11 @@ export default function App() {
       console.log(`[r★] ${result.rStar.toFixed(2)} (${result.method || result.reason || 'unknown'}, charts ${result.nCharts})`);
       return result.rStar;
     } catch (e) {
+      perfStatus = 'error';
       console.warn('[r★] inferUserRStar 실패 — 기존 users.r_star 보존:', (e as Error).message);
       return null;
+    } finally {
+      endPerf('r', perf, rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId, perfStatus);
     }
     });
     rResultCacheRef.current = result;
@@ -1283,6 +1302,8 @@ export default function App() {
   //   표본부족(SP12 클리어 매칭 0) → null. DP★ 와 독립. 구 gist(guarded 미배포)는 unified 로 fallback.
   const spStarResult = useMemo<SpSkillResult | null>(() => {
     if (!spSkillLib || !cpiData || sp12Charts.length === 0) return null;
+    const perf = beginPerf('sp', rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId);
+    let perfStatus: 'ok' | 'error' = 'ok';
     try {
       const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
       const own = sp12Charts.map((c) => ({ title: c.title, diff: slotToDiff(c.slot), gameLevel: 12, lampNum: lampNum(c.lamp) }));
@@ -1293,8 +1314,11 @@ export default function App() {
       console.log(`[SP★] sp_cpi=${r.cpiInt} sp_star=${r.starRounded}${r.uniStarRounded != null ? ` (unified85 ★${r.uniStarRounded}${r.applied ? ', gauge보정' : ''})` : ''} (pairs ${r.nPairs})`);
       return r;
     } catch (e) {
+      perfStatus = 'error';
       console.warn('[SP★] computeSpStarGuarded 실패:', (e as Error).message);
       return null;
+    } finally {
+      endPerf('sp', perf, rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId, perfStatus);
     }
   }, [spSkillLib, cpiData, sp12Charts]);
 
@@ -1769,7 +1793,7 @@ export default function App() {
     return () => { cancelInitialTimer(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
   }, []);
 
-  // Readiness can change after the last snapshot, so it must arm/recheck the timer itself.
+  // 마지막 스냅샷 이후에도 준비 상태가 바뀔 수 있으므로 타이머를 직접 설정하거나 재확인한다.
   useEffect(() => {
     const id = lastSnapshotRef.current?.iidxId;
     if (id) (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue?.(id);
@@ -1905,7 +1929,16 @@ export default function App() {
     if (!recLibs) return null;
     if (rows.length === 0) return null;
     try {
-      return createRecCtx({ libs: recLibs, rows, ratingData, zasaData, ereterData, isInfChart });
+      const perf = beginPerf('recCtx', rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId);
+      let perfStatus: 'ok' | 'error' = 'ok';
+      try {
+      return createRecCtx({ libs: recLibs, rows, ratingData, zasaData, ereterData, isInfChart, perfContext: { rowsRev: rowsRevisionRef.current, epoch: rowsState.scope.epoch, accountId: rowsState.scope.iidxId } });
+      } catch (e) {
+        perfStatus = 'error';
+        throw e;
+      } finally {
+        endPerf('recCtx', perf, rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId, perfStatus);
+      }
     } catch (e) {
       console.warn('[App] recCtx 생성 실패:', (e as Error).message);
       return null;
@@ -2527,6 +2560,9 @@ export default function App() {
             ) : tab === 'playdata' ? (
               <PlayData
                 rows={rows}
+                rowsRev={rowsRevisionRef.current}
+                epoch={rowsState.scope.epoch}
+                accountId={rowsState.scope.iidxId}
                 zasaData={zasaData}
                 ratingData={ratingData}
                 pickTarget={playDataTarget}

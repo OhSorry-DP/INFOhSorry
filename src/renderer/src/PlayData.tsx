@@ -26,6 +26,7 @@ import { lampStyle } from './lampStyle';
 import { copyToClipboard } from './ChartTable';
 import { loadGistModule, loadJson, rowsToWeaknessCharts } from './gistLib';
 import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
+import { beginPerf, endPerf } from './perfDiag';
 
 // DJ Level letter 색 — ChartTable 의 LETTER_COLOR 와 동일 (inline style 적용).
 //   CSS [data-letter] 셀렉터도 같이 동작 (다크 테마 override) — ChartTable 와 같은 디자인 시스템 reuse.
@@ -515,6 +516,9 @@ const SLOT_TO_DIFF_FILTER: Record<string, string> = {
 // ─── 컴포넌트 본체 ──────────────────────────────────────────────────────
 interface Props {
   rows: SongRow[];
+  rowsRev: number;
+  epoch: number;
+  accountId: string | null;
   zasaData: ZasaData | null;
   ratingData: RatingData | null;
   // 외부(SP 서열표 등)에서 곡 클릭 시 — 토글/diff 맞추고 검색창에 곡명 입력.
@@ -522,7 +526,10 @@ interface Props {
   onPickConsumed?: () => void;
 }
 
-export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPickConsumed }: Props): JSX.Element {
+export default function PlayData({ rows, rowsRev, epoch, accountId, zasaData, ratingData, pickTarget, onPickConsumed }: Props): JSX.Element {
+  // 계측 값만 바뀌어도 약점 계산이 다시 실행되지 않도록 최신 값을 참조한다.
+  const perfContextRef = useRef({ rowsRev, epoch, accountId });
+  perfContextRef.current = { rowsRev, epoch, accountId };
   const [songsById, setSongsById] = useState<Map<number, SongEntry> | null>(null);
   const [textageSongs, setTextageSongs] = useState<TextageMeta['songs'] | null>(null);
   const [seriesNames, setSeriesNames] = useState<Record<string, string>>({});
@@ -601,6 +608,9 @@ export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPic
     if (!libs.weakness || !libs.norm || !libs.patterns) return null;
     const wCharts = rowsToWeaknessCharts(rows);
     if (wCharts.length === 0) return null;
+    const { rowsRev, epoch, accountId } = perfContextRef.current;
+    const perf = beginPerf('playDataWeakness', rowsRev, epoch, accountId);
+    let perfStatus: 'ok' | 'error' = 'ok';
     try {
       const v = libs.weakness.calcUserWeakness({
         allCharts: wCharts,
@@ -613,8 +623,11 @@ export default function PlayData({ rows, zasaData, ratingData, pickTarget, onPic
       if (!v || !v.__entries) return null;
       return v;
     } catch (e) {
+      perfStatus = 'error';
       console.warn('[PlayData] calcUserWeakness 실패:', (e as Error).message);
       return null;
+    } finally {
+      endPerf('playDataWeakness', perf, rowsRev, epoch, accountId, perfStatus);
     }
   }, [libsReady, rows, ratingData, zasaData]);
 

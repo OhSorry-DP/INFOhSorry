@@ -16,6 +16,7 @@ import { norm } from '../../shared/match';
 import { isVariantTitle } from '../../shared/variants';
 import { loadGistModule, loadJson, SLOT_TO_DIFF_KEY } from './gistLib';
 import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
+import { beginPerf, endPerf } from './perfDiag';
 
 // variant(AC≠INF 동일 title+diff 다중채보) INF 플레이 표식 — recommend.js userChartByKey 의
 //   variantInfIds Set 에 이 값 하나만 넣어 매칭(textage_song_id 가 없는 TSV 모델이라 sentinel 사용).
@@ -202,6 +203,7 @@ export interface RecContextInput {
   //   buildWeaknessRecs 가 patternsMap 전체(AC+INF)를 순회하므로 INF 수록 차트만 남기는 데 필수.
   //   없으면 모든 차트 통과 (필터 비활성 — 로딩 전 fallback).
   isInfChart?: (title: string, chartName?: string) => boolean;
+  perfContext?: { rowsRev: number; epoch: number; accountId: string | null };
 }
 
 // recommend.js 의 createContext 호출 + ctx 반환. ctx 안에 buildRecs / buildWeaknessRecs / setLayoutMode 등.
@@ -236,7 +238,11 @@ export function createRecCtx(input: RecContextInput): any {
     }
   }
   // 2. userVec — calcWeakness.calcUserWeakness 호출
-  const userVec = libs.weakness.calcUserWeakness({
+  const perf = input.perfContext ? beginPerf('recCtxWeakness', input.perfContext.rowsRev, input.perfContext.epoch, input.perfContext.accountId) : null;
+  let perfStatus: 'ok' | 'error' = 'ok';
+  let userVec: any;
+  try {
+  userVec = libs.weakness.calcUserWeakness({
     allCharts,
     patternsMap: libs.patterns,
     normFn,
@@ -244,6 +250,12 @@ export function createRecCtx(input: RecContextInput): any {
     zasaMap: zasaData?.charts || null,
     rateRef: libs.rateRef,
   });
+  } catch (error) {
+    perfStatus = 'error';
+    throw error;
+  } finally {
+    if (perf && input.perfContext) endPerf('recCtxWeakness', perf, input.perfContext.rowsRev, input.perfContext.epoch, input.perfContext.accountId, perfStatus);
+  }
   // 3. deps Map/index 6종 = 공용 빌더(recommend.buildRecommendDeps, 웹 canonical) — 구조개편 Phase 3-3.
   //    INF helper(buildRatingMap 등) 1:1 복제 제거. 산식이 웹 canonical 로 통일됨(ratingMap estEc/estHc 필터,
   //    zasaAvgByGameLv = ratings+zasa 합산). patternsTitleMap/ereterMap/zasaMap/textageSeriesByNorm 도 동일 단일화.
