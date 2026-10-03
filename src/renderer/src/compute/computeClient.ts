@@ -1,5 +1,6 @@
 import { choosePoolSize } from './poolPolicy';
 import { createResultCache } from './resultCache';
+import { createResourceCache } from './resourceCache';
 import { isJobResponse, isPlainDto, isInputStamp } from './protocol';
 import type { InputStamp, JobResponse, JobRequest } from './protocol';
 import { makeJobKey, makeOptionsKey, stampsEqual } from './revisionKey';
@@ -19,6 +20,8 @@ export interface ComputeSubmission {
   kind: S1Kind;
   stamp: InputStamp;
   inputHandle: string;
+  /** Layout can reuse the Worker that computed weakness for the same rows. */
+  affinityHandle?: string;
   options: KernelOptions;
   resources?: ResourceSpec[];
   priority?: number;
@@ -48,6 +51,7 @@ export function createComputeClient(config: {
   const timeout = config.watchdogMs ?? 120_000;
   const slots: Slot[] = [];
   const snapshots = new Map<string, InstalledInput>();
+  const retainedInputs = new Map<string, number>();
   const usedHandles = new Set<string>();
   const snapshotRevisions = new Map<string, string>();
   const queue: QueueItem[] = [];
@@ -55,6 +59,7 @@ export function createComputeClient(config: {
   const latest = new Map<S1Kind, number>();
   const affinity = new Map<string, Slot>();
   const cache = createResultCache<unknown>();
+  const manifests = createResourceCache<ResourceManifest>();
   let sequence = 0, generation = 0, disposed = false;
   const counters = { cacheHit: 0, run: 0, stale: 0, retry: 0 };
   const inputRevision = (input: InstalledInput) => makeOptionsKey([input.stamp.scope, input.stamp.rowsRevision, input.stamp.chartsRevision]);
@@ -70,6 +75,7 @@ export function createComputeClient(config: {
   };
   const pruneSnapshots = () => {
     const protectedHandles = new Set([...snapshots.keys()].slice(-2));
+    for (const handle of retainedInputs.keys()) protectedHandles.add(handle);
     for (const job of jobs.values()) protectedHandles.add(job.spec.inputHandle);
     for (const handle of snapshots.keys()) if (!protectedHandles.has(handle)) dropSnapshot(handle);
   };
@@ -202,6 +208,15 @@ export function createComputeClient(config: {
     }
   };
   return {
+    retainInput(handle: string) {
+      retainedInputs.set(handle, (retainedInputs.get(handle) ?? 0) + 1);
+      return () => {
+        const count = retainedInputs.get(handle) ?? 0;
+        if (count <= 1) retainedInputs.delete(handle);
+        else retainedInputs.set(handle, count - 1);
+        queueMicrotask(pruneSnapshots);
+      };
+    },
     installInput(handle: string, input: InstalledInput) {
       if (disposed || !handle || !isInstalledInput(input) || usedHandles.has(handle)) throw new Error('INVALID_OR_REUSED_INPUT');
       const revision = makeOptionsKey([input.stamp.scope, input.stamp.rowsRevision, input.stamp.chartsRevision]);
@@ -218,9 +233,9 @@ export function createComputeClient(config: {
     },
     prepare(kind: S1Kind, resources?: ResourceSpec[]): Promise<ResourceManifest> {
       if (disposed || !isS1Kind(kind)) return Promise.reject(new Error('INVALID_KIND_OR_DISPOSED'));
-      return new Promise((resolve, reject) => {
+      return manifests.load(makeOptionsKey([kind, resources ?? null]), () => new Promise((resolve, reject) => {
         queue.push({ kind, priority: 0, queuedAt: Date.now(), order: ++sequence, prepare: { resources, resolve, reject } }); pump();
-      });
+      }));
     },
     submit(spec: ComputeSubmission): ComputeTicket {
       if (disposed || !isS1Kind(spec.kind) || !isInputStamp(spec.stamp) || !isPlainDto(spec.options)
@@ -249,7 +264,7 @@ export function createComputeClient(config: {
           queueMicrotask(() => finish(cachedJob, { protocol: 1, requestId: cachedJob.id, workerGeneration: generation,
             kind: spec.kind, stamp: spec.stamp, status: 'ready', value: decodeValue(hit) }));
         } else {
-          queue.push({ kind: spec.kind, handle: spec.inputHandle, priority: spec.priority ?? (spec.kind.endsWith('star') ? 0 : 1),
+          queue.push({ kind: spec.kind, handle: spec.affinityHandle ?? spec.inputHandle, priority: spec.priority ?? (spec.kind.endsWith('star') ? 0 : 1),
             queuedAt: Date.now(), order: job.id, job }); pump();
         }
       }
@@ -270,6 +285,7 @@ export function createComputeClient(config: {
       } };
     },
     invalidateScope() {
+      retainedInputs.clear();
       latest.clear(); cache.clear(); snapshots.clear(); snapshotRevisions.clear(); usedHandles.clear(); affinity.clear();
       for (const job of [...jobs.values()]) finish(job, errorResponse(job, 'SCOPE_INVALIDATED', 'Account scope changed'));
       for (let i = queue.length - 1; i >= 0; i--) if (queue[i].job) queue.splice(i, 1);
@@ -284,6 +300,7 @@ export function createComputeClient(config: {
     },
     dispose() {
       disposed = true;
+      manifests.clear(); retainedInputs.clear();
       for (const job of [...jobs.values()]) finish(job, errorResponse(job, 'DISPOSED', 'Client disposed'));
       for (const item of queue) item.prepare?.reject(new Error('DISPOSED'));
       queue.length = 0; cache.clear(); snapshots.clear(); snapshotRevisions.clear(); usedHandles.clear(); affinity.clear();

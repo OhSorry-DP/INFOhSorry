@@ -24,9 +24,8 @@ import {
 } from './supabaseSync';
 import { lampStyle } from './lampStyle';
 import { copyToClipboard } from './ChartTable';
-import { loadGistModule, loadJson, rowsToWeaknessCharts } from './gistLib';
-import { DATA_BASE, LIB_BASE } from '../../shared/dataSource';
-import { beginPerf, endPerf } from './perfDiag';
+import { rendererInput } from './compute/rendererService';
+import { useComputeTask, useSnapshotResources } from './compute/useComputeTask';
 
 // DJ Level letter 색 — ChartTable 의 LETTER_COLOR 와 동일 (inline style 적용).
 //   CSS [data-letter] 셀렉터도 같이 동작 (다크 테마 override) — ChartTable 와 같은 디자인 시스템 reuse.
@@ -483,30 +482,6 @@ function SeriesFolder({
   );
 }
 
-// ─── calcWeakness gist lib 로드 (Analysis 와 같은 module global cache 활용) ─────
-// 탭이 별도라 Analysis 와 PlayData 가 동시에 마운트 안 되지만, window.OhsorryWeakness 가
-// 한 번 eval 되면 글로벌 cache → 두 컴포넌트 다 재사용 (force=false).
-const CALC_WEAKNESS_URL = `${LIB_BASE}/calcWeakness.js`;
-const NORM_TITLE_URL = `${LIB_BASE}/normTitle.js`;
-// 평소 11·12 만 fetch (7MB→1.8MB). 약점 분석은 고렙 기준이라 1112 로 충분.
-const PATTERNS_URL = `${DATA_BASE}/patterns-dp-1112.json`;
-const RATE_REF_URL = `${DATA_BASE}/rate-reference-slim.json`;
-
-// calcWeakness lib 타입 — Analysis.tsx 와 동일하게 any.
-//   Analysis 에 정의된 인터페이스가 export 안 됐고 calcWeakness 내부도 거대해서 외부 타입 안 매김.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type WeaknessLib = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type NormLib = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type PatternsMap = any;
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type UserVec = any;
-
-const DIFF_TO_CN: Record<string, string> = {
-  NORMAL: 'DP_NOR', HYPER: 'DP_HYP', ANOTHER: 'DP_ANO', LEGGENDARIA: 'DP_LEG',
-};
-
 // slot (SPN/DPN 등) → diff filter key. 외부(서열표)에서 곡 클릭 시 diff 토글 맞추는 용도.
 const SLOT_TO_DIFF_FILTER: Record<string, string> = {
   SPN: 'NORMAL', SPH: 'HYPER', SPA: 'ANOTHER', SPL: 'LEGGENDARIA',
@@ -519,6 +494,7 @@ interface Props {
   rowsRev: number;
   epoch: number;
   accountId: string | null;
+  isWorkerCurrent: () => boolean;
   zasaData: ZasaData | null;
   ratingData: RatingData | null;
   // 외부(SP 서열표 등)에서 곡 클릭 시 — 토글/diff 맞추고 검색창에 곡명 입력.
@@ -526,21 +502,12 @@ interface Props {
   onPickConsumed?: () => void;
 }
 
-export default function PlayData({ rows, rowsRev, epoch, accountId, zasaData, ratingData, pickTarget, onPickConsumed }: Props): JSX.Element {
-  // 계측 값만 바뀌어도 약점 계산이 다시 실행되지 않도록 최신 값을 참조한다.
-  const perfContextRef = useRef({ rowsRev, epoch, accountId });
-  perfContextRef.current = { rowsRev, epoch, accountId };
+export default function PlayData({ rows, rowsRev, epoch, accountId, isWorkerCurrent, zasaData, ratingData, pickTarget, onPickConsumed }: Props): JSX.Element {
   const [songsById, setSongsById] = useState<Map<number, SongEntry> | null>(null);
   const [textageSongs, setTextageSongs] = useState<TextageMeta['songs'] | null>(null);
   const [seriesNames, setSeriesNames] = useState<Record<string, string>>({});
   const [loadError, setLoadError] = useState<string | null>(null);
 
-  // 배치 추천 — calcWeakness lib + patterns + rateRef. 배치 ON 토글 시 layoutMap 생성.
-  //   lib 자체는 마운트 시 background fetch (Analysis 와 같은 module global cache). vec 도 자동 계산.
-  //   계산 무거우니 layoutMap 은 layoutMode true 일 때만 수행.
-  const [libsReady, setLibsReady] = useState(false);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const libsRef = useRef<{ weakness?: WeaknessLib; norm?: NormLib; patterns?: PatternsMap; rateRef?: any }>({});
   const [layoutMode, setLayoutMode] = useState(false);
 
   // 필터 state
@@ -577,116 +544,27 @@ export default function PlayData({ rows, rowsRev, epoch, accountId, zasaData, ra
     return () => { cancelled = true; };
   }, []);
 
-  // calcWeakness lib + patterns + rateRef 백그라운드 fetch — 마운트 시 1회.
-  //   module global cache (window.OhsorryWeakness / OhsorryNorm) 활용 — Analysis 와 공유.
-  //   실패해도 graceful (배치 ON 토글 시 안 됨, 다른 기능엔 영향 없음).
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const [weakness, normLib, patterns, rateRef] = await Promise.all([
-          loadGistModule(CALC_WEAKNESS_URL, 'OhsorryWeakness'),
-          loadGistModule(NORM_TITLE_URL, 'OhsorryNorm'),
-          loadJson<PatternsMap>(PATTERNS_URL),
-          loadJson(RATE_REF_URL),
-        ]);
-        if (cancelled) return;
-        libsRef.current = { weakness, norm: normLib, patterns, rateRef };
-        setLibsReady(true);
-      } catch (e) {
-        console.warn('[PlayData] calcWeakness lib 로드 실패 (배치 추천 비활성):', (e as Error).message);
-      }
-    })();
-    return () => { cancelled = true; };
-  }, []);
-
-  // user vec — TSV charts + rating + zasa + patterns 입력. layoutMode 무관 미리 계산 (cache).
-  //   계산 무겁지만 rows / rating / zasa / libs 변동 시에만 재실행 (useMemo).
-  const userVec = useMemo<UserVec | null>(() => {
-    if (!libsReady) return null;
-    const libs = libsRef.current;
-    if (!libs.weakness || !libs.norm || !libs.patterns) return null;
-    const wCharts = rowsToWeaknessCharts(rows);
-    if (wCharts.length === 0) return null;
-    const { rowsRev, epoch, accountId } = perfContextRef.current;
-    const perf = beginPerf('playDataWeakness', rowsRev, epoch, accountId);
-    let perfStatus: 'ok' | 'error' = 'ok';
-    try {
-      const v = libs.weakness.calcUserWeakness({
-        allCharts: wCharts,
-        patternsMap: libs.patterns,
-        normFn: libs.norm.norm,
-        ratingMap: ratingData?.ratings || null,
-        zasaMap: zasaData?.charts || null,
-        rateRef: libs.rateRef,
-      });
-      if (!v || !v.__entries) return null;
-      return v;
-    } catch (e) {
-      perfStatus = 'error';
-      console.warn('[PlayData] calcUserWeakness 실패:', (e as Error).message);
-      return null;
-    } finally {
-      endPerf('playDataWeakness', perf, rowsRev, epoch, accountId, perfStatus);
-    }
-  }, [libsReady, rows, ratingData, zasaData]);
-
-  // patternsMap 의 title norm → song id 인덱스 (chartStrengthMatch8Way 호출 시 sp.c[cn] lookup).
-  //   patterns 변동 없으면 1회 빌드.
-  const titleToPatternId = useMemo(() => {
-    const map: Record<string, string> = {};
-    if (!libsReady || !libsRef.current.patterns || !libsRef.current.norm) return map;
-    const patterns = libsRef.current.patterns;
-    const normFn = libsRef.current.norm.norm;
-    for (const id of Object.keys(patterns)) {
-      const t = patterns[id]?.t;
-      if (!t) continue;
-      const k = normFn(t);
-      if (k && !map[k]) map[k] = id;
-    }
-    return map;
-  }, [libsReady]);
-
-  // 배치 ON 토글 + vec 준비 시 layoutMap 생성 — 모든 곡 × 4채보 chartStrengthMatch8Way 호출.
-  //   OFF 면 null 반환 (RowData.layoutLabel 도 '').
-  //   매번 호출은 무겁지만 useMemo 라 vec / layoutMode 변동 시에만 재계산.
-  const layoutMap = useMemo<Map<string, string> | null>(() => {
-    // SP 모드에선 layoutMap 비활성 — calcWeakness patterns 가 DP 전용 (DP_NOR/HYP/ANO/LEG).
-    if (style === 'sp') return null;
-    if (!layoutMode || !userVec || !libsReady || !songsById) return null;
-    const libs = libsRef.current;
-    if (!libs.weakness || !libs.norm || !libs.patterns) return null;
-    const out = new Map<string, string>();
-    const userMask = 2;
-    const normFn = libs.norm.norm;
-    let computed = 0;
-    for (const [, meta] of songsById) {
-      if (!meta.title) continue;
-      if (typeof meta.ac !== 'number' || (meta.ac & userMask) === 0) continue;
-      const sid = titleToPatternId[normFn(meta.title)];
-      if (!sid) continue;
-      const sp = libs.patterns[sid];
-      if (!sp?.c) continue;
-      const showLeg = typeof meta.legen === 'number' && (meta.legen & userMask) !== 0;
-      for (const d of PD_DIFFS) {
-        if (d.key === 'LEGGENDARIA' && !showLeg) continue;
-        const cn = DIFF_TO_CN[d.key];
-        if (!cn || !sp.c[cn]) continue;
-        try {
-          const r = libs.weakness.chartStrengthMatch8Way(sp.c[cn], userVec);
-          const label = r?.bestLabel;
-          if (typeof label === 'string') {
-            out.set(normFn(meta.title) + '|' + d.key, label);
-            computed++;
-          }
-        } catch {
-          /* 한 차트 실패는 graceful skip */
-        }
-      }
-    }
-    console.log(`[PlayData] layoutMap 계산 완료 — ${computed}개 차트`);
-    return out;
-  }, [layoutMode, userVec, libsReady, songsById, titleToPatternId, style]);
+  const playInput = useMemo(() => rendererInput({ iidxId: accountId, epoch }, rowsRev, {
+    rows, osrCharts: [], notInInf: [],
+    songs: [],
+  }), [rows, rowsRev, epoch, accountId]);
+  const layoutInput = useMemo(() => rendererInput({ iidxId: accountId, epoch }, rowsRev, {
+    rows, osrCharts: [], notInInf: [],
+    songs: songsById ? Array.from(songsById.values(), song => ({
+      title: song.title, ac: song.ac ?? null, legen: song.legen ?? null,
+    })) : [],
+  }, playInput.handle), [rows, rowsRev, epoch, accountId, songsById, playInput]);
+  const weaknessResources = useSnapshotResources('weakness', { rating: ratingData, zasa: zasaData });
+  const weaknessTask = useComputeTask<unknown>('weakness', playInput, {}, weaknessResources,
+    true, isWorkerCurrent);
+  const layoutTask = useComputeTask<[string, string][]>('layout', layoutInput, { style, layoutMode },
+    weaknessResources, !!songsById && style === 'dp' && layoutMode && weaknessTask.task.status === 'ready',
+    isWorkerCurrent);
+  const libsReady = weaknessTask.task.status === 'ready';
+  // Do not apply old labels to new rows or a different account while pending.
+  const layoutMap = useMemo(() => style === 'dp' && layoutMode && layoutTask.task.status === 'ready'
+    && layoutTask.value ? new Map(layoutTask.value) : null,
+    [style, layoutMode, layoutTask.task, layoutTask.value]);
 
   // zasa-data → (norm(title) + '|' + diffStr) → zasa★ level. 곡명 앞 zasa 표기에 사용.
   const zasaIndex = useMemo(() => {
@@ -963,7 +841,7 @@ export default function PlayData({ rows, rowsRev, epoch, accountId, zasaData, ra
           disabled={!libsReady}
           title={
             !libsReady
-              ? 'calcWeakness lib 로딩 중'
+              ? '약점 계산 중'
               : layoutMode
                 ? '배치 라벨 끄기'
                 : '배치 라벨 켜기 (전체 차트 chartStrengthMatch8Way 호출 — 1~2초)'
@@ -972,6 +850,16 @@ export default function PlayData({ rows, rowsRev, epoch, accountId, zasaData, ra
         >
           배치 {layoutMode ? 'ON' : 'OFF'}
         </button>
+      </div>
+      <div role="status" aria-live="polite" className="hint">
+        {weaknessTask.task.status === 'pending' ? '약점 계산 중' : weaknessTask.task.status === 'error' ? '약점 계산 실패' : weaknessTask.value == null ? '약점 N/A' : ''}
+        {layoutMode && style === 'dp' && (layoutTask.task.status === 'pending' ? ' · 배치 계산 중' : layoutTask.task.status === 'error' ? ' · 배치 계산 실패' : '')}
+        {(weaknessTask.task.status === 'error' || layoutTask.task.status === 'error') && (
+          <button onClick={() => {
+            if (weaknessTask.task.status === 'error') weaknessTask.retry();
+            if (layoutTask.task.status === 'error') layoutTask.retry();
+          }}>다시 계산</button>
+        )}
       </div>
       {/* 시리즈 폴더 목록 */}
       <div className="__uprofile_pdfolders">

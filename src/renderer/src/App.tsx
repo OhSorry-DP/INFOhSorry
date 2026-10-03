@@ -22,38 +22,19 @@ import DpTable from './DpTable';
 import Analysis from './Analysis';
 import Recent from './Recent';
 import PlayData from './PlayData';
-import { loadRecLibs, createRecCtx, ensurePatternsLevel, loadGistModule, type RecCoreLibs } from './recommendCore';
+import { computeClient, rendererInput } from './compute/rendererService';
+import { useComputeTask, useSnapshotResources } from './compute/useComputeTask';
+import { starBundle } from './compute/rendererState';
+import { isUploadReady } from './compute/acceptedBundle';
+import { waitForBundle } from './compute/waitForBundle';
+import { loadRecLibs, createRecCtx, ensurePatternsLevel, type RecCoreLibs } from './recommendCore';
 import { useRecommendBridge } from './useRecommendBridge';
-import { LIB_BASE, DATA_BASE } from '../../shared/dataSource';
+import { DATA_BASE } from '../../shared/dataSource';
 
 // SP 대표 실력값(発狂★相当) — ohSorryRating spSkillCpi 커널(gist) 입출력 타입.
-interface SpCpiRow { title: string; diff: string; ec: number; cl: number; hc: number; ex: number; fc: number }
 interface SpSkillResult { cpi: number | null; cpiInt: number | null; star: number | null; starRounded: number | null; sl: number | null; st: number | null; nPairs: number;
   // computeSpStarGuarded 추가 필드 — sp_star = max(unified85★, guardedGaugeAvg50). cpi/cpiInt 는 unified 원좌표.
   uniStar?: number | null; uniStarRounded?: number | null; gaugeAvg?: number | null; applied?: boolean }
-type SpChartIn = { title: string; diff: string; gameLevel: number; lampNum: number };
-interface SpSkillLib {
-  computeUserSpCpi: (charts: SpChartIn[], cpi: SpCpiRow[], opts: { normFn: (s: string) => string; mode: string }) => SpSkillResult;
-  // sp_star 게이지 보정 커널(신규). 구 gist 엔 없을 수 있어 옵셔널 — 호출부에서 fallback.
-  computeSpStarGuarded?: (charts: SpChartIn[], cpi: SpCpiRow[], opts: { normFn: (s: string) => string }) => SpSkillResult;
-}
-type RStarChartIn = { title: string; diff: string; exScore: number; noteCount: number };
-interface UserRStarResult {
-  rStar: number | null;
-  rStarRaw: number | null;
-  ratcheted: boolean;
-  method?: string;
-  reason?: string;
-  nPairs: number;
-  nCharts: number;
-}
-interface UserRateStarLib {
-  inferUserRStar: (
-    charts: RStarChartIn[],
-    ratingData: RatingData,
-    opts: { normFn: (s: string) => string; scale: { unit?: number } | null; prevRStar: number | null },
-  ) => UserRStarResult;
-}
 import { ThemeToggle, WindowControls } from './theme';
 import { MemoryScanner } from './MemoryScanner';
 import { QrConnect } from './QrConnect';
@@ -70,8 +51,8 @@ import { isFloorSeedCurrent, resolveAccountSnapshotProfile, type AccountScope, t
 import type { InfinitasSessionState } from '../../shared/session';
 import { addDiagLine, getDiagLines, subscribeDiagLog } from './diagLog';
 import { isUploadDue } from './uploadDue';
-import { INITIAL_AUTO_UPLOAD_STABLE_MS, isInitialAutoUploadReady } from './initialAutoUpload';
-import { calculateScoped, transferFloor, reuseOsrInput, type ScopedCalculation } from './scopedCalculation';
+import { INITIAL_AUTO_UPLOAD_STABLE_MS } from './initialAutoUpload';
+import { transferFloor, reuseOsrInput } from './scopedCalculation';
 import { beginPerf, endPerf, perfEvent } from './perfDiag';
 
 // ─── 코어 recommend.js RecRow → INFOhSorry RecCandidate 매핑 ─────────────
@@ -293,6 +274,8 @@ export default function App() {
     const previous = accountScopeRef.current;
     const scope = { iidxId: nextId, epoch: previous.epoch + 1 };
     accountScopeRef.current = scope;
+    uploadStateRef.current.bundleReady = false;
+    computeClient.invalidateScope();
     viewerReadSeqRef.current += 1;
     const previousRowsOwner = rowsScopeRef.current;
     setFloorState((floor) => transferFloor(floor, previous, previousRowsOwner, scope, clearRows));
@@ -318,6 +301,7 @@ export default function App() {
       || sessionRef.current.generation !== expectedSession.generation) return false;
     rowsRef.current = nextRows;
     rowsRevisionRef.current += 1;
+    uploadStateRef.current.bundleReady = false;
     rowsScopeRef.current = expectedScope;
     setRowsState({ rows: nextRows, scope: expectedScope });
     tsvMtimeRef.current = mtime;
@@ -486,10 +470,6 @@ export default function App() {
   // ohSorryRating — ereter 미등록 lv11/lv12 차트 추정값 (추천 풀 fallback)
   // 우선순위: ereter > rating. ereter 매칭 곡은 절대 rating 으로 덮지 않음.
   const [ratingData, setRatingData] = useState<RatingData | null>(null);
-
-  // SP 대표 실력값 — cpi.json(채보별 램프 CPI) + spSkillCpi 커널(cpiStar 의존). 실시간 sp 별값 산출용.
-  const [cpiData, setCpiData] = useState<SpCpiRow[] | null>(null);
-  const [spSkillLib, setSpSkillLib] = useState<SpSkillLib | null>(null);
 
   // service-status.json 의 notInINF — INFINITAS 미수록 차트 제외 목록
   const [notInINF, setNotInINF] = useState<NotInInfChart[]>([]);
@@ -1144,183 +1124,37 @@ export default function App() {
     return input;
   }, [rows, rowsState.scope.iidxId, rowsState.scope.epoch]);
 
-  // ── 별값(★) — v3.4.0 onlyOSRtoEreter.inferEreter (본체 calcOhsorryCore 와 동일) ──
-  //   onlyOSRtoEreter 는 window.onlyOSR + window.OSR135 + window.OhsorryNorm 셋을 선행 요구
-  //   (없으면 require('./xxx') 폴백 → electron renderer 에서 "require is not defined" 로 죽음).
-  //   recommendCore 의 검증된 loadGistModule(= new Function eval → window 등록) 로 의존 3개를
-  //   먼저 로드한 뒤 onlyOSRtoEreter 를 로드한다.
-  type InferEreterFn = (
-    charts: { title: string; diff: string; lampNum: number }[],
-    ratingData: RatingData,
-    ereterData: { charts: unknown[]; players?: Record<string, number> },
-    opts?: { prevStar?: number },
-  ) => { ereterStar?: number; ereterStarRaw?: number; ratcheted?: boolean; ohsorryStar?: number; tier?: string; nFit12?: number };
-  const [onlyOSR2eLib, setOnlyOSR2eLib] = useState<{ inferEreter: InferEreterFn; version: string } | null>(null);
-  const [userRateStarLib, setUserRateStarLib] = useState<UserRateStarLib | null>(null);
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    (async () => {
-      try {
-        // 선행 의존 (순서 무관, 모두 window 전역 등록). normTitle→OhsorryNorm, OSR13.5+→OSR135.
-        await loadGistModule(`${LIB_BASE}/normTitle.js`, 'OhsorryNorm');
-        await loadGistModule(`${LIB_BASE}/OSR13.5%2B.js`, 'OSR135');
-        await loadGistModule(`${LIB_BASE}/onlyOSR.js`, 'onlyOSR');
-        // onlyOSRtoEreter — 위 3개가 window 에 있으니 require 폴백 안 탐.
-        const lib = (await loadGistModule(`${LIB_BASE}/onlyOSRtoEreter.js`, 'onlyOSRtoEreter')) as
-          { inferEreter?: InferEreterFn; version?: string } | undefined;
-        if (typeof lib?.inferEreter === 'function') {
-          setOnlyOSR2eLib({ inferEreter: lib.inferEreter, version: lib.version || '?' });
-          const w = window as unknown as { onlyOSR?: { version?: string } };
-          console.log(`[★] onlyOSR v${w.onlyOSR?.version ?? '?'} + onlyOSRtoEreter v${lib.version ?? '?'} 로드`);
-        } else {
-          console.warn('[★] onlyOSRtoEreter.inferEreter 미등록 — 별값 N/A');
-        }
-      } catch (e) {
-        console.warn('[★] 별값 lib 로드 실패:', (e as Error).message);
-      }
-      try {
-        const lib = (await loadGistModule(`${LIB_BASE}/userRateStar.js`, 'userRateStar')) as UserRateStarLib | undefined;
-        if (lib && typeof lib.inferUserRStar === 'function') {
-          setUserRateStarLib(lib);
-          console.log('[r★] userRateStar 로드');
-        } else {
-          console.warn('[r★] userRateStar.inferUserRStar 미등록 — r★ N/A');
-        }
-      } catch (e) {
-        console.warn('[r★] userRateStar 로드 실패:', (e as Error).message);
-      }
-      // SP 대표 실력값 — cpiStar → spSkillCpi(window.cpiStar 의존) 순 로드 + cpi.json. 실패해도 DP★ 무관.
-      try {
-        await loadGistModule(`${LIB_BASE}/cpiStar.js`, 'cpiStar');
-        const spLib = (await loadGistModule(`${LIB_BASE}/spSkillCpi.js`, 'spSkillCpi')) as SpSkillLib | undefined;
-        if (spLib && typeof spLib.computeUserSpCpi === 'function') setSpSkillLib(spLib);
-        const cpiRes = await fetch(`${DATA_BASE}/cpi.json?t=${Date.now()}`);
-        if (cpiRes.ok) setCpiData((await cpiRes.json()) as SpCpiRow[]);
-      } catch (e) {
-        console.warn('[SP★] cpiStar/spSkillCpi/cpi 로드 실패 (SP 별값 N/A):', (e as Error).message);
-      }
-    })();
-  }, []);
-
-  // 별값 단조 래칫의 하한. ① supabase 저장값(다른 세션에서 올린 값) ② 이번 세션에서 계산된 최고값.
-  //   모델(onlyOSRtoEreter)은 미플레이 곡을 새로 클리어하는 경우를 원리적으로 못 막는다 — 클리어율의
-  //   분모가 "친 곡 수"라 신규곡이 들어오면 분모도 같이 늘기 때문. 그래서 표시단에서 덮는다.
-  //   계수/난이도축 재배포 후 재기준화는 래칫을 안 타는 backfillStars.js --apply 로 한다.
-
-  // 표시 별값(ereterStar) + 추천 native base(ohsorryStar) 를 inferEreter 한 번에 산출.
-  const dpResultCacheRef = useRef<ScopedCalculation<StarResult | null> | null>(null);
-  const dpScopedResult = useMemo(() => {
-    const result = calculateScoped(dpResultCacheRef.current, rowsState.scope,
-      [rows, onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor], () => {
-    if (!onlyOSR2eLib || !ratingData || !ereterData || osrChartsInput.length === 0) return null;
-    const perf = beginPerf('dp', rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId);
-    let perfStatus: 'ok' | 'error' = 'ok';
-    try {
-      const r = onlyOSR2eLib.inferEreter(
-        osrChartsInput, ratingData, { charts: ereterData.charts, players: {} },
-        starFloor != null ? { prevStar: starFloor } : undefined,
-      );
-      if (typeof r.ereterStar !== 'number') return null;
-      const nativeStar = typeof r.ohsorryStar === 'number' ? r.ohsorryStar : r.ereterStar;
-      const raw = typeof r.ereterStarRaw === 'number' ? r.ereterStarRaw : r.ereterStar;
-      console.log(`[★] ereterStar=${r.ereterStar.toFixed(2)}${r.ratcheted ? ` (래칫 — 계산값 ${raw.toFixed(2)})` : ''} native(onlyOSR)=${nativeStar.toFixed(2)} tier=${r.tier ?? '-'} nFit12=${r.nFit12 ?? '?'}`);
-      return { star: r.ereterStar, starRaw: raw, ratcheted: r.ratcheted, nativeStar, tier: r.tier ?? null, nFit12: r.nFit12 ?? null };
-    } catch (e) {
-      perfStatus = 'error';
-      console.warn('[★] inferEreter 실패:', (e as Error).message);
-      return null;
-    } finally {
-      endPerf('dp', perf, rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId, perfStatus);
+  // Worker input preserves the account-owned cumulative OSR lamps.
+  const workerInput = useMemo(() => rendererInput(rowsState.scope, rowsRevisionRef.current, {
+    rows, osrCharts: osrChartsInput, notInInf: Array.from(notInInfSet), songs: [],
+  }), [rows, osrChartsInput, notInInfSet, rowsState.scope.iidxId, rowsState.scope.epoch]);
+  const dpResources = useSnapshotResources('dp-star', { rating: ratingData, ereter: ereterData });
+  const rResources = useSnapshotResources('r-star', { rating: ratingData });
+  const spResources = useSnapshotResources('sp-star', {});
+  const workerCurrent = () => isFloorSeedCurrent(workerInput.stamp.scope, accountScopeRef.current)
+    && isFloorSeedCurrent(workerInput.stamp.scope, rowsScopeRef.current)
+    && selectedViewerIdRef.current === workerInput.stamp.scope.iidxId
+    && rowsRevisionRef.current === workerInput.stamp.rowsRevision;
+  const raiseFloor = (key: 'starFloor' | 'rStarFloor', value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || !workerCurrent()) return;
+    const scope = workerInput.stamp.scope;
+    if (key === 'starFloor' ? starFloor == null || value > starFloor : rStarFloor == null || value > rStarFloor) {
+      uploadStateRef.current.bundleReady = false;
     }
-    });
-    dpResultCacheRef.current = result;
-    return result;
-  }, [rows, onlyOSR2eLib, ratingData, ereterData, osrChartsInput, starFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
-  const dp12StarResult = isFloorSeedCurrent(dpScopedResult.scope, rowsState.scope) ? dpScopedResult.value : null;
-
-  // 세션 래칫 — 계산값이 하한보다 높으면 하한을 끌어올린다(단조 증가라 루프는 한 번에 수렴).
-  useEffect(() => {
-    const s = dp12StarResult?.star;
-    const scope = rowsState.scope;
-    if (typeof s !== 'number' || !Number.isFinite(s) || !isFloorSeedCurrent(scope, accountScopeRef.current)) return;
-    setFloorState((f) => !isFloorSeedCurrent(scope, accountScopeRef.current) || !isFloorSeedCurrent(scope, f.scope)
-      ? f : f.starFloor == null || s > f.starFloor ? { ...f, starFloor: s } : f);
-  }, [dp12StarResult, rowsState.scope]);
-
-  // 사용자 r★ — 크롤러와 동일한 userRateStar.inferUserRStar 커널에 INF DP EX SCORE/노트수를 전달한다.
-  // 계산 실패·표본부족이면 null로 두어 업로드 RPC의 COALESCE가 기존 users.r_star를 보존한다.
-  const rResultCacheRef = useRef<ScopedCalculation<number | null> | null>(null);
-  const rScopedResult = useMemo(() => {
-    const result = calculateScoped(rResultCacheRef.current, rowsState.scope,
-      [rows, userRateStarLib, ratingData, dpAllCharts, rStarFloor], () => {
-    if (!userRateStarLib || !ratingData || dpAllCharts.length === 0) return null;
-    const perf = beginPerf('r', rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId);
-    let perfStatus: 'ok' | 'error' = 'ok';
-    try {
-      const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
-      const charts = dpAllCharts.map((c) => ({
-        title: c.title,
-        diff: slotToDiff(c.slot),
-        exScore: c.exScore,
-        noteCount: c.noteCount,
-      }));
-      const result = userRateStarLib.inferUserRStar(charts, ratingData, {
-        normFn,
-        scale: ratingData.rateStar?.scale ?? null,
-        prevRStar: rStarFloor,
-      });
-      if (typeof result.rStar !== 'number' || !Number.isFinite(result.rStar)) {
-        console.warn('[r★] 산출 불가 — 기존 users.r_star 보존:', result.reason || 'unknown');
-        return null;
-      }
-      console.log(`[r★] ${result.rStar.toFixed(2)} (${result.method || result.reason || 'unknown'}, charts ${result.nCharts})`);
-      return result.rStar;
-    } catch (e) {
-      perfStatus = 'error';
-      console.warn('[r★] inferUserRStar 실패 — 기존 users.r_star 보존:', (e as Error).message);
-      return null;
-    } finally {
-      endPerf('r', perf, rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId, perfStatus);
-    }
-    });
-    rResultCacheRef.current = result;
-    return result;
-  }, [rows, userRateStarLib, ratingData, dpAllCharts, rStarFloor, rowsState.scope.iidxId, rowsState.scope.epoch]);
-  const userRStar = isFloorSeedCurrent(rScopedResult.scope, rowsState.scope) ? rScopedResult.value : null;
-
-  useEffect(() => {
-    const scope = rowsState.scope;
-    if (typeof userRStar !== 'number' || !Number.isFinite(userRStar) || !isFloorSeedCurrent(scope, accountScopeRef.current)) return;
-    setFloorState((f) => !isFloorSeedCurrent(scope, accountScopeRef.current) || !isFloorSeedCurrent(scope, f.scope)
-      ? f : f.rStarFloor == null || userRStar > f.rStarFloor ? { ...f, rStarFloor: userRStar } : f);
-  }, [userRStar, rowsState.scope]);
-
-  // 추천 baseStar = 표시 별값(ereterStar) 그대로 사용.
-  // SP 대표 실력값(発狂★相当) — sp12 클리어 × cpi.json.
-  //   sp_cpi = unified85 원좌표, sp_star = max(unified85★, guardedGaugeAvg50)(게이지 편향 보정).
-  //   rows 변하면 자동 재계산(실시간). norm = cpi.json 키와 동일 정규화(OhsorryNorm, 로드됐으면) → 웹/ohSorry 와 같은 매칭.
-  //   표본부족(SP12 클리어 매칭 0) → null. DP★ 와 독립. 구 gist(guarded 미배포)는 unified 로 fallback.
-  const spStarResult = useMemo<SpSkillResult | null>(() => {
-    if (!spSkillLib || !cpiData || sp12Charts.length === 0) return null;
-    const perf = beginPerf('sp', rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId);
-    let perfStatus: 'ok' | 'error' = 'ok';
-    try {
-      const normFn = (window as unknown as { OhsorryNorm?: { norm: (s: string) => string } }).OhsorryNorm?.norm || norm;
-      const own = sp12Charts.map((c) => ({ title: c.title, diff: slotToDiff(c.slot), gameLevel: 12, lampNum: lampNum(c.lamp) }));
-      const r = spSkillLib.computeSpStarGuarded
-        ? spSkillLib.computeSpStarGuarded(own, cpiData, { normFn })
-        : spSkillLib.computeUserSpCpi(own, cpiData, { normFn, mode: 'unified' });
-      if (r.cpi == null) return null;
-      console.log(`[SP★] sp_cpi=${r.cpiInt} sp_star=${r.starRounded}${r.uniStarRounded != null ? ` (unified85 ★${r.uniStarRounded}${r.applied ? ', gauge보정' : ''})` : ''} (pairs ${r.nPairs})`);
-      return r;
-    } catch (e) {
-      perfStatus = 'error';
-      console.warn('[SP★] computeSpStarGuarded 실패:', (e as Error).message);
-      return null;
-    } finally {
-      endPerf('sp', perf, rowsRevisionRef.current, rowsState.scope.epoch, rowsState.scope.iidxId, perfStatus);
-    }
-  }, [spSkillLib, cpiData, sp12Charts]);
+    setFloorState(f => !workerCurrent() || !isFloorSeedCurrent(scope, f.scope)
+      ? f : f[key] == null || value > f[key]! ? { ...f, [key]: value } : f);
+  };
+  const dpTask = useComputeTask<StarResult>('dp-star', workerInput, { prevStar: starFloor },
+    dpResources, !!ratingData && !!ereterData, workerCurrent, value => raiseFloor('starFloor', value?.star));
+  const rTask = useComputeTask<number>('r-star', workerInput, { prevRStar: rStarFloor },
+    rResources, !!ratingData, workerCurrent, value => raiseFloor('rStarFloor', value));
+  const spTask = useComputeTask<SpSkillResult>('sp-star', workerInput, {},
+    spResources, true, workerCurrent);
+  const dp12StarResult = dpTask.value;
+  const userRStar = rTask.value;
+  const spStarResult = spTask.value;
+  const acceptedStars = starBundle(workerInput, dpTask.task, rTask.task, spTask.task);
+  const bundleReady = acceptedStars.ready && workerCurrent();
 
   const ohsorryRecBase = useMemo(() => dp12StarResult?.star ?? null, [dp12StarResult]);
 
@@ -1484,8 +1318,18 @@ export default function App() {
   //   여기선 그 시점 최신 rows/dp12StarResult 기준으로 업로드만 (읽기/업로드 분리).
   // 호스트 (Electron) 에서만 — PC2 (브라우저 원격) 는 중복 방지로 건너뜀.
   // 최신 profile / star / match / tsvPath 는 ref 로 추적 — 매 interval 시 최신 값 사용.
-  const uploadStateRef = useRef({ profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData), dpCalcScope: dpScopedResult.scope, rCalcScope: rScopedResult.scope, rowsRevision: rowsRevisionRef.current, spReady: spSkillLib != null && cpiData != null });
-  uploadStateRef.current = { profile, dp12StarResult, userRStar, spStarResult, dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope, tsvMtime, calcReady: Boolean(onlyOSR2eLib && ratingData && ereterData), dpCalcScope: dpScopedResult.scope, rCalcScope: rScopedResult.scope, rowsRevision: rowsRevisionRef.current, spReady: spSkillLib != null && cpiData != null };
+  const uploadStateRef = useRef({ profile, dp12StarResult: bundleReady ? dpTask.task.value ?? null : null,
+    userRStar: bundleReady ? rTask.task.value ?? null : null,
+    spStarResult: bundleReady ? spTask.task.value ?? null : null,
+    acceptedBundle: acceptedStars.bundle, expectedBundle: acceptedStars.expected, bundleReady,
+    dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope,
+    tsvMtime, rowsRevision: rowsRevisionRef.current });
+  uploadStateRef.current = { profile, dp12StarResult: bundleReady ? dpTask.task.value ?? null : null,
+    userRStar: bundleReady ? rTask.task.value ?? null : null,
+    spStarResult: bundleReady ? spTask.task.value ?? null : null,
+    acceptedBundle: acceptedStars.bundle, expectedBundle: acceptedStars.expected, bundleReady,
+    dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope,
+    tsvMtime, rowsRevision: rowsRevisionRef.current };
 
   function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
     const p = uploadStateRef.current.profile;
@@ -1529,7 +1373,9 @@ export default function App() {
       return null;
     }
     const state = uploadStateRef.current;
-    if (rowsRef.current.length === 0 || state.scope.iidxId !== iidxId || !isFloorSeedCurrent(state.scope, accountScopeRef.current)) {
+    if (!state.bundleReady || !isUploadReady(state.acceptedBundle, state.expectedBundle)
+      || state.rowsRevision !== rowsRevisionRef.current || rowsRef.current.length === 0
+      || state.scope.iidxId !== iidxId || !isFloorSeedCurrent(state.scope, accountScopeRef.current)) {
       console.log('[upload] skip reason=stale-calculation-scope');
       return null;
     }
@@ -1676,6 +1522,18 @@ export default function App() {
         if (trigger !== 'final') addDiagLine(`업로드 건너뜀: ${uploadReasonLabel(gate.reason)}`);
         return { kind: 'skip-no-snapshot', reason: gate.reason };
       }
+      if (trigger !== 'final') {
+        const scope = { ...accountScopeRef.current };
+        const ready = await waitForBundle(() => {
+          const state = uploadStateRef.current;
+          const identity = uploadIdentityOk(trigger);
+          if (!isFloorSeedCurrent(scope, accountScopeRef.current) || !identity.ok || identity.id !== gate.id
+            || [state.acceptedBundle.dp, state.acceptedBundle.r, state.acceptedBundle.sp].some(task => task.status === 'error')) return 'invalid';
+          return state.bundleReady && state.rowsRevision === rowsRevisionRef.current
+            && isUploadReady(state.acceptedBundle, state.expectedBundle) ? 'ready' : 'pending';
+        });
+        if (!ready) return { kind: 'skip-no-snapshot', reason: 'snapshot-guard' };
+      }
       if (trigger !== 'final' && trigger !== 'snapshot') {
         const fresh = await readIidxIdFresh();
         if (!fresh.ok || fresh.iidxId !== gate.id) {
@@ -1712,14 +1570,8 @@ export default function App() {
       const state = uploadStateRef.current;
       const activeSession = sessionRef.current;
       const snap = lastSnapshotRef.current;
-      const ready = isInitialAutoUploadReady({
-        rowsPresent: rowsRef.current.length > 0,
-        dpReady: isFloorSeedCurrent(state.dpCalcScope, state.scope),
-        rReady: isFloorSeedCurrent(state.rCalcScope, state.scope),
-        spReady: state.spReady,
-        modelsReady: state.calcReady,
-      });
-      const key = JSON.stringify([iidxId, state.scope.iidxId, state.scope.epoch, state.rowsRevision, activeSession.pid, activeSession.generation]);
+      const ready = state.bundleReady;
+      const key = JSON.stringify([iidxId, state.scope.iidxId, state.scope.epoch, state.rowsRevision, state.expectedBundle, activeSession.pid, activeSession.generation]);
       if (!ready || !snap || snap.iidxId !== iidxId || snap.generation !== activeSession.generation
         || state.scope.iidxId !== iidxId || !isFloorSeedCurrent(state.scope, accountScopeRef.current)
         || selectedViewerIdRef.current !== iidxId || activeSession.pid == null) {
@@ -1748,12 +1600,11 @@ export default function App() {
         const current = uploadStateRef.current;
         const currentSession = sessionRef.current;
         const currentSnapshot = lastSnapshotRef.current;
-        if (JSON.stringify([iidxId, current.scope.iidxId, current.scope.epoch, current.rowsRevision, currentSession.pid, currentSession.generation]) !== key
+        if (JSON.stringify([iidxId, current.scope.iidxId, current.scope.epoch, current.rowsRevision, current.expectedBundle, currentSession.pid, currentSession.generation]) !== key
           || !currentSnapshot || currentSnapshot.iidxId !== iidxId || currentSnapshot.generation !== currentSession.generation
           || currentSession.pid == null || current.scope.iidxId !== iidxId
           || !isFloorSeedCurrent(current.scope, accountScopeRef.current)
-          || !isFloorSeedCurrent(current.dpCalcScope, current.scope) || !isFloorSeedCurrent(current.rCalcScope, current.scope)
-          || !current.calcReady || !current.spReady || rowsRef.current.length === 0
+          || !current.bundleReady || rowsRef.current.length === 0
           || selectedViewerIdRef.current !== iidxId || autoUploadBusyRef.current) {
           runIfDue(iidxId);
           return;
@@ -1797,7 +1648,7 @@ export default function App() {
   useEffect(() => {
     const id = lastSnapshotRef.current?.iidxId;
     if (id) (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue?.(id);
-  }, [rows, rowsState.scope.iidxId, rowsState.scope.epoch, dp12StarResult, userRStar, spStarResult, onlyOSR2eLib, ratingData, ereterData, spSkillLib, cpiData, session.pid, session.generation]);
+  }, [rows, rowsState.scope.iidxId, rowsState.scope.epoch, dp12StarResult, userRStar, spStarResult, bundleReady, acceptedStars.bundle, session.pid, session.generation]);
 
 
 
@@ -2464,6 +2315,18 @@ export default function App() {
               if (selectedViewerId) void loadViewerAccount(selectedViewerId);
             }}
           />
+          <div role="status" aria-live="polite" className="hint">
+            DP★ {dpTask.task.status === 'pending' ? '계산 중' : dpTask.task.status === 'error' ? '계산 실패' : dpTask.value == null ? 'N/A' : ''}
+            {' · '}r★ {rTask.task.status === 'pending' ? '계산 중' : rTask.task.status === 'error' ? '계산 실패' : rTask.value == null ? 'N/A' : ''}
+            {' · '}SP★ {spTask.task.status === 'pending' ? '계산 중' : spTask.task.status === 'error' ? '계산 실패' : spTask.value == null ? 'N/A' : ''}
+            {[dpTask, rTask, spTask].some(task => task.task.status === 'error') && (
+              <button onClick={() => {
+                if (dpTask.task.status === 'error') dpTask.retry();
+                if (rTask.task.status === 'error') rTask.retry();
+                if (spTask.task.status === 'error') spTask.retry();
+              }}>다시 계산</button>
+            )}
+          </div>
           <nav className="tabs">
             {/* 표시 순서: RECENT → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
             <button
@@ -2563,6 +2426,7 @@ export default function App() {
                 rowsRev={rowsRevisionRef.current}
                 epoch={rowsState.scope.epoch}
                 accountId={rowsState.scope.iidxId}
+                isWorkerCurrent={workerCurrent}
                 zasaData={zasaData}
                 ratingData={ratingData}
                 pickTarget={playDataTarget}

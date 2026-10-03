@@ -55,16 +55,6 @@ export default defineConfig({
     define: {
       __APP_VERSION__: JSON.stringify(pkg.version),
     },
-    // S1 emits the client and its Worker before S2 imports the client from App.
-    build: {
-      ...NORMTITLE_CJS,
-      rollupOptions: {
-        preserveEntrySignatures: 'strict',
-        input: {
-          index: resolve('src/renderer/index.html'),
-          computeClient: resolve('src/renderer/src/compute/computeClient.ts'),
-        },
-      },
-    },
+    build: NORMTITLE_CJS,
   },
 });

@@ -49,9 +49,9 @@ test('OSR rebuild reuses only same owner and exact ordered chart values', () => 
   assert.notEqual(reuseOsrInput(cache, a.iidxId, []), input);
 });
 
-test('App wires floor migration and scoped display guards', () => {
+test('App wires floor migration and Worker scope guards', () => {
   const app = fs.readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
   assert.match(app, /setFloorState\(\(floor\) => transferFloor\(floor, previous, previousRowsOwner, scope, clearRows\)\)/);
-  assert.match(app, /isFloorSeedCurrent\(dpScopedResult.scope, rowsState.scope\)/);
-  assert.match(app, /isFloorSeedCurrent\(rScopedResult.scope, rowsState.scope\)/);
+  assert.match(app, /isFloorSeedCurrent\(workerInput.stamp.scope, accountScopeRef.current\)/);
+  assert.match(app, /isFloorSeedCurrent\(workerInput.stamp.scope, rowsScopeRef.current\)/);
 });

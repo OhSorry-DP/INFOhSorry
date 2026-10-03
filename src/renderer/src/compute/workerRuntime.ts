@@ -44,6 +44,7 @@ export function decodeValue(value: unknown): unknown {
 export function createWorkerRuntime(post: (message: unknown) => void) {
   let generation = -1;
   const inputs = new Map<string, InstalledInput>();
+  const rowsDigests = new Map<string, string>();
   const vectors = new Map<string, { key: string; value: unknown }>();
   const resources = createWorkerResources();
   let tail: Promise<unknown> = Promise.resolve();
@@ -68,12 +69,16 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
         inputs.set(m.inputHandle as string, m.input);
         while (inputs.size > 2) {
           const old = inputs.keys().next().value!;
-          inputs.delete(old); vectors.delete(old);
+          inputs.delete(old); rowsDigests.delete(old);
         }
         const inputDigest = await sha256(makeOptionsKey(m.input.data));
+        rowsDigests.set(m.inputHandle as string, await sha256(makeOptionsKey(m.input.data.rows)));
         post({ protocol: 1, type: 'input-installed', inputHandle: m.inputHandle, inputDigest }); return;
       }
-      case 'release-input': inputs.delete(m.inputHandle as string); vectors.delete(m.inputHandle as string); return;
+      case 'release-input':
+        inputs.delete(m.inputHandle as string); rowsDigests.delete(m.inputHandle as string);
+        if (!inputs.size) vectors.clear();
+        return;
       case 'dispose-context': return; // S1 has no recommendation contexts.
       case 'run': break;
       default: throw new Error('INVALID_COMMAND');
@@ -92,11 +97,14 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
       const { libs, manifest } = await resources.load(request.kind, payload.resources);
       if (manifest.modelRevision !== request.stamp.modelRevision || manifest.dataRevision !== request.stamp.dataRevision) throw new Error('RESOURCE_DRIFT');
       if (request.kind === 'weakness' || (request.kind === 'layout' && payload.options.style !== 'sp' && payload.options.layoutMode)) {
-        const vectorKey = makeOptionsKey(manifest);
-        let vector = vectors.get(request.inputHandle);
-        if (!vector || vector.key !== vectorKey) {
+        // Song metadata affects labels, not weakness. Reuse the exact rows vector
+        // when layout installs a later songs snapshot for the same account.
+        const vectorKey = makeOptionsKey([input.stamp.scope, rowsDigests.get(request.inputHandle), manifest]);
+        let vector = vectors.get(vectorKey);
+        if (!vector) {
           vector = { key: vectorKey, value: runKernel('weakness', input.data, payload.options, libs) };
-          vectors.set(request.inputHandle, vector);
+          vectors.set(vectorKey, vector);
+          while (vectors.size > 2) vectors.delete(vectors.keys().next().value!);
         }
         libs.userVec = vector.value;
       }
