@@ -235,12 +235,18 @@ export function createComputeClient(config: {
       if (response.status === 'ready') {
         if (latest.get(laneKey(spec)) === job.id && currentInput(spec) && job.subscribers.some(s => !s.cancelled && s.current())) {
           // 캐시에 넣을 때만 크기를 잰다(계측 때문에 stale 결과까지 직렬화하지 않는다)
-          const stringifyStart = monoNow();
-          const serialized = JSON.stringify(response.value);
-          const stringifyEnd = monoNow(); trace.push(stageFields('cache-stringify', stringifyStart, stringifyEnd));
-          const bytesStart = monoNow();
-          const byteLength = new TextEncoder().encode(serialized).byteLength;
-          const bytesEnd = monoNow(); trace.push(stageFields('cache-utf8-bytes', bytesStart, bytesEnd));
+          let byteLength: number;
+          const reportedBytes = (v as Record<string, unknown>).valueBytes;
+          if (Number.isSafeInteger(reportedBytes) && (reportedBytes as number) >= 0) {
+            byteLength = reportedBytes as number;
+          } else {
+            const stringifyStart = monoNow();
+            const serialized = JSON.stringify(response.value);
+            const stringifyEnd = monoNow(); trace.push(stageFields('cache-stringify', stringifyStart, stringifyEnd));
+            const bytesStart = monoNow();
+            byteLength = new TextEncoder().encode(serialized).byteLength;
+            const bytesEnd = monoNow(); trace.push(stageFields('cache-utf8-bytes', bytesStart, bytesEnd));
+          }
           const cacheSetStart = monoNow(); cache.set(job.key, response.value, byteLength, makeOptionsKey(spec.stamp.scope));
           const cacheSetEnd = monoNow(); trace.push(stageFields('cache-set', cacheSetStart, cacheSetEnd));
         }

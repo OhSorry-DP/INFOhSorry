@@ -107,6 +107,13 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
       const dtoStart = encodeEnd;
       if (!isPlainDto(value)) throw new Error('NON_DTO_RESULT');
       const dtoEnd = dtoStart === undefined ? undefined : performance.now();
+      const sizeStart = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : undefined;
+      let valueBytes: number | undefined;
+      try {
+        const serialized = JSON.stringify(value);
+        if (serialized !== undefined) valueBytes = new TextEncoder().encode(serialized).byteLength;
+      } catch { /* Preserve successful compute results if byte accounting is unavailable. */ }
+      const sizeEnd = sizeStart === undefined ? undefined : performance.now();
       const diag: Record<string, number> = { version: 1 };
       if (encodeStart !== undefined && encodeEnd !== undefined) diag.encodeMs = Number((encodeEnd - encodeStart).toFixed(3));
       if (dtoStart !== undefined && dtoEnd !== undefined) diag.dtoValidateMs = Number((dtoEnd - dtoStart).toFixed(3));
@@ -126,18 +133,14 @@ export function createWorkerRuntime(post: (message: unknown) => void) {
           diag.entriesCount = ((value as { __entries: unknown[] }).__entries).length;
         }
       }
-      if (request.kind === 'weakness') {
-        const sizeStart = typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : undefined;
-        try {
-          const serialized = JSON.stringify(value);
-          if (serialized !== undefined) diag.valueBytes = new TextEncoder().encode(serialized).byteLength;
-        } catch { /* Diagnostic only: preserve successful compute results. */ }
-        if (sizeStart !== undefined) diag.sizeMeasureMs = Number((performance.now() - sizeStart).toFixed(3));
-      }
+      if (request.kind === 'weakness' && valueBytes !== undefined) diag.valueBytes = valueBytes;
+      if (request.kind === 'weakness' && sizeStart !== undefined && sizeEnd !== undefined)
+        diag.sizeMeasureMs = Number((sizeEnd - sizeStart).toFixed(3));
       const workerReadyEpochMs = typeof performance !== 'undefined' && typeof performance.now === 'function'
         && Number.isFinite(performance.timeOrigin) ? performance.timeOrigin + performance.now() : undefined;
       if (workerReadyEpochMs !== undefined) diag.workerReadyEpochMs = workerReadyEpochMs;
-      post({ ...envelope, type: 'result', status: 'ready', value, diag });
+      post({ ...envelope, type: 'result', status: 'ready', value,
+        ...(valueBytes === undefined ? {} : { valueBytes }), diag });
     } catch (error) {
       post({ ...envelope, type: 'error', status: 'error', code: 'COMPUTE_FAILED', message: String(error) });
     }
