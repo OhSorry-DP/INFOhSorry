@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.141 — 2026-10-04 약점 결과 받을 때 화면 멈춤 제거 · 계산 중 표시 정리
+
+- 「DP★ · r★ · SP★」 상태 줄이 계산이 끝나도 남던 문제 수정 — 이제 계산 중·실패인 항목만 「갱신 N분 전」 옆에 붙고, 전부 끝나면 사라진다. 실패 시 다시 계산 버튼은 그대로.
+- PlayData 약점 계산은 Worker 가 전체 벡터를 안에 보관하고 화면에는 상태(`{ entriesCount }`)만 보낸다 — 화면이 쓰지 않던 약 4MB 전송·복원이 사라짐(배치 라벨은 Worker 안의 벡터를 그대로 재사용).
+- 계산 결과를 받을 때 화면 스레드가 같은 객체를 여러 번 훑던 것 정리: 캐시 크기는 Worker 가 잰 값을 쓰고(직렬화 제거), decode 뒤 전체 복제를 없앴다. Analysis 스냅샷은 로드한 JSON 원문으로 바로 Blob 을 만든다(rating·zasa 는 원문이 없어 기존대로).
+- 진단: 결과 수신·채택 구간을 단계별로 기록(`compute-result-stage`·`compute-adopt-stage`, 결과 크기·전송 시각 포함).
+- 포장 exe 스모크(합성 400곡, 3회 모두 PASS): 약점 결과 수신 정지 0.22~0.28초 ×2 → 화면 정지(renderer-stall) 0회. PlayData 약점 수신 0ms(21바이트), Analysis 약점 수신은 0.12초 long task 로 남음(역직렬화·검증·decode).
+
 ### v0.0.140 — 2026-10-04 Analysis 계산도 백그라운드(Worker)로 · 멈춤 구간 진단 보강
 
 - Analysis 탭의 약점 vec(calcUserWeakness)·pattern-score vec(computePatternScoreVec) 계산을 Worker 로. renderer 가 성공 로드한 normTitle·calcWeakness 원문과 patterns·rate-ref·feature-scores·rating·zasa 의 같은 snapshot 을 Worker 에 넘겨 두 realm 이 다른 자료를 쓰지 않게 했다. 두 작업은 서로 기다리지 않고 독립 실행. DOM 출력(analysisRender)은 화면 스레드에 그대로.
