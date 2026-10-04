@@ -851,11 +851,13 @@ export default function PlayData({ rows, rowsRev, epoch, accountId, isWorkerCurr
           배치 {layoutMode ? 'ON' : 'OFF'}
         </button>
       </div>
-      <div role="status" aria-live="polite" className="hint">
-        {weaknessTask.task.status === 'pending' ? '약점 계산 중' : weaknessTask.task.status === 'error' ? '약점 계산 실패' : weaknessTask.value == null ? '약점 N/A' : ''}
-        {layoutMode && style === 'dp' && (layoutTask.task.status === 'pending' ? ' · 배치 계산 중' : layoutTask.task.status === 'error' ? ' · 배치 계산 실패' : '')}
+      <div role="status" aria-live="polite" className="hint" data-testid="playdata-compute-status" style={{ height: 28, minHeight: 28, maxHeight: 28, boxSizing: 'border-box', display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden', whiteSpace: 'nowrap', flexShrink: 0 }}>
+        <span style={{ minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {weaknessTask.task.status === 'error' ? '약점 계산 실패' : weaknessTask.task.status === 'ready' && weaknessTask.value == null ? '약점 N/A' : ''}
+          {layoutMode && style === 'dp' && layoutTask.task.status === 'error' ? ' · 배치 계산 실패' : ''}
+        </span>
         {(weaknessTask.task.status === 'error' || layoutTask.task.status === 'error') && (
-          <button onClick={() => {
+          <button style={{ height: 24, maxHeight: 24, boxSizing: 'border-box', padding: '0 8px', lineHeight: '20px', whiteSpace: 'nowrap', flexShrink: 0 }} onClick={() => {
             if (weaknessTask.task.status === 'error') weaknessTask.retry();
             if (layoutTask.task.status === 'error') layoutTask.retry();
           }}>다시 계산</button>
