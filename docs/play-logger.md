@@ -111,14 +111,38 @@ Reflux `Utils.FetchGameState` 와 같은 규칙입니다.
 | `dj_rate_pct` | 계산 | `ex_score / (notes × 2) × 100`, 소수 둘째 자리 |
 | `dj_rank` | 계산 | 레이트 기준 AAA(8/9) · AA(7/9) · A(6/9) · B(5/9) · C(4/9) · D(3/9) · E(2/9) · F |
 | `judge_16` | judgeData 0..15 | 공백 구분. 순서: P1 PGREAT·GREAT·GOOD·BAD·POOR, P2 같은 순서, P1 콤보 브레이크, P2 콤보 브레이크, P1 FAST, P2 FAST, P1 SLOW, P2 SLOW |
-| `settings_p1_11` | playSettings 11 int32 | 원본. 워드 0 스타일, 1 게이지, 2 어시스트, 3 미러 플립, 4 범위, 5 P2 스타일(DP), 8 배틀(Reflux 값, 이 빌드에서는 0 — 아래 참고), 10 배틀(+0x28) |
+| `settings_p1_11` | playSettings 11 int32 | 원본. 워드 0 스타일(왼쪽 레인), 1 게이지, 2 어시스트, 3 FLIP(좌우 위치), 4 범위, 5 스타일(오른쪽 레인, DP), 8 배틀(Reflux 값, 이 빌드에서는 0 — 아래 참고), 10 배틀(+0x28). 값의 뜻은 아래 6.1 표 |
 | `settings_p2_11` | playSettings + 0x48 | P2 쪽 같은 구조 |
 | `battle_flag` | playSettings + 0x28 | 배틀 ON = 1 |
 | `gauge_p1_w77` / `gauge_p2_w78` | judgeData 77, 78 | 게이지 원본 값 (아래 한계 참고) |
 | `source` | 계산 | `playdata` = 일반 플레이(PlayData), `currentsong` = 배틀(CurrentSong + 판정 블록, 5장) |
 
 - `settings_p1_11` 의 워드 8 은 Reflux 가 배틀로 읽는 칸이지만 이 빌드에서는 배틀과 무관합니다. 배틀 판정은 `battle_flag` 열을 쓰세요.
-- 설정 값 해석 표(스타일, 게이지, 어시스트, 범위 이름)는 Reflux `Settings.cs` 와 같습니다.
+### 6.1 옵션 값 해석
+
+`settings_p1_11` / `settings_p2_11` 은 공백으로 구분한 int32 11개입니다. 위치별 의미와 값 이름은 Reflux `Settings.cs` 와 같습니다.
+
+| 위치 (0부터) | 항목 | 값 |
+|--------------|------|----|
+| 0 | 스타일 (왼쪽 레인) | 0 OFF · 1 RANDOM · 2 R-RANDOM · 3 S-RANDOM · 4 MIRROR · 5 SYNCHRONIZE RANDOM · 6 SYMMETRY RANDOM |
+| 1 | 게이지 | 0 OFF · 1 ASSIST EASY · 2 EASY · 3 HARD · 4 EX HARD |
+| 2 | 어시스트 | 0 OFF · 1 AUTO SCRATCH · 2 5KEYS · 3 LEGACY NOTE · 4 KEY ASSIST · 5 ANY KEY |
+| 3 | FLIP (좌우 위치) | 0 OFF · 1 FLIP |
+| 4 | 범위 | 0 OFF · 1 SUDDEN+ · 2 HIDDEN+ · 3 SUD+ & HID+ · 4 LIFT · 5 LIFT & SUD+ |
+| 5 | 스타일 (오른쪽 레인, DP) | 위치 0 과 같은 값 |
+| 10 | 배틀 (+0x28) | 0 OFF · 1 ON (`battle_flag` 열과 같은 값) |
+
+- 위치 6~9 는 이 기록기에서 쓰지 않습니다. 위치 8 은 Reflux 가 배틀로 읽던 칸이지만 이 빌드에서는 배틀과 무관합니다.
+- **DP 는 `settings_p1_11` 한 블록만 보면 됩니다.** 왼쪽 레인 스타일은 위치 0, 오른쪽 레인은 위치 5 입니다. `settings_p2_11` 은 SP 를 2P 쪽으로 칠 때의 값입니다.
+- 이름으로 풀어 쓴 열은 따로 없으므로, 필요하면 위 표로 풀어서 읽습니다.
+
+예시 (2026-10-14 실제 줄):
+
+| 상황 | `settings_p1_11` | 해석 |
+|------|--------------------|------|
+| 양쪽 랜덤 배틀 | `1 1 1 0 5 1 0 0 0 0 1` | 왼쪽 RANDOM, 오른쪽 RANDOM, ASSIST EASY, AUTO SCRATCH, FLIP OFF, LIFT & SUD+, 배틀 ON |
+| 한쪽만 랜덤 배틀 | `1 1 1 0 5 0 0 0 0 0 1` | 왼쪽 RANDOM, 오른쪽 OFF, ASSIST EASY, AUTO SCRATCH, LIFT & SUD+, 배틀 ON |
+| 일반 더블 | `0 2 0 0 5 0 0 0 0 0 0` | 양쪽 OFF, EASY, 어시스트 OFF, LIFT & SUD+, 배틀 OFF |
 
 ## 7. 검증 기록 (2026-10-14, 게임 화면과 대조)
 
