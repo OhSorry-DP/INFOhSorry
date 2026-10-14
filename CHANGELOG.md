@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 미출시 — 2026-10-15 플레이 기록기·최근 100판 업로드·DBR 자동 저장
+### v0.0.143 — 2026-10-15 플레이 기록기·최근 100판 업로드·DBR 자동 저장
 
 - 플레이 기록기: 결과 화면마다 메모리 값을 CSV 한 줄(19열)로 저장한다. 배틀은 CurrentSong + 판정 블록 양쪽 합으로 곡·점수를 정하고 `source` 열(playdata/currentsong)로 구분한다. 정의는 `docs/play-logger.md`.
 - 저장 위치는 실제 게임 계정 폴더 `userData/users/{IIDX ID}/plays.csv` — 계정을 못 읽으면 저장하지 않는다. 예전 공용 `play-log/plays.csv` 는 그대로 둔다(이관 없음).
