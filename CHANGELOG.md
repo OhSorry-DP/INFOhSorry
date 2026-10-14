@@ -2,6 +2,15 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 미출시 — 2026-10-15 플레이 기록기·최근 100판 업로드·DBR 자동 저장
+
+- 플레이 기록기: 결과 화면마다 메모리 값을 CSV 한 줄(19열)로 저장한다. 배틀은 CurrentSong + 판정 블록 양쪽 합으로 곡·점수를 정하고 `source` 열(playdata/currentsong)로 구분한다. 정의는 `docs/play-logger.md`.
+- 저장 위치는 실제 게임 계정 폴더 `userData/users/{IIDX ID}/plays.csv` — 계정을 못 읽으면 저장하지 않는다. 예전 공용 `play-log/plays.csv` 는 그대로 둔다(이관 없음).
+- 저장 직후 기존 자동 업로드 예약을 깨워 최근 100판(원본 19열 문자열)을 `upsert_user` 의 `p_plays` 로 함께 올린다. 3분 최소 간격·2초 안정 대기는 그대로.
+- 게임 인식 게이트는 새 plays 전송·DBR 전송에만 건다 — 기존 수동·밀린·종료 업로드는 게임 없이도 그대로 실행되고 plays 만 빠진다.
+- DBR 자동 저장: 배틀 ON + 양쪽 RANDOM + AUTO SCRATCH 판만 기존 `/api/me/dbr-scores` 에 `improvements_only` 로 보낸다. 램프는 게이지 종류·끝 게이지(`gauge_p2_w78`, 화면 대조 대기)로 정한다 — EASY·ASSIST 80↑ EASY / 60↑ ASSIST, NORMAL 80↑, HARD·EX HARD 0 초과.
+- 원격 모드: `/api/me` 에 `game_recognized` 필드 추가(웹이 신규 원격 로그인 발급 전에 확인).
+
 ### v0.0.142 — 2026-10-05 PlayData 「약점 계산 중」 깜빡임 제거
 
 - 기록이 갱신될 때마다 PlayData 툴바 아래 「약점 계산 중 · 배치 계산 중」 줄이 나타났다 사라져 아래 칸이 위아래로 흔들리던 문제 — 진행 문구를 없애고(재계산 중엔 이전 결과를 그대로 보여 준다) 상태 줄 높이를 28px 로 고정했다. 실패·N/A 문구와 다시 계산 버튼은 유지.
