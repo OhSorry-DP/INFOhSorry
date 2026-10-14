@@ -17,6 +17,7 @@
 |------|------|
 | [architecture.md](architecture.md) | Electron main/preload/renderer 3 프로세스 구조, electron-vite 빌드, 앱 부팅 시퀀스, 5개 탭 구성, IPC 핸들러 등록 메커니즘, LAN 연결(ohsorry.local+QR) |
 | [memory-reading.md](memory-reading.md) | Reflux 자동 다운로드/관리, `tracker.tsv` 파싱, koffi Win32 메모리 스캔(`memory.ts`), `profileOffsets`/`useProfile`, gist `offsets.json` 원격 갱신, INFINITAS 패치 시 offset 깨짐 대응 |
+| [play-logger.md](play-logger.md) | 플레이 기록기 — 결과 화면마다 메모리 값(곡명, 노트 수, 점수, DJ 레벨, 게이지, 판정)을 `play-log/plays.csv` 에 한 줄씩 저장, 상태 판정 규칙, 구조체 상수, CSV 열 정의, 검증 기록, 알려진 한계, 패치 후 점검 |
 | [data-flow.md](data-flow.md) | 외부 데이터 소스(ereter/zasa/rating/spTier) 캐시 + TTL, 추천 코어 통합, 계정별 TSV 스냅샷 + 자동 업로드(스냅샷마다 마지막 성공 시각 비교, 최소 3분 간격) + 종료 업로드, LAN 원격 셸/API/SSE, 계정·세션 소유권 가드 |
 | [ipc-reference.md](ipc-reference.md) | main↔renderer IPC 채널 전수 목록 + 각 핸들러 시그니처/역할, preload `window.infohsorry` API 매핑, HTTP `/api/ipc` bridge |
 | [sp.md](sp.md) | **SP(싱글) 데이터 흐름** — SP 5 slot → Supabase `play_style:0` 적재(SP1~12, BEGINNER·EX SCORE 0 이하 제외), 스냅샷마다 최소 3분 간격 판정, 원격 `/api/me`·`/api/me/v3profile` + SSE, SP★/CPI 계산 |

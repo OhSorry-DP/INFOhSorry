@@ -37,9 +37,11 @@ import { createRecommendBridge } from './recommendBridge';
 import { clearPending, loadAllPending, savePending } from './uploadPending';
 import type { UploadOutcome, UploadSnapshot } from '../shared/uploadSnapshot';
 import { appendDiagLine, appStartMarkerLine, diagLogPath } from './diagLogStore';
+import { startPlayLogger } from './playLogger';
 import { recordGpuStatus, startMainHeartbeat } from './perfDiag';
 
 let stopMainHeartbeat: (() => void) | undefined;
+let stopPlayLogger: (() => void) | undefined;
 let gpuInfoReady = false;
 app.once('gpu-info-update', () => {
   gpuInfoReady = true;
@@ -738,6 +740,12 @@ app.whenReady().then(() => {
   Menu.setApplicationMenu(null);
   appendDiagLine(appStartMarkerLine(app.getVersion()));
   stopMainHeartbeat = startMainHeartbeat();
+  // 플레이 기록기: 결과 화면마다 plays.csv 에 한 줄 추가 (docs/play-logger.md)
+  stopPlayLogger = startPlayLogger({
+    dir: join(app.getPath('userData'), 'play-log'),
+    offsetsPath: join(app.getPath('userData'), 'Reflux', 'offsets.txt'),
+    log: appendDiagLine,
+  });
   recordGpuStatus(gpuInfoReady ? 'startup-ready' : 'startup-pending');
   createWindow();
   // start 는 pid!=null 을 즉시 통보(뷰어가 "게임 ON" 을 빨리 인지) — Reflux 기동은 chain 에서 이어짐.
@@ -791,6 +799,7 @@ app.on('before-quit', async (e) => {
   quitFinalizing = true;
   sessionMonitor.stop();
   stopMainHeartbeat?.();
+  stopPlayLogger?.();
   const outcome = await requestFinalUpload();
   logFinalOutcome(outcome);
   if (refluxManager.getState().spawned) {
