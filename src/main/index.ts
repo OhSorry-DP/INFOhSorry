@@ -774,7 +774,7 @@ app.whenReady().then(() => {
   if (!process.env.ELECTRON_RENDERER_URL) {
     const rendererDir = join(__dirname, '../renderer');
     try {
-      const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'), recommendBridge.query);
+      const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'), recommendBridge.query, () => sessionMonitor.getState().pid !== null);
       notifyMeUpdate = http.notifyMeUpdate;
       serverConnectInfo = http.connectInfo;
     } catch (e) {
@@ -823,4 +823,3 @@ app.on('before-quit', async (e) => {
   mainWindow?.destroy();
   app.exit(0);
 });
-
