@@ -22,14 +22,20 @@ function sync(globals = {}) {
   return load(source, { '../../shared/uploadSnapshot': shared,
     '../../shared/match': { norm: x => x, slotToDiff: x => x }, '../../shared/dataSource': { DATA_BASE: 'https://fixture.invalid' } }, globals);
 }
-const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '한글, "곡" \\ 경로\n다음 줄' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : '001']));
+const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : '001']));
 const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`).join(',') + '\r\n';
 const csv = rows => keys.join(',') + '\n' + rows.map(csvLine).join('');
 const plain = x => JSON.parse(JSON.stringify(x));
 
-test('101판에서 마지막 100판: 혼합 SP/DP/배틀, 원본 문자열과 파일 순서 보존', () => {
+test('101??? ??? 100?: ?? SP/DP/??, ?? source ???? ?? ?? ??', () => {
   const rows = Array.from({ length: 101 }, (_, i) => row(i));
-  assert.deepEqual(plain(sync().parseRecentPlays(csv(rows))), rows.slice(1));
+  const parsed = plain(sync().parseRecentPlays(csv(rows)));
+  assert.deepEqual(parsed, rows.slice(1));
+  assert.equal(keys.length, 19);
+  assert.equal(keys.at(-1), 'source');
+  assert.deepEqual(parsed.map(play => play.source), rows.slice(1).map(play => play.source));
+  assert.equal(parsed.some(play => play.source === 'playdata'), true);
+  assert.equal(parsed.some(play => play.source === 'currentsong'), true);
 });
 test('헤더 제외, 빈 CSV, 따옴표/쉼표/한글/이스케이프, 불완전 마지막 레코드 제외', () => {
   const { parseRecentPlays } = sync();
