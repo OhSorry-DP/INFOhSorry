@@ -253,6 +253,12 @@ const api = {
 
   // 업로드 — main(앱 종료/INFINITAS 종료 감지)이 "마지막 업로드" 를 요청하면 renderer 가 받아 1회 업로드 후 done 신호.
   upload: {
+    readPlayCsv: (iidxId: string): Promise<{ ok: boolean; csv?: string; error?: string }> => ipcRenderer.invoke('account:readPlayCsv', iidxId),
+    onPlayAppend: (cb: (event: { iidxId: string }) => void): (() => void) => {
+      const listener = (_evt: unknown, event: { iidxId: string }): void => cb(event);
+      ipcRenderer.on('play:appended', listener);
+      return () => ipcRenderer.off('play:appended', listener);
+    },
     onFinalRequest: (cb: () => void): (() => void) => {
       const listener = (): void => cb();
       ipcRenderer.on('upload:final-request', listener);

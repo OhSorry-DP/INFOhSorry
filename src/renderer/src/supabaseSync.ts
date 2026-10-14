@@ -1,3 +1,4 @@
+import { PLAY_CSV_KEYS, type PlayCsvRow } from '../../shared/uploadSnapshot';
 // Supabase 새 디비 (users + scores) upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
 // ohSorry / INFOhSorry 가 같은 DB 공유 (iidx_id text PK 라 namespace 호환).
 //
@@ -254,6 +255,8 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
 }
 
 export interface UploadInput {
+  plays?: PlayCsvRow[] | null;
+  gameRecognized?: () => Promise<boolean>;
   appVersion: string; // package.json version, e.g. '0.0.9'
   profile: ProfileInfo;
   starResult: StarResult | null; // null = ★ 미산출 (SP 전용·DP 저레벨 전용 유저) → users.star = null
@@ -367,10 +370,12 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
   try {
     console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
+    const plays = playsForGame(input.plays, input.gameRecognized ? await input.gameRecognized() : true);
     const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify({
+        ...(plays !== undefined ? { p_plays: plays } : {}),
         p_iidx_id: iidxIdNorm,
         p_dj_name: profile.djName ?? null,
         p_star: starResult ? Number(starResult.star.toFixed(4)) : null,
@@ -911,4 +916,102 @@ export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string,
     });
   }
   return idx;
+}
+
+// 따옴표 밖의 개행으로 끝난 레코드만 사용해 append 중인 마지막 레코드를 제외한다.
+export function parseRecentPlays(csv: string): PlayCsvRow[] {
+  const records: string[][] = [];
+  let record: string[] = []; let field = ''; let quoted = false;
+  for (let i = 0; i < csv.length; i++) {
+    const c = csv[i];
+    if (c === '"') {
+      if (quoted && csv[i + 1] === '"') { field += '"'; i++; }
+      else quoted = !quoted;
+    } else if (c === ',' && !quoted) { record.push(field); field = ''; }
+    else if (c === '\n' && !quoted) {
+      record.push(field.endsWith('\r') ? field.slice(0, -1) : field);
+      records.push(record); record = []; field = '';
+    } else field += c;
+  }
+  const header = records.shift();
+  if (!header || !PLAY_CSV_KEYS.every((key, i) => header[i] === key)) return [];
+  return records.filter(row => row.length === PLAY_CSV_KEYS.length).slice(-100)
+    .map(row => Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i]])) as PlayCsvRow);
+}
+
+export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecognized: boolean): PlayCsvRow[] | null | undefined {
+  return gameRecognized ? plays : undefined;
+}
+
+// DBR 후보 조건과 옵션 값은 사용자 지정 명세를 따른다.
+export const GAUGE_COLUMN = 'gauge_p2_w78';
+export interface BattleRandomScore { song_id: number; diff: number; lamp: number; ex_score: number }
+export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
+  const p1 = row.settings_p1_11.split(' ').map(Number);
+  if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
+    || row.battle_flag !== '1' || p1[0] !== 1 || p1[5] !== 1 || p1[2] !== 1) return null;
+  const diffs: Record<string, number> = { SPB: 0, SPN: 1, SPH: 2, SPA: 3, SPL: 4 };
+  if (!row.song_id.trim() || !/^\d+(?:\.\d+)?$/.test(row.song_id) || !row.ex_score.trim()
+    || !row.notes.trim() || !row[GAUGE_COLUMN].trim()) return null;
+  const songId = Number(row.song_id); const diff = diffs[row.difficulty];
+  const exScore = Number(row.ex_score); const notes = Number(row.notes); const gauge = Number(row[GAUGE_COLUMN]);
+  if (!Number.isSafeInteger(songId) || songId < 0 || !Number.isInteger(diff)
+    || !Number.isFinite(exScore) || exScore < 0 || !Number.isFinite(notes) || notes <= 0
+    || !Number.isFinite(gauge) || gauge < 0) return null;
+  let lamp: number;
+  switch (p1[1]) {
+    case 1: case 2: lamp = gauge >= 80 ? 3 : gauge >= 60 ? 2 : 1; break;
+    case 0: lamp = gauge >= 80 ? 4 : 1; break;
+    case 3: lamp = gauge > 0 ? 5 : 1; break;
+    case 4: lamp = gauge > 0 ? 6 : 1; break;
+    default: return null;
+  }
+  return { song_id: songId, diff, lamp, ex_score: exScore };
+}
+const REMOTE_API_ORIGIN = 'https://iidx.in';
+// Web 원격 인증과 같은 issue/exchange와 Bearer 세션을 사용한다. 별도 토큰 저장소는 없다.
+async function existingRemoteBearer(iidxId: string): Promise<string | null> {
+  const key = 'ohsorry:remoteAuthToken';
+  let token = localStorage.getItem(key);
+  if (!token) {
+    const issued = await fetch(`${REMOTE_API_ORIGIN}/auth/issue`, { method: 'POST', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ iidx_id: iidxId, source: 'inf' }) });
+    if (!issued.ok) return null;
+    const ticket = new URL((await issued.json()).url).searchParams.get('ticket');
+    if (!ticket) return null;
+    const exchanged = await fetch(`${REMOTE_API_ORIGIN}/auth/exchange`, { method: 'POST', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket, mode: 'token' }) });
+    if (!exchanged.ok) return null;
+    token = (await exchanged.json()).token;
+    if (!token) return null;
+    localStorage.setItem(key, token);
+  }
+  const session = await fetch(`${REMOTE_API_ORIGIN}/auth/session`, { credentials: 'omit', headers: { Authorization: `Bearer ${token}` } });
+  if (!session.ok) return null;
+  const data = await session.json();
+  return data.logged_in && data.iidx_id === iidxId ? token : null;
+}
+
+// 한 INF 클라이언트의 DBR POST는 전송 중에만 직렬화한다. 재시도 큐는 없다.
+let dbrSending: Promise<void> | null = null;
+export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
+  decode: (row: PlayCsvRow) => BattleRandomScore | null = decodeBattleRandomPlay,
+  bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
+  send: typeof fetch = fetch): Promise<void> {
+  while (dbrSending) await dbrSending;
+  let finish!: () => void;
+  dbrSending = new Promise<void>(resolve => { finish = resolve; });
+  try {
+    const candidates = plays.map(decode).filter((row): row is BattleRandomScore => row !== null);
+    if (!candidates.length || !await gameRecognized()) return;
+    const token = await bearer(iidxId);
+    if (!token) return;
+    for (const candidate of candidates) {
+      if (!await gameRecognized()) return;
+      const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...candidate, improvements_only: true }) });
+      if (!response.ok) throw new Error(`DBR HTTP ${response.status}`);
+    }
+  } finally { dbrSending = null; finish(); }
 }

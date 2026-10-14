@@ -265,6 +265,7 @@ export function startHttpServer(
   getRemoteUser?: () => unknown,
   osrCacheDir?: string,
   recommendQuery?: (kind: string, params: Record<string, unknown>) => Promise<unknown>,
+  isGameRecognized?: () => boolean,
 ): { server: http.Server; notifyMeUpdate: () => void; connectInfo: () => Promise<ConnectInfo>; stop: () => void } {
   const sse = setupSseBroadcast(refluxManager);
 
@@ -320,7 +321,7 @@ export function startHttpServer(
           'access-control-allow-origin': '*',
           'cache-control': 'no-cache',
         });
-        res.end(JSON.stringify(user ?? { error: 'no remote user yet' }));
+        res.end(JSON.stringify({ ...(user && typeof user === 'object' ? user : user ? {} : { error: 'no remote user yet' }), game_recognized: isGameRecognized ? isGameRecognized() : false }));
         return;
       }
 

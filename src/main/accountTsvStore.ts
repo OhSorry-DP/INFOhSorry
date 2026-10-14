@@ -90,3 +90,17 @@ export async function readAccountTsv(iidxId: string): Promise<TsvReadResult> {
 }
 export async function getLastSelected(): Promise<string | null> { try { const x = JSON.parse(await fsp.readFile(viewerStatePath(), 'utf8')) as { selectedViewerId?: string | null }; return x.selectedViewerId ?? null; } catch { return null; } }
 export async function setLastSelected(iidxId: string | null): Promise<void> { const tmp = viewerStatePath() + '.tmp'; await fsp.writeFile(tmp, JSON.stringify({ selectedViewerId: iidxId }), 'utf8'); await fsp.rename(tmp, viewerStatePath()); }
+
+// 계정 CSV 접근은 기존 계정 저장소에 모은다.
+export function accountPlayCsvPath(iidxId: string): string | null {
+  return IIDX_RE.test(iidxId) ? join(accountDir(iidxId), 'plays.csv') : null;
+}
+export async function readAccountPlayCsv(iidxId: string): Promise<{ ok: boolean; csv?: string; error?: string }> {
+  const path = accountPlayCsvPath(iidxId);
+  if (!path) return { ok: false, error: 'invalid id' };
+  try { return { ok: true, csv: await fsp.readFile(path, 'utf8') }; }
+  catch (e) {
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true, csv: '' };
+    return { ok: false, error: (e as Error).message };
+  }
+}

@@ -41,7 +41,7 @@ import { ProfileCard } from './ProfileCard';
 import AccountSelector from './AccountSelector';
 import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
-import { uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
+import { parseRecentPlays, playsForGame, uploadAutomaticDbr, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
@@ -1367,11 +1367,19 @@ export default function App() {
   const uploadSnapshot = useCallback(async (snapshot: UploadSnapshot, trigger: string): Promise<UploadOutcome> => {
     if (IS_BROWSER_REMOTE) return { kind: 'skip-no-snapshot', reason: 'browser-remote' };
     const startedAt = Date.now();
+    const gameRecognized = async (): Promise<boolean> => (await window.infohsorry.session.getState()).pid != null
+      && !(await readIidxIdFresh()).processMissing;
+    if (trigger !== 'pending' && window.infohsorry.upload.readPlayCsv && await gameRecognized()) {
+      const csv = await window.infohsorry.upload.readPlayCsv(snapshot.iidxId);
+      if (csv.ok) snapshot = { ...snapshot, plays: parseRecentPlays(csv.csv ?? '') };
+    }
     const savePending = window.infohsorry.upload.savePending;
     const saved = typeof savePending === 'function' ? await savePending(snapshot) : { ok: false, error: 'pending save unavailable' };
     if (!saved.ok) console.warn(`[upload] pending save failure trigger=${trigger}: ${saved.error ?? 'unknown'}`);
     try {
       const result = await uploadProfile({
+        gameRecognized,
+        plays: playsForGame(snapshot.plays, await gameRecognized()),
         appVersion: snapshot.appVersion,
         profile: snapshot.profile as ProfileInfo,
         starResult: snapshot.starResult,
@@ -1389,6 +1397,10 @@ export default function App() {
         console.warn(`[upload] http failure ${result.error ?? 'unknown'} -> pending preserved`);
         addDiagLine(`업로드 실패: 서버 전송 오류(${result.error ?? '알 수 없는 오류'}) — 다음 시도에서 재전송`);
         return { kind: 'http-failure', error: result.error ?? 'upload failed', durationMs };
+      }
+      if ((trigger === 'auto' || trigger === 'initial') && snapshot.plays) {
+        try { await uploadAutomaticDbr(snapshot.plays, snapshot.iidxId, gameRecognized); }
+        catch (e) { console.warn('[upload] automatic DBR failed:', e); }
       }
       const clearPending = window.infohsorry.upload.clearPending;
       const cleared = typeof clearPending === 'function'
@@ -1596,12 +1608,13 @@ export default function App() {
     (window as unknown as { updateSupabase: () => void }).updateSupabase = runManual;
     (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual = runManual;
     (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue = runIfDue;
+    const offPlayAppend = window.infohsorry.upload.onPlayAppend?.(({ iidxId }) => runIfDue(iidxId));
     const offFinal = window.infohsorry.upload.onFinalRequest(() => void (async () => {
       const outcome = await tryUpload('final');
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
       window.infohsorry.upload.finalDone(outcome);
     })());
-    return () => { cancelInitialTimer(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
+    return () => { cancelInitialTimer(); offPlayAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
   }, []);
 
   // 마지막 스냅샷 이후에도 준비 상태가 바뀔 수 있으므로 타이머를 직접 설정하거나 재확인한다.
