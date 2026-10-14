@@ -11,7 +11,7 @@
 - **플레이 중 → 결과 화면**으로 바뀌는 순간에만 한 줄을 추가합니다. 결과 화면이 떠 있는 동안 여러 줄이 쌓이지 않습니다.
 - 결과 화면을 벗어나 선택 화면으로 가도 줄은 추가되지 않습니다.
 - 중단(Quit)한 플레이도 결과 화면이 뜨면 저장됩니다. 게임 기록에 남지 않는 **배틀 모드**도 저장됩니다(곡 정보를 얻는 방식이 다릅니다 — 5장).
-- 모든 데이터는 로컬 파일에만 저장됩니다. 외부 서버로 보내지 않습니다.
+- 원본 CSV는 로컬에 누적합니다. 기존 업로드 실행 시 게임을 인식하면 완성된 최근 100판을 프로필 업로드에 포함합니다.
 
 ## 2. 파일 구성
 
@@ -22,8 +22,8 @@
 | `src/main/playLog.test.mjs` | 순수 로직 단위 테스트 (`node --test src/main/playLog.test.mjs`) |
 | `src/main/index.ts` | 앱 시작(`whenReady`)에 `startPlayLogger` 호출, 종료(`before-quit`)에 정지 |
 
-**출력 위치:** `%APPDATA%\ohSorryScoreINF\play-log\plays.csv`
-(`app.getPath('userData')/play-log/plays.csv`). 앱 로그는 `appendDiagLine` 으로 같은 진단 로그에 남깁니다.
+**출력 위치:** `app.getPath('userData')/users/{실제 게임 iidxId}/plays.csv`.
+저장 순간 게임 핸들에서 계정을 직접 확인하며 미취득 시 저장을 건너뜁니다. 뷰어/마지막 계정은 사용하지 않습니다. 기존 공용 `play-log/plays.csv`는 읽기·이관·삭제·수정하지 않습니다. 앱 로그는 `appendDiagLine`으로 남깁니다.
 
 ## 3. 게임 연결과 주소
 
@@ -205,3 +205,15 @@ npm run typecheck:node                  # 타입 검사
 ```
 
 게임과 연결된 동작은 자동 테스트가 없습니다. 실제 플레이로 확인합니다.
+
+## 플레이 업로드 연결
+
+저장할 행이 없으면 `skipped` 로그만 남기고 알림을 보내지 않습니다. append 성공 후 `{iidxId}` 알림이 main → preload → renderer로 전달되어 기존 자동 업로드 예약을 다시 확인합니다. CSV만 증가해도 예약을 깨우며 기존 3분 최소 간격과 초기 안정 대기 2초를 유지합니다. 계정 전환으로 기록기를 재시작하지 않습니다.
+
+CSV의 19개 원본 문자열(source 포함)을 파일 순서로 마지막 100개 선택합니다. SP/DP/배틀 필터나 채보별 합치기 없이 따옴표·쉼표·한글을 보존하고 헤더와 불완전 마지막 레코드를 제외합니다. `UploadSnapshot.plays` → `UploadInput.plays` → `upsert_user.p_plays`로 전달합니다. 생략/NULL은 DB 값 유지, 빈 배열은 교체입니다.
+
+게임 인식은 plays 캡처와 전송 직전, 자동 DBR 전송에만 적용합니다. 게임 종료 후 수동/pending/종료 업로드는 계속 실행하며 pending에 담긴 plays도 게임 없이 보내지 않습니다. 재시작 시 기존 pending 흐름을 유지합니다.
+
+DBR 변환은 `decodeBattleRandomPlay`에 격리합니다. r2 기준 후보는 `battle_flag=1`, `settings_p1_11` 위치 0·5가 모두 RANDOM(1), 위치 2가 AUTO SCRATCH(1)인 SP 차트입니다. 곡 ID와 EX·노트 수는 CSV의 양쪽 합계를 그대로 사용하며, `clear_lamp=-1` 대신 게이지 종류(위치 1)와 `gauge_p2_w78`로 DBR 램프를 계산합니다. 게이지 열 선택은 화면 대조 확인이 남아 있는 사용자 결정입니다(8장 한계 참조).
+
+조건을 만족하는 후보만 기존 원격 issue/exchange/Bearer 세션과 `/api/me/dbr-scores`를 통해 `improvements_only:true`로 순서대로 전송합니다. 후보가 아닌 행도 plays에는 그대로 포함합니다. 새 커서·최고값 저장소·재시도 큐는 없습니다.

@@ -30,6 +30,7 @@ export interface SnapshotProfileInfo {
 
 // UploadInput의 값 경계를 디스크에 보존한다. type import만 사용하므로 main runtime에는 renderer 의존성이 없다.
 export interface UploadSnapshot {
+  plays?: PlayCsvRow[] | null;
   v: number;
   capturedAt: number;
   reason: SnapshotReason;
@@ -57,3 +58,6 @@ export type UploadOutcome =
   | { kind: 'timeout'; durationMs: number }
   | { kind: 'skip-no-dirty' }
   | { kind: 'skip-no-snapshot'; reason: string };
+
+export const PLAY_CSV_KEYS = ["timestamp", "song_id", "title", "difficulty", "notes", "ex_score", "pgreat", "great", "miss_count", "clear_lamp", "dj_rate_pct", "dj_rank", "judge_16", "settings_p1_11", "settings_p2_11", "battle_flag", "gauge_p1_w77", "gauge_p2_w78"] as const;
+export type PlayCsvRow = Record<(typeof PLAY_CSV_KEYS)[number], string>;

@@ -1,3 +1,4 @@
+import { PLAY_CSV_KEYS, type PlayCsvRow } from '../../shared/uploadSnapshot';
 // Supabase 새 디비 (users + scores) upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
 // ohSorry / INFOhSorry 가 같은 DB 공유 (iidx_id text PK 라 namespace 호환).
 //
@@ -254,6 +255,8 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
 }
 
 export interface UploadInput {
+  plays?: PlayCsvRow[] | null;
+  gameRecognized?: () => Promise<boolean>;
   appVersion: string; // package.json version, e.g. '0.0.9'
   profile: ProfileInfo;
   starResult: StarResult | null; // null = ★ 미산출 (SP 전용·DP 저레벨 전용 유저) → users.star = null
@@ -367,10 +370,12 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
   try {
     console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
+    const plays = playsForGame(input.plays, input.gameRecognized ? await input.gameRecognized() : true);
     const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify({
+        ...(plays !== undefined ? { p_plays: plays } : {}),
         p_iidx_id: iidxIdNorm,
         p_dj_name: profile.djName ?? null,
         p_star: starResult ? Number(starResult.star.toFixed(4)) : null,
@@ -911,4 +916,104 @@ export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string,
     });
   }
   return idx;
+}
+
+// 따옴표 밖의 개행으로 끝난 레코드만 사용해 append 중인 마지막 레코드를 제외한다.
+export function parseRecentPlays(csv: string): PlayCsvRow[] {
+  const records: string[][] = [];
+  let record: string[] = []; let field = ''; let quoted = false;
+  for (let i = 0; i < csv.length; i++) {
+    const c = csv[i];
+    if (c === '"') {
+      if (quoted && csv[i + 1] === '"') { field += '"'; i++; }
+      else quoted = !quoted;
+    } else if (c === ',' && !quoted) { record.push(field); field = ''; }
+    else if (c === '\n' && !quoted) {
+      record.push(field.endsWith('\r') ? field.slice(0, -1) : field);
+      records.push(record); record = []; field = '';
+    } else field += c;
+  }
+  const header = records.shift();
+  if (!header || !PLAY_CSV_KEYS.every((key, i) => header[i] === key)) return [];
+  return records.filter(row => row.length === PLAY_CSV_KEYS.length).slice(-100)
+    .map(row => Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i]])) as PlayCsvRow);
+}
+
+export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecognized: boolean): PlayCsvRow[] | null | undefined {
+  return gameRecognized ? plays : undefined;
+}
+
+// 실기 샘플 없이 word 0·5의 해석, RANDOM 값, 난이도와 분모를 확정하지 않는다.
+const TODO_SETTINGS_WORD_0_INTERPRETATION: string | null = null;
+const TODO_SETTINGS_WORD_5_INTERPRETATION: string | null = null;
+const TODO_BATTLE_FLAG: string | null = null;
+const TODO_RANDOM_WORD_P1: number | null = null;
+const TODO_RANDOM_WORD_P2: number | null = null;
+const TODO_RANDOM_VALUE: number | null = null;
+const TODO_BATTLE_DIFFICULTY_MAP: Record<string, number> | null = null;
+const TODO_NOTES_DENOMINATOR: number | null = null;
+const TODO_SONG_ID_MAP: Record<string, number> | null = null;
+const TODO_LAMP_MAP: Record<string, number> | null = null;
+const TODO_EX_SCORE_MULTIPLIER: number | null = null;
+export interface BattleRandomScore { song_id: number; diff: number; lamp: number; ex_score: number }
+export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
+  if (TODO_SETTINGS_WORD_0_INTERPRETATION === null || TODO_SETTINGS_WORD_5_INTERPRETATION === null
+    || TODO_BATTLE_FLAG === null || TODO_RANDOM_WORD_P1 === null || TODO_RANDOM_WORD_P2 === null
+    || TODO_RANDOM_VALUE === null || TODO_BATTLE_DIFFICULTY_MAP === null || TODO_NOTES_DENOMINATOR === null
+    || TODO_SONG_ID_MAP === null || TODO_LAMP_MAP === null || TODO_EX_SCORE_MULTIPLIER === null) return null;
+  const p1 = row.settings_p1_11.split(' ').map(Number);
+  const p2 = row.settings_p2_11.split(' ').map(Number);
+  if (row.battle_flag !== TODO_BATTLE_FLAG || p1[TODO_RANDOM_WORD_P1] !== TODO_RANDOM_VALUE
+    || p2[TODO_RANDOM_WORD_P2] !== TODO_RANDOM_VALUE) return null;
+  const score = { song_id: TODO_SONG_ID_MAP[row.song_id], diff: TODO_BATTLE_DIFFICULTY_MAP[row.difficulty],
+    lamp: TODO_LAMP_MAP[row.clear_lamp], ex_score: Number(row.ex_score) * TODO_EX_SCORE_MULTIPLIER };
+  return Object.values(score).every(Number.isInteger) && Number(row.notes) * TODO_NOTES_DENOMINATOR > 0 ? score : null;
+}
+
+const REMOTE_API_ORIGIN = 'https://iidx.in';
+// Web 원격 인증과 같은 issue/exchange와 Bearer 세션을 사용한다. 별도 토큰 저장소는 없다.
+async function existingRemoteBearer(iidxId: string): Promise<string | null> {
+  const key = 'ohsorry:remoteAuthToken';
+  let token = localStorage.getItem(key);
+  if (!token) {
+    const issued = await fetch(`${REMOTE_API_ORIGIN}/auth/issue`, { method: 'POST', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ iidx_id: iidxId, source: 'inf' }) });
+    if (!issued.ok) return null;
+    const ticket = new URL((await issued.json()).url).searchParams.get('ticket');
+    if (!ticket) return null;
+    const exchanged = await fetch(`${REMOTE_API_ORIGIN}/auth/exchange`, { method: 'POST', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket, mode: 'token' }) });
+    if (!exchanged.ok) return null;
+    token = (await exchanged.json()).token;
+    if (!token) return null;
+    localStorage.setItem(key, token);
+  }
+  const session = await fetch(`${REMOTE_API_ORIGIN}/auth/session`, { credentials: 'omit', headers: { Authorization: `Bearer ${token}` } });
+  if (!session.ok) return null;
+  const data = await session.json();
+  return data.logged_in && data.iidx_id === iidxId ? token : null;
+}
+
+// 한 INF 클라이언트의 DBR POST는 전송 중에만 직렬화한다. 재시도 큐는 없다.
+let dbrSending: Promise<void> | null = null;
+export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
+  decode: (row: PlayCsvRow) => BattleRandomScore | null = decodeBattleRandomPlay,
+  bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
+  send: typeof fetch = fetch): Promise<void> {
+  while (dbrSending) await dbrSending;
+  let finish!: () => void;
+  dbrSending = new Promise<void>(resolve => { finish = resolve; });
+  try {
+    const candidates = plays.map(decode).filter((row): row is BattleRandomScore => row !== null);
+    if (!candidates.length || !await gameRecognized()) return;
+    const token = await bearer(iidxId);
+    if (!token) return;
+    for (const candidate of candidates) {
+      if (!await gameRecognized()) return;
+      const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ ...candidate, improvements_only: true }) });
+      if (!response.ok) throw new Error(`DBR HTTP ${response.status}`);
+    }
+  } finally { dbrSending = null; finish(); }
 }

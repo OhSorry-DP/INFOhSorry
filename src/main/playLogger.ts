@@ -2,7 +2,8 @@
 // 플레이 중 -> 결과 화면으로 바뀌는 순간에만 한 줄을 plays.csv 에 추가한다.
 // 규칙과 열 정의: docs/play-logger.md
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
-import { join } from 'path';
+import { dirname } from 'path';
+import { accountPlayCsvPath } from './accountTsvStore';
 import { closeHandle, findInfinitas, readBytes, type InfinitasHandle } from './memory';
 import {
   PLAY_LOG_HEADER,
@@ -24,8 +25,9 @@ const TICK_DETACHED_MS = 2000;
 const RESULT_SETTLE_MS = 1500;
 
 export interface PlayLoggerOptions {
-  /** CSV 를 둘 폴더 (없으면 만든다) */
-  dir: string;
+  /** 저장 순간 게임 핸들에서 실제 계정을 확인한다. */
+  getAccount: (handle: InfinitasHandle) => string | null;
+  onAppend: (event: { iidxId: string }) => void;
   /** Reflux 가 쓰는 offsets.txt 경로 (songList, judgeData, playSettings, playData 를 여기서 읽는다) */
   offsetsPath: string;
   log: (line: string) => void;
@@ -48,10 +50,6 @@ function ints(handle: unknown, addr: bigint, n: number): number[] {
 
 // 플레이 기록기를 시작한다. 반환값은 정지 함수.
 export function startPlayLogger(opts: PlayLoggerOptions): () => void {
-  const csvPath = join(opts.dir, 'plays.csv');
-  mkdirSync(opts.dir, { recursive: true });
-  if (!existsSync(csvPath)) writeFileSync(csvPath, PLAY_LOG_HEADER + '\n');
-
   let stopped = false;
   let timer: NodeJS.Timeout | null = null;
   let handle: InfinitasHandle | null = null;
@@ -149,12 +147,18 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
   };
 
   const saveOnce = (): void => {
+    const iidxId = opts.getAccount(handle!);
+    const csvPath = iidxId ? accountPlayCsvPath(iidxId) : null;
+    if (!csvPath || !iidxId) return;
     const snap = buildSnapshotRow();
     if (!snap) {
       opts.log('[playlog] skipped: 저장할 플레이 정보가 없음 (PlayData·CurrentSong 모두 비어 있음)');
       return;
     }
-    appendFileSync(csvPath, snap.row + '\n');
+    mkdirSync(dirname(csvPath), { recursive: true });
+    if (!existsSync(csvPath)) writeFileSync(csvPath, PLAY_LOG_HEADER + '\n', 'utf8');
+    appendFileSync(csvPath, snap.row + '\n', 'utf8');
+    opts.onAppend({ iidxId });
     opts.log(`[playlog] saved play song_id=${snap.songId} source=${snap.source} -> ${csvPath}`);
   };
 

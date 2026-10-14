@@ -18,8 +18,9 @@ import {
 } from './memory';
 import { RefluxManager, readRefluxOffsets } from './reflux';
 import { InfinitasSessionMonitor } from './infinitasSession';
-import { snapshotTsv, listAccounts, readAccountTsv, getLastSelected, setLastSelected } from './accountTsvStore';
+import { snapshotTsv, listAccounts, readAccountTsv, readAccountPlayCsv, getLastSelected, setLastSelected } from './accountTsvStore';
 import type { AccountSnapshotRequest } from '../shared/account';
+import { PROFILE_OFFSETS, isRemoteStringOffset, type RemoteProfileMap } from '../shared/profileOffsets';
 import { getRemoteProfileOffsets } from './offsetsRemote';
 import {
   getEreterData,
@@ -61,6 +62,7 @@ let abortFinalUpload: (() => void) | null = null;
 // 원격모드(LAN 로컬보드) — renderer 가 계산해 push 한 오소리웹 user 객체(별값 + charts_json) 캐시.
 //   http-server 의 GET /api/me 가 이 값을 노출 → 오소리웹 원격 카드가 supabase 대신 읽음.
 let remoteUser: unknown = null;
+let playProfileOffsets: RemoteProfileMap | null = null;
 // SSE me:update broadcaster — startHttpServer 가 채움. setUser 시 PC2 에 갱신 알림용.
 let notifyMeUpdate: (() => void) | null = null;
 // 추천 브릿지 — http-server(/api/recommend, OpenWebUI 챗봇용) ↔ renderer(recCtx) 중계.
@@ -110,6 +112,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   },
   'reflux:tsvPath': async () => RefluxManager.tsvFilePath,
   'session:getState': async () => sessionMonitor.getState(),
+  'account:readPlayCsv': async (...args: never[]) => readAccountPlayCsv(args[0] as string),
   'account:list': async () => listAccounts(),
   'account:readTsv': async (...args: never[]) => readAccountTsv(args[0] as string),
   'account:snapshot': async (...args: never[]) => snapshotTsv(args[0] as AccountSnapshotRequest, { sourceTsvPath: RefluxManager.tsvFilePath, getSession: () => sessionMonitor.getState() }),
@@ -169,7 +172,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   'rating:status': async () => getRatingCacheStatus(),
 
   // gist offsets.json 의 프로필 메모리 offset — useProfile 이 기본값으로 사용 (없으면 profileOffsets.ts 상수 fallback)
-  'offsets:getProfile': async () => getRemoteProfileOffsets(),
+  'offsets:getProfile': async () => { const result = await getRemoteProfileOffsets(); playProfileOffsets = result?.profile ?? null; return result; },
 
   // GitHub 최신 릴리즈 체크 — "v0.0.X 있음 → 다운로드" 알림용 (자동 다운로드 X)
   'update:check': async () => checkForUpdate(),
@@ -742,7 +745,15 @@ app.whenReady().then(() => {
   stopMainHeartbeat = startMainHeartbeat();
   // 플레이 기록기: 결과 화면마다 plays.csv 에 한 줄 추가 (docs/play-logger.md)
   stopPlayLogger = startPlayLogger({
-    dir: join(app.getPath('userData'), 'play-log'),
+    getAccount: (game) => {
+      if (sessionMonitor.getState().pid !== game.pid) return null;
+      const entry = playProfileOffsets?.iidxId;
+      if (entry === null) return null;
+      const offset = isRemoteStringOffset(entry) ? entry : PROFILE_OFFSETS.iidxId;
+      const id = decodeString(readBytes(game.handle, game.modBaseAddr + BigInt(offset.offset), offset.maxBytes ?? 32), offset.encoding as StringEncoding).replace(/\x00.*$/s, '').trim();
+      return /^[A-Z]\d{12}$/.test(id) ? id : null;
+    },
+    onAppend: (event) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('play:appended', event); },
     offsetsPath: join(app.getPath('userData'), 'Reflux', 'offsets.txt'),
     log: appendDiagLine,
   });

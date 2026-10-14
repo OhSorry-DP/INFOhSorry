@@ -180,6 +180,8 @@ declare global {
         respond: (payload: { reqId: string; ok: boolean; result?: unknown; error?: string }) => void;
       };
       upload: {
+        readPlayCsv?: (iidxId: string) => Promise<{ ok: boolean; csv?: string; error?: string }>;
+        onPlayAppend?: (cb: (event: { iidxId: string }) => void) => () => void;
         onFinalRequest: (cb: () => void) => () => void;
         finalDone: (outcome: import('../shared/uploadSnapshot').UploadOutcome) => void;
         savePending?: (snapshot: import('../shared/uploadSnapshot').UploadSnapshot) => Promise<{ ok: boolean; error?: string; path?: string; bytes?: number }>;
