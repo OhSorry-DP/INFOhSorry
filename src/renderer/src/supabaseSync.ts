@@ -943,33 +943,31 @@ export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecogni
   return gameRecognized ? plays : undefined;
 }
 
-// 실기 샘플 없이 word 0·5의 해석, RANDOM 값, 난이도와 분모를 확정하지 않는다.
-const TODO_SETTINGS_WORD_0_INTERPRETATION: string | null = null;
-const TODO_SETTINGS_WORD_5_INTERPRETATION: string | null = null;
-const TODO_BATTLE_FLAG: string | null = null;
-const TODO_RANDOM_WORD_P1: number | null = null;
-const TODO_RANDOM_WORD_P2: number | null = null;
-const TODO_RANDOM_VALUE: number | null = null;
-const TODO_BATTLE_DIFFICULTY_MAP: Record<string, number> | null = null;
-const TODO_NOTES_DENOMINATOR: number | null = null;
-const TODO_SONG_ID_MAP: Record<string, number> | null = null;
-const TODO_LAMP_MAP: Record<string, number> | null = null;
-const TODO_EX_SCORE_MULTIPLIER: number | null = null;
+// DBR 후보 조건과 옵션 값은 사용자 지정 명세를 따른다.
+export const GAUGE_COLUMN = 'gauge_p2_w78';
 export interface BattleRandomScore { song_id: number; diff: number; lamp: number; ex_score: number }
 export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
-  if (TODO_SETTINGS_WORD_0_INTERPRETATION === null || TODO_SETTINGS_WORD_5_INTERPRETATION === null
-    || TODO_BATTLE_FLAG === null || TODO_RANDOM_WORD_P1 === null || TODO_RANDOM_WORD_P2 === null
-    || TODO_RANDOM_VALUE === null || TODO_BATTLE_DIFFICULTY_MAP === null || TODO_NOTES_DENOMINATOR === null
-    || TODO_SONG_ID_MAP === null || TODO_LAMP_MAP === null || TODO_EX_SCORE_MULTIPLIER === null) return null;
   const p1 = row.settings_p1_11.split(' ').map(Number);
-  const p2 = row.settings_p2_11.split(' ').map(Number);
-  if (row.battle_flag !== TODO_BATTLE_FLAG || p1[TODO_RANDOM_WORD_P1] !== TODO_RANDOM_VALUE
-    || p2[TODO_RANDOM_WORD_P2] !== TODO_RANDOM_VALUE) return null;
-  const score = { song_id: TODO_SONG_ID_MAP[row.song_id], diff: TODO_BATTLE_DIFFICULTY_MAP[row.difficulty],
-    lamp: TODO_LAMP_MAP[row.clear_lamp], ex_score: Number(row.ex_score) * TODO_EX_SCORE_MULTIPLIER };
-  return Object.values(score).every(Number.isInteger) && Number(row.notes) * TODO_NOTES_DENOMINATOR > 0 ? score : null;
+  if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
+    || row.battle_flag !== '1' || p1[0] !== 1 || p1[5] !== 1 || p1[2] !== 1) return null;
+  const diffs: Record<string, number> = { SPB: 0, SPN: 1, SPH: 2, SPA: 3, SPL: 4 };
+  if (!row.song_id.trim() || !/^\d+(?:\.\d+)?$/.test(row.song_id) || !row.ex_score.trim()
+    || !row.notes.trim() || !row[GAUGE_COLUMN].trim()) return null;
+  const songId = Number(row.song_id); const diff = diffs[row.difficulty];
+  const exScore = Number(row.ex_score); const notes = Number(row.notes); const gauge = Number(row[GAUGE_COLUMN]);
+  if (!Number.isSafeInteger(songId) || songId < 0 || !Number.isInteger(diff)
+    || !Number.isFinite(exScore) || exScore < 0 || !Number.isFinite(notes) || notes <= 0
+    || !Number.isFinite(gauge) || gauge < 0) return null;
+  let lamp: number;
+  switch (p1[1]) {
+    case 1: case 2: lamp = gauge >= 80 ? 3 : gauge >= 60 ? 2 : 1; break;
+    case 0: lamp = gauge >= 80 ? 4 : 1; break;
+    case 3: lamp = gauge > 0 ? 5 : 1; break;
+    case 4: lamp = gauge > 0 ? 6 : 1; break;
+    default: return null;
+  }
+  return { song_id: songId, diff, lamp, ex_score: exScore };
 }
-
 const REMOTE_API_ORIGIN = 'https://iidx.in';
 // Web 원격 인증과 같은 issue/exchange와 Bearer 세션을 사용한다. 별도 토큰 저장소는 없다.
 async function existingRemoteBearer(iidxId: string): Promise<string | null> {

@@ -73,12 +73,45 @@ test('전송 순간 재확인: serviceStatus 대기 중 게임이 종료되어�
     plays: [row(0)], gameRecognized: async () => recognized })).ok, true);
   assert.equal('p_plays' in body, false);
 });
-test('TODO 변환은 null: DBR 0회, plays 정상', async () => {
-  const api = sync(); const rows = api.parseRecentPlays(csv([row(1)])); let requests = 0;
-  assert.equal(api.decodeBattleRandomPlay(rows[0]), null);
-  await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true, undefined, async () => { requests++; return 'token'; }, async () => { requests++; });
-  assert.equal(requests, 0);
-  assert.deepEqual(plain(api.playsForGame(rows, true)), [row(1)]);
+const actualCsv = `timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source
+2026-10-14T14:48:45.825Z,80121,"Bang Pad(Werk Mix)",SPA,1662,1637,656,325,126,-1,49.25,C,"271 161 219 38 53 385 164 138 7 28 68 32 64 66 316 236","1 1 1 0 5 1 0 0 0 0 1","0 2 0 0 5 0 0 0 0 0 0",1,0,8,currentsong
+2026-10-14T14:51:17.972Z,80126,"The 88's Instigation",SPH,1672,1788,719,350,114,-1,53.47,C,"304 161 225 33 57 415 189 132 7 17 66 20 105 127 281 194","1 1 1 0 5 0 0 0 0 0 1","1 1 1 0 5 1 0 0 0 0 1",1,0,90,currentsong
+2026-10-14T11:14:50.321Z,80118,"NEPHILIM DELTA",DPA,1631,1825,674,477,154,1,55.95,B,"292 224 232 39 79 382 253 150 5 31 77 21 179 189 277 214","0 2 0 0 5 0 0 0 0 0 0","0 2 0 0 5 0 0 0 0 0 0",0,0,24,playdata`
+const actualCsvWithFinalLf = actualCsv.slice(0, -1) + String.fromCharCode(10);
+const actualRows = () => sync().parseRecentPlays(actualCsvWithFinalLf.replaceAll(String.fromCharCode(10), String.fromCharCode(13, 10)));
+const p1With = (r, index, value) => { const words = r.settings_p1_11.split(' '); words[index] = String(value); return { ...r, settings_p1_11: words.join(' ') }; };
+test('실제 19열 3줄: Bang Pad DBR 램프 변환, 부적격 두 줄도 plays 유지', async () => {
+  const api = sync(); const rows = api.parseRecentPlays(actualCsvWithFinalLf.replaceAll(String.fromCharCode(10), String.fromCharCode(13, 10)));
+  assert.equal(keys.length, 19); assert.equal(rows.length, 3);
+  assert.deepEqual(plain(api.decodeBattleRandomPlay(rows[0])), { song_id: 80121, diff: 3, lamp: 1, ex_score: 1637 });
+  assert.equal(api.decodeBattleRandomPlay(rows[1]), null); assert.equal(api.decodeBattleRandomPlay(rows[2]), null);
+  assert.deepEqual(plain(api.playsForGame(rows, true)), plain(rows));
+  const calls = [];
+  await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true, undefined, async () => 'token', async (url, options) => { calls.push(JSON.parse(options.body)); return { ok: true }; });
+  assert.equal(calls.length, 1); assert.deepEqual(calls[0], { song_id: 80121, diff: 3, lamp: 1, ex_score: 1637, improvements_only: true });
+  assert.equal('notes' in calls[0], false);
+});
+test('첫 실제 줄에서 각 필수 조건 OFF, RANDOM 계열 및 허용 범위 외 option은 부적격', () => {
+  const api = sync(); const first = actualRows()[0];
+  for (const [index, value] of [[0, 0], [5, 0], [2, 0], [0, 2], [0, 3], [1, 5], [2, 2]]) assert.equal(api.decodeBattleRandomPlay(p1With(first, index, value)), null);
+  assert.equal(api.decodeBattleRandomPlay({ ...first, battle_flag: '0' }), null);
+  assert.equal(api.decodeBattleRandomPlay({ ...first, settings_p2_11: '1 1 1 0 5 1 0 0 0 0 1' })?.lamp, 1);
+  assert.equal(api.decodeBattleRandomPlay({ ...first, settings_p2_11: 'garbage' })?.lamp, 1);
+});
+test('게이지 경계는 p2_w78만 사용하고 clear_lamp와 AUTO SCRATCH는 별도 감점하지 않음', () => {
+  const api = sync(); const first = actualRows()[0];
+  for (const [kind, gauge, expected] of [[1,0,1],[1,59,1],[1,60,2],[1,79,2],[1,80,3],[1,100,3],[2,0,1],[2,59,1],[2,60,2],[2,79,2],[2,80,3],[2,100,3],[0,79,1],[0,80,4],[3,0,1],[3,1,5],[4,0,1],[4,1,6]]) {
+    const row = { ...p1With(first, 1, kind), gauge_p2_w78: String(gauge), gauge_p1_w77: '100', clear_lamp: '6' };
+    assert.equal(api.decodeBattleRandomPlay(row)?.lamp, expected, `kind=${kind}, gauge=${gauge}`);
+  }
+});
+test('diff 매핑, EX·notes 원값, 잘못된 입력은 null', () => {
+  const api = sync(); const first = actualRows()[0];
+  for (const [difficulty, diff] of [['SPB',0],['SPN',1],['SPH',2],['SPA',3],['SPL',4]]) assert.equal(api.decodeBattleRandomPlay({ ...first, difficulty })?.diff, diff);
+  for (const difficulty of ['DPN','DPA','unknown','']) assert.equal(api.decodeBattleRandomPlay({ ...first, difficulty }), null);
+  assert.equal(api.decodeBattleRandomPlay({ ...first, ex_score: '1637.5' })?.ex_score, 1637.5);
+  assert.equal(api.decodeBattleRandomPlay({ ...first, notes: '1662' })?.song_id, 80121);
+  for (const patch of [{ song_id: '' }, { song_id: 'bad' }, { song_id: '-1' }, { ex_score: '' }, { ex_score: 'bad' }, { ex_score: '-1' }, { notes: '' }, { notes: 'bad' }, { notes: '0' }, { gauge_p2_w78: '' }, { gauge_p2_w78: 'bad' }, { gauge_p2_w78: '-1' }, { settings_p1_11: '1 1 1' }, { settings_p1_11: '1 1 bad 0 5 1 0 0 0 0 1' }]) assert.equal(api.decodeBattleRandomPlay({ ...first, ...patch }), null);
 });
 test('확정 후보 테스트 경계: 기존 Bearer API에 improvements_only:true로 클라이언트 전체 직렬 전송', async () => {
   const api = sync(); const calls = []; let active = 0; let maxActive = 0;
