@@ -13,6 +13,7 @@ import {
   findMarkerDelta,
   lookupSongInBuffer,
   parseOffsetsText,
+  resolvePlay,
   type PlayState,
 } from './playLog';
 
@@ -35,6 +36,8 @@ interface Addresses {
   playSettings: bigint;
   playData: bigint;
   songList: bigint;
+  /** 배틀에서 곡 정보를 얻는 블록. offsets.txt 에 없으면 null (일반 플레이만 기록) */
+  currentSong: bigint | null;
   marker: bigint | null;
 }
 
@@ -87,6 +90,7 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       playSettings: live(offs.playSettings),
       playData: live(offs.playData),
       songList: live(offs.songList),
+      currentSong: offs.currentSong ? live(offs.currentSong) : null,
       marker: null,
     };
     opts.log(`[playlog] attached pid ${found.pid}`);
@@ -107,38 +111,51 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
     return decideState(marker, ps18);
   };
 
-  const buildSnapshotRow = (): { row: string; songId: number } => {
+  // 저장할 플레이가 없으면 null (PlayData 도 비고 배틀 보정도 불가능한 경우)
+  const buildSnapshotRow = (): { row: string; songId: number; source: string } | null => {
     const a = addr!;
     const h = handle!.handle;
-    const pd = ints(h, a.playData, L.playDataWords);
-    const songId = pd[0];
-    const diff = pd[1];
+    const judge16 = ints(h, a.judge, 16);
+    const p1Settings = ints(h, a.playSettings, L.settingsWords);
+    const battle = p1Settings[L.battleFlagDelta / 4] === 1;
+    const play = resolvePlay({
+      playData: ints(h, a.playData, L.playDataWords),
+      currentSong: a.currentSong ? ints(h, a.currentSong, L.currentSongWords) : new Array<number>(L.currentSongWords).fill(0),
+      judge16,
+      battle,
+    });
+    if (!play) return null;
     const songBuf = readBytes(h, a.songList, L.songCount * L.songStride);
-    const song = lookupSongInBuffer(songBuf, songId, diff) ?? { title: '', notes: 0 };
+    const song = lookupSongInBuffer(songBuf, play.songId, play.diff) ?? { title: '', notes: 0 };
     const gauge = ints(h, a.judge + BigInt(L.gaugeWordP1 * 4), 2);
     const row = buildPlayRow({
       timestamp: new Date().toISOString(),
-      songId,
+      songId: play.songId,
       title: song.title,
-      diff,
-      notes: song.notes,
-      exScore: pd[2],
-      miss: pd[3],
-      pgreat: pd[4],
-      great: pd[5],
-      lamp: pd[6],
-      judge16: ints(h, a.judge, 16),
-      p1Settings: ints(h, a.playSettings, L.settingsWords),
+      diff: play.diff,
+      notes: play.currentNotes ?? song.notes,
+      exScore: play.exScore,
+      miss: play.miss,
+      pgreat: play.pgreat,
+      great: play.great,
+      lamp: play.lamp,
+      judge16,
+      p1Settings,
       p2Settings: ints(h, a.playSettings + BigInt(L.p2SettingsDelta), L.settingsWords),
       gauge: [gauge[0], gauge[1]],
+      source: play.source,
     });
-    return { row, songId };
+    return { row, songId: play.songId, source: play.source };
   };
 
   const saveOnce = (): void => {
-    const { row, songId } = buildSnapshotRow();
-    appendFileSync(csvPath, row + '\n');
-    opts.log(`[playlog] saved play song_id=${songId} -> ${csvPath}`);
+    const snap = buildSnapshotRow();
+    if (!snap) {
+      opts.log('[playlog] skipped: 저장할 플레이 정보가 없음 (PlayData·CurrentSong 모두 비어 있음)');
+      return;
+    }
+    appendFileSync(csvPath, snap.row + '\n');
+    opts.log(`[playlog] saved play song_id=${snap.songId} source=${snap.source} -> ${csvPath}`);
   };
 
   const tick = (): void => {

@@ -9,6 +9,7 @@ import {
   lookupSongInBuffer,
   parseOffsetsText,
   rankOf,
+  resolvePlay,
 } from './playLog.ts';
 
 // 따옴표 안의 쉼표를 무시하고 CSV 한 줄을 열로 나눈다 (테스트 전용)
@@ -36,6 +37,7 @@ test('offsets.txt 파싱: 버전 줄은 무시하고 주소 키만 절대주소�
   assert.equal(o.judgeData, 0x14288718cn);
   assert.equal(o.playSettings, 0x1425da154n);
   assert.equal(o.playData, 0x1425da404n);
+  assert.equal(o.currentSong, 0x142887370n);
 });
 
 test('마커: 세 값이 8바이트 간격으로 10000 넘으면 두 번째 위치 + 24', () => {
@@ -104,6 +106,7 @@ test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x
     p1Settings: p1,
     p2Settings: Array.from({ length: 11 }, () => 0),
     gauge: [0, 56],
+    source: 'playdata',
   });
   const f = splitCsv(row);
   assert.equal(f.length, PLAY_LOG_HEADER.split(',').length);
@@ -115,12 +118,52 @@ test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x
   assert.equal(f[15], '1'); // battle_flag
   assert.equal(f[16], '0'); // gauge_p1
   assert.equal(f[17], '56'); // gauge_p2
+  assert.equal(f[18], 'playdata');
 });
 
 test('CSV 행: 제목의 따옴표는 두 번 써서 이스케이프', () => {
   const row = buildPlayRow({
     timestamp: 't', songId: 1, title: 'a"b', diff: 0, notes: 0, exScore: 0, pgreat: 0, great: 0, miss: 0, lamp: 0,
-    judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0],
+    judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'playdata',
   });
   assert.ok(row.includes('"a""b"'));
+});
+
+// 실제 배틀 플레이(2026-10-14 14:51 UTC)의 값: The 88's Instigation SPH, 양쪽 SP 차트(836노트 x 2)
+const BATTLE_JUDGE = [304, 161, 225, 33, 57, 415, 189, 132, 7, 17, 66, 20, 105, 127, 281, 194];
+const BATTLE_CS = [80126, 2, 0, 14, 1672];
+
+test('배틀: PlayData 가 비어도 CurrentSong 과 판정 블록으로 곡·점수를 정한다', () => {
+  const r = resolvePlay({ playData: new Array(8).fill(0), currentSong: BATTLE_CS, judge16: BATTLE_JUDGE, battle: true });
+  assert.deepEqual(r, {
+    songId: 80126,
+    diff: 2, // SPH
+    exScore: 2 * (304 + 415) + (161 + 189),
+    pgreat: 304 + 415,
+    great: 161 + 189,
+    miss: 33 + 57 + 7 + 17,
+    lamp: -1,
+    source: 'currentsong',
+    currentNotes: 1672,
+  });
+  assert.equal(r.exScore, 1788);
+});
+
+test('배틀: PlayData 에 이전 플레이 값이 남아 있어도 배틀이면 CurrentSong 경로를 쓴다', () => {
+  const stale = [80123, 8, 1983, 58, 776, 431, 3, 0];
+  const r = resolvePlay({ playData: stale, currentSong: BATTLE_CS, judge16: BATTLE_JUDGE, battle: true });
+  assert.equal(r.source, 'currentsong');
+  assert.equal(r.songId, 80126);
+});
+
+test('일반 플레이: PlayData 를 그대로 쓴다', () => {
+  const pd = [80123, 8, 1983, 58, 776, 431, 3, 0];
+  const r = resolvePlay({ playData: pd, currentSong: [80123, 3, 0, 14, 1453], judge16: BATTLE_JUDGE, battle: false });
+  assert.deepEqual(r, { songId: 80123, diff: 8, exScore: 1983, miss: 58, pgreat: 776, great: 431, lamp: 3, source: 'playdata', currentNotes: null });
+});
+
+test('저장할 플레이가 없으면 null (일반인데 PlayData 가 비었거나, 배틀인데 CurrentSong 이 비었을 때)', () => {
+  const zero = new Array(8).fill(0);
+  assert.equal(resolvePlay({ playData: zero, currentSong: BATTLE_CS, judge16: BATTLE_JUDGE, battle: false }), null);
+  assert.equal(resolvePlay({ playData: zero, currentSong: [0, 0, 0, 0, 0], judge16: BATTLE_JUDGE, battle: true }), null);
 });
