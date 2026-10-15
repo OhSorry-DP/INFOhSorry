@@ -1014,7 +1014,7 @@ export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecogni
 
 // DBR 후보 조건과 옵션 값은 사용자 지정 명세를 따른다.
 export const GAUGE_COLUMN = 'gauge_p2_w78';
-export interface BattleRandomScore { song_id: number; diff: number; lamp: number; ex_score: number }
+export interface BattleRandomScore { diff: number; lamp: number; ex_score: number }
 export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
   const p1 = row.settings_p1_11.split(' ').map(Number);
   if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
@@ -1035,7 +1035,14 @@ export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | nul
     case 4: lamp = gauge > 0 ? 6 : 1; break;
     default: return null;
   }
-  return { song_id: songId, diff, lamp, ex_score: exScore };
+  return { diff, lamp, ex_score: exScore };
+}
+function matchAutomaticSong(songs: Map<string, SongEntry[]>, title: string, diff: number):
+  { songId: number } | { skipped: 'song_not_found' | 'ambiguous_song' } {
+  const candidates = songs.get(norm(title)) ?? [];
+  const matches = candidates.filter(song => (((diff === 4 ? song.legen : song.ac) ?? 0) & 2) !== 0);
+  if (matches.length === 1) return { songId: matches[0].song_id };
+  return { skipped: matches.length ? 'ambiguous_song' : 'song_not_found' };
 }
 const REMOTE_API_ORIGIN = 'https://iidx.in';
 // Web 원격 인증과 같은 issue/exchange와 Bearer 세션을 사용한다. 별도 토큰 저장소는 없다.
@@ -1066,20 +1073,23 @@ let dbrSending: Promise<void> | null = null;
 export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
   decode: (row: PlayCsvRow) => BattleRandomScore | null = decodeBattleRandomPlay,
   bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
-  send: typeof fetch = fetch): Promise<void> {
+  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache): Promise<void> {
   while (dbrSending) await dbrSending;
   let finish!: () => void;
   dbrSending = new Promise<void>(resolve => { finish = resolve; });
   try {
-    const candidates = plays.map(decode).filter((row): row is BattleRandomScore => row !== null);
+    const candidates = plays.map(row => ({ row, score: decode(row) })).filter((item): item is { row: PlayCsvRow; score: BattleRandomScore } => item.score !== null);
     if (!candidates.length || !await gameRecognized()) return;
     const token = await bearer(iidxId);
     if (!token) return;
-    for (const candidate of candidates) {
+    const songMap = await songs();
+    for (const { row, score } of candidates) {
+      const match = matchAutomaticSong(songMap, row.title, score.diff);
+      if ('skipped' in match) continue;
       if (!await gameRecognized()) return;
       const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ ...candidate, improvements_only: true }) });
+        body: JSON.stringify({ song_id: match.songId, diff: score.diff, lamp: score.lamp, ex_score: score.ex_score, improvements_only: true }) });
       if (!response.ok) throw new Error(`DBR HTTP ${response.status}`);
     }
   } finally { dbrSending = null; finish(); }
@@ -1094,15 +1104,13 @@ export async function uploadAutomaticArrange(evaluation: ReturnType<typeof evalu
   const token = await bearer(iidxId);
   if (!token) return { ok: true, skipped: 'unauthenticated' };
   try {
-    const candidates = (await songs()).get(norm(evaluation.current.title)) ?? [];
-    const isLeg = evaluation.diff === 4;
-    const matches = candidates.filter(song => ((isLeg ? song.legen : song.ac) & 2) !== 0);
-    if (matches.length !== 1) return { ok: true, skipped: matches.length ? 'ambiguous_song' : 'song_not_found' };
+    const match = matchAutomaticSong(await songs(), evaluation.current.title, evaluation.diff);
+    if ('skipped' in match) return { ok: true, skipped: match.skipped };
     // DBR와 같이 전송 직전에 기존 게임 인식 검사를 한 번 더 한다.
     if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
     const response = await send(`${REMOTE_API_ORIGIN}/api/me/chart-arrange`, { method: 'PUT', credentials: 'omit',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ song_id: matches[0].song_id, diff: evaluation.diff, play_style: 1, arrange: evaluation.arrange }) });
+      body: JSON.stringify({ song_id: match.songId, diff: evaluation.diff, play_style: 1, arrange: evaluation.arrange }) });
     if (!response.ok) throw new Error(`Arrange HTTP ${response.status}`);
     return { ok: true };
   } catch (e) {

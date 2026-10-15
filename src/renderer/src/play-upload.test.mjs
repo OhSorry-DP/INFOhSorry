@@ -141,12 +141,13 @@ const p1With = (r, index, value) => { const words = r.settings_p1_11.split(' ');
 test('실제 19열 3줄: Bang Pad DBR 램프 변환, 부적격 두 줄도 plays 유지', async () => {
   const api = sync(); const rows = api.parseRecentPlays(actualCsvWithFinalLf.replaceAll(String.fromCharCode(10), String.fromCharCode(13, 10)));
   assert.equal(keys.length, 19); assert.equal(rows.length, 3);
-  assert.deepEqual(plain(api.decodeBattleRandomPlay(rows[0])), { song_id: 80121, diff: 3, lamp: 1, ex_score: 1637 });
+  assert.deepEqual(plain(api.decodeBattleRandomPlay(rows[0])), { diff: 3, lamp: 1, ex_score: 1637 });
   assert.equal(api.decodeBattleRandomPlay(rows[1]), null); assert.equal(api.decodeBattleRandomPlay(rows[2]), null);
   assert.deepEqual(plain(api.playsForGame(rows, true)), plain(rows));
   const calls = [];
-  await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true, undefined, async () => 'token', async (url, options) => { calls.push(JSON.parse(options.body)); return { ok: true }; });
-  assert.equal(calls.length, 1); assert.deepEqual(calls[0], { song_id: 80121, diff: 3, lamp: 1, ex_score: 1637, improvements_only: true });
+  const songs = async () => new Map([[OhsorryNorm.norm('Bang Pad(Werk Mix)'), [{ song_id: 9001, title: 'Bang Pad(Werk Mix)', ac: 2, legen: 0 }]]]);
+  await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true, undefined, async () => 'token', async (url, options) => { calls.push(JSON.parse(options.body)); return { ok: true }; }, songs);
+  assert.equal(calls.length, 1); assert.deepEqual(calls[0], { song_id: 9001, diff: 3, lamp: 1, ex_score: 1637, improvements_only: true });
   assert.equal('notes' in calls[0], false);
 });
 test('첫 실제 줄에서 각 필수 조건 OFF, RANDOM 계열 및 허용 범위 외 option은 부적격', () => {
@@ -168,12 +169,14 @@ test('diff 매핑, EX·notes 원값, 잘못된 입력은 null', () => {
   for (const [difficulty, diff] of [['SPB',0],['SPN',1],['SPH',2],['SPA',3],['SPL',4]]) assert.equal(api.decodeBattleRandomPlay({ ...first, difficulty })?.diff, diff);
   for (const difficulty of ['DPN','DPA','unknown','']) assert.equal(api.decodeBattleRandomPlay({ ...first, difficulty }), null);
   assert.equal(api.decodeBattleRandomPlay({ ...first, ex_score: '1637.5' })?.ex_score, 1637.5);
-  assert.equal(api.decodeBattleRandomPlay({ ...first, notes: '1662' })?.song_id, 80121);
+  assert.deepEqual(plain(api.decodeBattleRandomPlay({ ...first, notes: '1662' })), { diff: 3, lamp: 1, ex_score: 1637 });
   for (const patch of [{ song_id: '' }, { song_id: 'bad' }, { song_id: '-1' }, { ex_score: '' }, { ex_score: 'bad' }, { ex_score: '-1' }, { notes: '' }, { notes: 'bad' }, { notes: '0' }, { gauge_p2_w78: '' }, { gauge_p2_w78: 'bad' }, { gauge_p2_w78: '-1' }, { settings_p1_11: '1 1 1' }, { settings_p1_11: '1 1 bad 0 5 1 0 0 0 0 1' }]) assert.equal(api.decodeBattleRandomPlay({ ...first, ...patch }), null);
 });
 test('확정 후보 테스트 경계: 기존 Bearer API에 improvements_only:true로 클라이언트 전체 직렬 전송', async () => {
   const api = sync(); const calls = []; let active = 0; let maxActive = 0;
-  const decode = r => ({ song_id: Number(r.timestamp), diff: 3, lamp: 5, ex_score: 100 });
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
+  const songs = async () => new Map([1, 2, 3].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const rows = ids => ids.map(id => ({ ...row(id), title: `Fixture ${id}` }));
   const send = async (url, options) => {
     maxActive = Math.max(maxActive, ++active);
     await new Promise(resolve => setTimeout(resolve, 5));
@@ -181,11 +184,11 @@ test('확정 후보 테스트 경계: 기존 Bearer API에 improvements_only:tru
     return { ok: true };
   };
   await Promise.all([
-    api.uploadAutomaticDbr([row(1), row(2)], 'C123456789012', async () => true, decode, async () => 'existing-bearer', send),
-    api.uploadAutomaticDbr([row(3)], 'C123456789012', async () => true, decode, async () => 'existing-bearer', send),
+    api.uploadAutomaticDbr(rows([1, 2]), 'C123456789012', async () => true, decode, async () => 'existing-bearer', send, songs),
+    api.uploadAutomaticDbr(rows([3]), 'C123456789012', async () => true, decode, async () => 'existing-bearer', send, songs),
   ]);
   assert.equal(maxActive, 1);
-  assert.deepEqual(calls.map(x => x.body.song_id), [1, 2, 3]);
+  assert.deepEqual(calls.map(x => x.body.song_id), [9001, 9002, 9003]);
   for (const call of calls) {
     assert.equal(call.url, 'https://iidx.in/api/me/dbr-scores');
     assert.equal(call.options.headers.Authorization, 'Bearer existing-bearer');
@@ -196,14 +199,52 @@ test('확정 후보 테스트 경계: 기존 Bearer API에 improvements_only:tru
 });
 test('자동 DBR은 게임 미인식/전송 중 종료에서 생략', async () => {
   const api = sync(); let requests = 0; let recognized = false;
-  const decode = () => ({ song_id: 1, diff: 3, lamp: 5, ex_score: 100 });
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
   const bearer = async () => 'token';
   const send = async () => { requests++; recognized = false; return { ok: true }; };
-  await api.uploadAutomaticDbr([row(1)], 'C123456789012', async () => recognized, decode, bearer, send);
+  const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]);
+  await api.uploadAutomaticDbr([{ ...row(1), title: 'Fixture Song' }], 'C123456789012', async () => recognized, decode, bearer, send, songs);
   assert.equal(requests, 0);
   recognized = true;
-  await api.uploadAutomaticDbr([row(1), row(2)], 'C123456789012', async () => recognized, decode, bearer, send);
+  await api.uploadAutomaticDbr([{ ...row(1), title: 'Fixture Song' }, { ...row(2), title: 'Fixture Song' }], 'C123456789012', async () => recognized, decode, bearer, send, songs);
   assert.equal(requests, 1);
+});
+test('DBR은 0개/복수 후보만 건너뛰고 제목 정규화 후 단일 내부 ID를 전송', async () => {
+  const api = sync(); const calls = [];
+  const rows = ['Missing', 'Duplicate', ' Fixture Song  '].map((title, id) => ({ ...row(id), title }));
+  const songs = async () => new Map([
+    [OhsorryNorm.norm('Duplicate'), [
+      { song_id: 9101, title: 'Duplicate', ac: 2, legen: 0 }, { song_id: 9102, title: 'Duplicate', ac: 2, legen: 0 },
+    ]],
+    [OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]],
+  ]);
+  await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true,
+    () => ({ diff: 3, lamp: 1, ex_score: 99 }), async () => 'token', async (url, options) => {
+      calls.push(JSON.parse(options.body)); return { ok: true };
+    }, songs);
+  assert.deepEqual(calls, [{ song_id: 9001, diff: 3, lamp: 1, ex_score: 99, improvements_only: true }]);
+});
+test('DBR은 SPA에 ac, SPL에 legen 비트를 적용하고 LEG 후보가 없으면 건너뜀', async () => {
+  const api = sync(); const calls = [];
+  const rows = [{ ...row(1), title: 'Fixture Song', difficulty: 'SPA' }, { ...row(2), title: 'Fixture Song', difficulty: 'SPL' }];
+  const both = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [
+    { song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }, { song_id: 9002, title: 'Fixture Song', ac: 0, legen: 2 },
+  ]]]);
+  await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true,
+    r => ({ diff: r.difficulty === 'SPL' ? 4 : 3, lamp: 1, ex_score: 99 }), async () => 'token', async (url, options) => {
+      calls.push(JSON.parse(options.body)); return { ok: true };
+    }, both);
+  assert.deepEqual(calls, [
+    { song_id: 9001, diff: 3, lamp: 1, ex_score: 99, improvements_only: true },
+    { song_id: 9002, diff: 4, lamp: 1, ex_score: 99, improvements_only: true },
+  ]);
+  calls.length = 0;
+  const acOnly = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]);
+  await api.uploadAutomaticDbr([rows[1]], 'C123456789012', async () => true,
+    () => ({ diff: 4, lamp: 1, ex_score: 99 }), async () => 'token', async (url, options) => {
+      calls.push(JSON.parse(options.body)); return { ok: true };
+    }, acOnly);
+  assert.equal(calls.length, 0);
 });
 test('자동 배열 PUT은 INF/LEG 단일 후보를 웹 song_id로 정확히 전송하고 옵션을 보존', async () => {
   const songs = [
