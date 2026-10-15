@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 미출시 — 2026-10-16 DBR 자동 저장 곡 ID 수정
+
+- DBR 자동 저장이 게임 곡 ID(CSV `song_id`, 예 80123)를 웹 `songs.song_id`(내부 identity) 자리에 그대로 보내던 버그 — 없는 곡이면 저장 실패, 번호가 겹치면 다른 곡에 저장될 수 있었다. 배치 자동 저장과 같은 제목 매칭(정규화 제목 + INF 비트, SPL 은 legen, 후보가 정확히 1곡일 때만)으로 내부 ID 를 찾아 보내고, 못 찾거나 애매하면 그 판만 건너뛴다. 서버 무변경. 이미 잘못 저장된 기존 행 정리는 별도.
+- 검증: `playLog`·`play-upload` 테스트 36/36, tsc web/node 통과.
+
 ### v0.0.144 — 2026-10-15 INF DP 배치 자동 저장
 
 - 플레이 기록기 append 알림을 받으면 App의 별도 `onPlayAppend` 구독에서 `readPlayCsv`로 CSV 전체 이력을 읽는다. 마지막 행을 이번 판으로 판정하고, 같은 곡·난이도의 이전 완주 일반 DP 기록과 램프·BP·EX를 비교한다. 확정 완주식은 `notes > 0 && (j[0]+j[1]+j[2]) + (j[5]+j[6]+j[7]) + j[10] + j[11] === notes`이며, `judge_16`이 정확히 16개의 유한 정수가 아니면 완주가 아니다. 양손의 PGREAT+GREAT+GOOD와 양쪽 콤보 브레이크를 합쳐 notes와 비교한다. 콤보 브레이크는 BAD+놓친 POOR라 공POOR는 완주 합계에서 제외하고, BP(`miss_count`)는 공POOR를 포함한 게임 BP 값을 그대로 쓴다.
