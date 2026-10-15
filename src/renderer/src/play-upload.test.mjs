@@ -204,6 +204,57 @@ test('자동 DBR은 게임 미인식/전송 중 종료에서 생략', async () =
   await api.uploadAutomaticDbr([row(1), row(2)], 'C123456789012', async () => recognized, decode, bearer, send);
   assert.equal(requests, 1);
 });
+test('자동 배열 PUT은 INF/LEG 단일 후보를 웹 song_id로 정확히 전송하고 옵션을 보존', async () => {
+  const songs = [
+    { song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 },
+    { song_id: 9002, title: 'Fixture Song', ac: 0, legen: 2 },
+  ];
+  let requests = [];
+  const api = sync({ fetch: async () => ({ ok: true, json: async () => songs }) });
+  api.getSongsCache = async () => new Map([['fixture song', songs]]);
+  const send = async (url, options) => { requests.push({ url, options, body: JSON.parse(options.body) }); return { ok: true }; };
+  const evaluation = { current: { title: 'Fixture Song', song_id: '123' }, diff: 3, arrange: -2, excluded: false };
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async id => id === 'C123456789012' ? 'fixture-token' : null, send);
+  assert.deepEqual(requests.map(x => [x.url, x.options.method, x.options.credentials, x.options.headers.Authorization, x.body]), [
+    ['https://iidx.in/api/me/chart-arrange', 'PUT', 'omit', 'Bearer fixture-token', { song_id: 9001, diff: 3, play_style: 1, arrange: -2 }],
+  ]);
+  requests = [];
+  await api.uploadAutomaticArrange({ ...evaluation, diff: 4, arrange: 40 }, 'C123456789012', async () => true,
+    async () => 'fixture-token', send);
+  assert.deepEqual(requests[0].body, { song_id: 9002, diff: 4, play_style: 1, arrange: 40 });
+  requests = [];
+  await api.uploadAutomaticArrange({ ...evaluation, diff: 4, arrange: 89 }, 'C123456789012', async () => true,
+    async () => 'fixture-token', send);
+  assert.equal(requests[0].body.arrange, 89);
+});
+test('자동 배열은 후보 누락/중복, 미인증, 계정 불일치, 게임 미인식에서 PUT하지 않음', async () => {
+  const api = sync(); let puts = 0; let ensured = 0;
+  const send = async () => { puts++; return { ok: true }; };
+  const evaluation = { current: { title: 'Fixture Song', song_id: '123' }, diff: 3, arrange: 40, excluded: false };
+  for (const candidates of [[], [{ song_id: 1, ac: 2, legen: 0 }, { song_id: 2, ac: 2, legen: 0 }]]) {
+    api.getSongsCache = async () => new Map([['fixture song', candidates]]);
+    await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', send);
+  }
+  api.getSongsCache = async () => new Map([['fixture song', [{ song_id: 1, ac: 2, legen: 0 }]]]);
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => null, send);
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async id => id === 'other' ? 'token' : null, send);
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => false, async () => 'token', send);
+  assert.equal(puts, 0); assert.equal(ensured, 0);
+});
+test('자동 배열 HTTP/네트워크 실패는 재시도 없이 반환하고 다음 호출은 진행', async () => {
+  const api = sync(); api.getSongsCache = async () => new Map([['Fixture Song', [{ song_id: 9001, ac: 2, legen: 0 }]]]);
+  const evaluation = { current: { title: 'Fixture Song', song_id: '123' }, diff: 3, arrange: 89, excluded: false };
+  let calls = 0;
+  const failing = async () => { calls++; return { ok: false, status: 503 }; };
+  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', failing)).ok, false);
+  assert.equal(calls, 1);
+  const network = async () => { calls++; throw new Error('network'); };
+  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', network)).ok, false);
+  assert.equal(calls, 2);
+  const next = async () => { calls++; return { ok: true }; };
+  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', next)).ok, true);
+  assert.equal(calls, 3);
+});
 test('saveOnce 실제 저장 경계: A→B 경로, 미취득 생략, append 성공 후 해당 계정 알림, 공용 CSV 불변', () => {
   const store = load(read('../../main/accountTsvStore.ts'), { electron: { app: { getPath: () => '/fixture/userData' } }, fs: { promises: {} }, path,
     './tsv': {}, './memory': {}, '../shared/account': {} });
