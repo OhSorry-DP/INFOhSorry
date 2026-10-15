@@ -1088,13 +1088,13 @@ export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, ga
 // 자동 배열은 현재 완주 행 하나만 원격 배열로 upsert한다. 애매한 곡명은 전송하지 않는다.
 export async function uploadAutomaticArrange(evaluation: ReturnType<typeof evaluateAutomaticArrange>, iidxId: string,
   gameRecognized: () => Promise<boolean>, bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
-  send: typeof fetch = fetch): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache): Promise<{ ok: boolean; skipped?: string; error?: string }> {
   if (evaluation.excluded) return { ok: true, skipped: evaluation.reason };
   if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
   const token = await bearer(iidxId);
   if (!token) return { ok: true, skipped: 'unauthenticated' };
   try {
-    const candidates = (await getSongsCache()).get(norm(evaluation.current.title)) ?? [];
+    const candidates = (await songs()).get(norm(evaluation.current.title)) ?? [];
     const isLeg = evaluation.diff === 4;
     const matches = candidates.filter(song => ((isLeg ? song.legen : song.ac) & 2) !== 0);
     if (matches.length !== 1) return { ok: true, skipped: matches.length ? 'ambiguous_song' : 'song_not_found' };

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import path from 'node:path';
 import ts from 'typescript';
+import OhsorryNorm from '../../shared/normTitle.js';
 
 const read = relative => readFileSync(new URL(relative, import.meta.url), 'utf8');
 function load(source, dependencies = {}, globals = {}) {
@@ -20,7 +21,7 @@ const keys = Array.from(shared.PLAY_CSV_KEYS);
 const source = read('./supabaseSync.ts');
 function sync(globals = {}) {
   return load(source, { '../../shared/uploadSnapshot': shared,
-    '../../shared/match': { norm: x => x, slotToDiff: x => x }, '../../shared/dataSource': { DATA_BASE: 'https://fixture.invalid' } }, globals);
+    '../../shared/match': { norm: x => OhsorryNorm.norm(x), slotToDiff: x => x }, '../../shared/dataSource': { DATA_BASE: 'https://fixture.invalid' } }, globals);
 }
 const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : '001']));
 const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`).join(',') + '\r\n';
@@ -210,21 +211,32 @@ test('자동 배열 PUT은 INF/LEG 단일 후보를 웹 song_id로 정확히 전
     { song_id: 9002, title: 'Fixture Song', ac: 0, legen: 2 },
   ];
   let requests = [];
-  const api = sync({ fetch: async () => ({ ok: true, json: async () => songs }) });
-  api.getSongsCache = async () => new Map([['fixture song', songs]]);
+  const api = sync();
   const send = async (url, options) => { requests.push({ url, options, body: JSON.parse(options.body) }); return { ok: true }; };
   const evaluation = { current: { title: 'Fixture Song', song_id: '123' }, diff: 3, arrange: -2, excluded: false };
-  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async id => id === 'C123456789012' ? 'fixture-token' : null, send);
+  const songsForFixture = async () => new Map([[OhsorryNorm.norm('Fixture Song'), songs]]);
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async id => id === 'C123456789012' ? 'fixture-token' : null, send, songsForFixture);
+  assert.equal(requests.length, 1);
   assert.deepEqual(requests.map(x => [x.url, x.options.method, x.options.credentials, x.options.headers.Authorization, x.body]), [
     ['https://iidx.in/api/me/chart-arrange', 'PUT', 'omit', 'Bearer fixture-token', { song_id: 9001, diff: 3, play_style: 1, arrange: -2 }],
   ]);
   requests = [];
   await api.uploadAutomaticArrange({ ...evaluation, diff: 4, arrange: 40 }, 'C123456789012', async () => true,
-    async () => 'fixture-token', send);
+    async () => 'fixture-token', send, songsForFixture);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://iidx.in/api/me/chart-arrange');
+  assert.equal(requests[0].options.method, 'PUT');
+  assert.equal(requests[0].options.credentials, 'omit');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer fixture-token');
   assert.deepEqual(requests[0].body, { song_id: 9002, diff: 4, play_style: 1, arrange: 40 });
   requests = [];
   await api.uploadAutomaticArrange({ ...evaluation, diff: 4, arrange: 89 }, 'C123456789012', async () => true,
-    async () => 'fixture-token', send);
+    async () => 'fixture-token', send, songsForFixture);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://iidx.in/api/me/chart-arrange');
+  assert.equal(requests[0].options.method, 'PUT');
+  assert.equal(requests[0].options.credentials, 'omit');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer fixture-token');
   assert.equal(requests[0].body.arrange, 89);
 });
 test('자동 배열은 후보 누락/중복, 미인증, 계정 불일치, 게임 미인식에서 PUT하지 않음', async () => {
@@ -232,28 +244,46 @@ test('자동 배열은 후보 누락/중복, 미인증, 계정 불일치, 게임
   const send = async () => { puts++; return { ok: true }; };
   const evaluation = { current: { title: 'Fixture Song', song_id: '123' }, diff: 3, arrange: 40, excluded: false };
   for (const candidates of [[], [{ song_id: 1, ac: 2, legen: 0 }, { song_id: 2, ac: 2, legen: 0 }]]) {
-    api.getSongsCache = async () => new Map([['fixture song', candidates]]);
-    await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', send);
+    const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), candidates]]);
+    await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', send, songs);
   }
-  api.getSongsCache = async () => new Map([['fixture song', [{ song_id: 1, ac: 2, legen: 0 }]]]);
-  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => null, send);
-  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async id => id === 'other' ? 'token' : null, send);
-  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => false, async () => 'token', send);
+  const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 1, ac: 2, legen: 0 }]]]);
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => null, send, songs);
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async id => id === 'other' ? 'token' : null, send, songs);
+  await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => false, async () => 'token', send, songs);
   assert.equal(puts, 0); assert.equal(ensured, 0);
 });
 test('자동 배열 HTTP/네트워크 실패는 재시도 없이 반환하고 다음 호출은 진행', async () => {
-  const api = sync(); api.getSongsCache = async () => new Map([['Fixture Song', [{ song_id: 9001, ac: 2, legen: 0 }]]]);
+  const api = sync(); const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, ac: 2, legen: 0 }]]]);
   const evaluation = { current: { title: 'Fixture Song', song_id: '123' }, diff: 3, arrange: 89, excluded: false };
-  let calls = 0;
-  const failing = async () => { calls++; return { ok: false, status: 503 }; };
-  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', failing)).ok, false);
-  assert.equal(calls, 1);
-  const network = async () => { calls++; throw new Error('network'); };
-  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', network)).ok, false);
-  assert.equal(calls, 2);
-  const next = async () => { calls++; return { ok: true }; };
-  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', next)).ok, true);
-  assert.equal(calls, 3);
+  const requests = [];
+  const sendFor = response => async (url, options) => {
+    requests.push({ url, options, body: JSON.parse(options.body) });
+    if (response instanceof Error) throw response;
+    return response;
+  };
+  const expectedBody = { song_id: 9001, diff: 3, play_style: 1, arrange: 89 };
+  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', sendFor({ ok: false, status: 503 }), songs)).ok, false);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://iidx.in/api/me/chart-arrange');
+  assert.equal(requests[0].options.method, 'PUT');
+  assert.equal(requests[0].options.headers.Authorization, 'Bearer token');
+  assert.equal(requests[0].options.credentials, 'omit');
+  assert.deepEqual(requests[0].body, expectedBody);
+  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', sendFor(new Error('network')), songs)).ok, false);
+  assert.equal(requests.length, 2);
+  assert.equal(requests[1].url, 'https://iidx.in/api/me/chart-arrange');
+  assert.equal(requests[1].options.method, 'PUT');
+  assert.equal(requests[1].options.headers.Authorization, 'Bearer token');
+  assert.equal(requests[1].options.credentials, 'omit');
+  assert.deepEqual(requests[1].body, expectedBody);
+  assert.equal((await api.uploadAutomaticArrange(evaluation, 'C123456789012', async () => true, async () => 'token', sendFor({ ok: true }), songs)).ok, true);
+  assert.equal(requests.length, 3);
+  assert.equal(requests[2].url, 'https://iidx.in/api/me/chart-arrange');
+  assert.equal(requests[2].options.method, 'PUT');
+  assert.equal(requests[2].options.headers.Authorization, 'Bearer token');
+  assert.equal(requests[2].options.credentials, 'omit');
+  assert.deepEqual(requests[2].body, expectedBody);
 });
 test('saveOnce 실제 저장 경계: A→B 경로, 미취득 생략, append 성공 후 해당 계정 알림, 공용 CSV 불변', () => {
   const store = load(read('../../main/accountTsvStore.ts'), { electron: { app: { getPath: () => '/fixture/userData' } }, fs: { promises: {} }, path,
