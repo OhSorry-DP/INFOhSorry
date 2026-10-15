@@ -41,7 +41,7 @@ import { ProfileCard } from './ProfileCard';
 import AccountSelector from './AccountSelector';
 import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
-import { parseRecentPlays, playsForGame, uploadAutomaticDbr, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
+import { parseRecentPlays, parsePlayHistoryDetailed, evaluateAutomaticArrange, uploadAutomaticArrange, playsForGame, uploadAutomaticDbr, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
@@ -1608,13 +1608,46 @@ export default function App() {
     (window as unknown as { updateSupabase: () => void }).updateSupabase = runManual;
     (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual = runManual;
     (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue = runIfDue;
+    const arrangeKeysByAccount = new Map<string, Set<string>>();
+    const arrangeChainByAccount = new Map<string, Promise<void>>();
+    const handlePlayAppend = ({ iidxId }: { iidxId: string }): void => {
+      const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+      if (!readPlayCsv) return;
+      const previous = arrangeChainByAccount.get(iidxId) ?? Promise.resolve();
+      const next = previous.then(async () => {
+        const result = await readPlayCsv(iidxId);
+        if (!result.ok) throw new Error(result.error ?? 'play CSV read failed');
+        const parsed = parsePlayHistoryDetailed(result.csv ?? '');
+        const evaluation = evaluateAutomaticArrange(parsed);
+        if (evaluation.excluded) return;
+        const current = evaluation.current;
+        if (!current) return;
+        let keys = arrangeKeysByAccount.get(iidxId);
+        if (!keys) {
+          keys = new Set<string>();
+          arrangeKeysByAccount.set(iidxId, keys);
+        }
+        const key = JSON.stringify([current.timestamp, current.song_id, current.difficulty]);
+        if (keys.has(key)) return;
+        keys.add(key);
+        if (evaluation.count >= 2) {
+          const gameRecognized = async (): Promise<boolean> => (await window.infohsorry.session.getState()).pid != null
+            && !(await readIidxIdFresh()).processMissing;
+          await uploadAutomaticArrange(evaluation, iidxId, gameRecognized);
+        }
+      }).catch((error: unknown) => {
+        console.warn(`[upload] automatic arrange failed id=${iidxId}:`, error);
+      });
+      arrangeChainByAccount.set(iidxId, next);
+    };
     const offPlayAppend = window.infohsorry.upload.onPlayAppend?.(({ iidxId }) => runIfDue(iidxId));
+    const offArrangeAppend = window.infohsorry.upload.onPlayAppend?.(handlePlayAppend);
     const offFinal = window.infohsorry.upload.onFinalRequest(() => void (async () => {
       const outcome = await tryUpload('final');
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
       window.infohsorry.upload.finalDone(outcome);
     })());
-    return () => { cancelInitialTimer(); offPlayAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
+    return () => { cancelInitialTimer(); offPlayAppend?.(); offArrangeAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
   }, []);
 
   // 마지막 스냅샷 이후에도 준비 상태가 바뀔 수 있으므로 타이머를 직접 설정하거나 재확인한다.
