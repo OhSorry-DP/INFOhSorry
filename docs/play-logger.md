@@ -217,3 +217,15 @@ CSV의 19개 원본 문자열(source 포함)을 파일 순서로 마지막 100�
 DBR 변환은 `decodeBattleRandomPlay`에 격리합니다. 19열 CSV에서 `battle_flag=1`, `settings_p1_11`의 p1[0]=1, p1[5]=1, p1[2]=1인 SP 기록을 후보로 삼습니다. R-RANDOM(2)·S-RANDOM(3)은 제외하며 p2 옵션은 자격 조건에 쓰지 않습니다. `song_id`, `ex_score`, `notes`는 CSV 값을 그대로 숫자로 해석하고, notes는 유효성 확인에만 씁니다. 램프는 `clear_lamp=-1`을 참조하지 않고 게이지 종류(p1[1])와 `gauge_p2_w78`로 계산합니다. `GAUGE_COLUMN`은 사용자 지정 기본값이며 화면 대조 확인은 아직 남아 있습니다(8장 한계 참조).
 
 조건을 만족하는 후보만 기존 원격 issue/exchange/Bearer 세션과 `/api/me/dbr-scores`를 통해 `improvements_only:true`로 순서대로 전송합니다. 후보가 아닌 행도 plays에는 그대로 포함합니다. 새 커서·최고값 저장소·재시도 큐는 없습니다.
+
+## 배치 자동 저장 (chart-arrange)
+
+기존 App의 `onPlayAppend` 구독과 `readPlayCsv`를 사용합니다. 읽은 시점의 마지막 완결 행만 이번 판으로 보고, 그 앞의 완결 행은 이력으로 비교합니다. 플레이 업로드는 CSV의 최근 100판을 보내지만 배치 자동 저장은 CSV 전체 이력을 읽어 비교합니다.
+
+대상은 완주한 일반 DP이며 assist와 H-RAN은 OFF, 알려진 양손 옵션 조건을 만족해야 합니다. `judge_16`은 정확히 16개의 유한 정수여야 하며, 아니면 완주가 아닙니다. `j=judge_16`의 완주 판정식은 `notes > 0 && (j[0]+j[1]+j[2]) + (j[5]+j[6]+j[7]) + j[10] + j[11] === notes`입니다. 양손의 PGREAT+GREAT+GOOD와 양쪽 콤보 브레이크를 합산합니다. 콤보 브레이크는 BAD+놓친 POOR이며 공POOR는 제외됩니다. BP(`miss_count`)는 BAD+POOR(공POOR 포함)인 게임 BP 값을 그대로 사용합니다. 근거는 기존 실측 표의 [7장 judge_16 실측](play-logger.md#7-검증-기록-2026-10-14-게임-화면과-대조)입니다.
+
+비교는 완주한 일반 DP 행끼리만 합니다. 램프는 증가, BP는 감소, EX는 증가를 각각 개선으로 보고 세 항목 중 2개 이상 개선될 때 `chart-arrange` PUT을 저장합니다. 이전 유효값이 없거나 값이 동점이면 해당 항목은 개선으로 세지 않습니다. 기본 정배는 -2이며, 수동 배치 덮어쓰기와 DBR 수준 인증 재사용을 적용합니다.
+
+같은 계정 CSV에서 `timestamp`+`song_id`+`difficulty` 조합을 Set으로 중복 배제하며, 계정별 단순 Promise 체인으로 처리합니다. 오류 로그는 남기지만 자동 재시도는 없습니다. 빠른 알림이 같은 마지막 행을 다시 읽을 수 있어 중간 판의 전송은 보장하지 않습니다.
+
+기록기 19열 및 tick/settle/append, main/preload는 변경하지 않았습니다. 매 알림마다 CSV 전체를 읽으므로 이력에 비례한 비용이 들며, CSV에서 삭제된 과거 기록은 복원할 수 없습니다.

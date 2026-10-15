@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 2026-10-15 — INF DP 배치 자동 저장
+
+- 플레이 기록기 append 알림을 받으면 App의 별도 `onPlayAppend` 구독에서 `readPlayCsv`로 CSV 전체 이력을 읽는다. 마지막 행을 이번 판으로 판정하고, 같은 곡·난이도의 이전 완주 일반 DP 기록과 램프·BP·EX를 비교한다. 확정 완주식은 `notes > 0 && (j[0]+j[1]+j[2]) + (j[5]+j[6]+j[7]) + j[10] + j[11] === notes`이며, `judge_16`이 정확히 16개의 유한 정수가 아니면 완주가 아니다. 양손의 PGREAT+GREAT+GOOD와 양쪽 콤보 브레이크를 합쳐 notes와 비교한다. 콤보 브레이크는 BAD+놓친 POOR라 공POOR는 완주 합계에서 제외하고, BP(`miss_count`)는 공POOR를 포함한 게임 BP 값을 그대로 쓴다.
+- 완주한 일반 DP에서 램프 증가·BP 감소·EX 증가 중 2개 이상 개선되면 `/api/me/chart-arrange` PUT 자동 저장 후보가 된다. 첫 기록이나 동점은 개선으로 세지 않는다. 기본 정배는 -2이며, 자동 저장은 웹에서 손으로 입력한 배치도 덮어쓴다.
+- 중복 키 Set과 계정별 단순 Promise 체인, 기존 DBR 수준 인증을 재사용한다. 기록기·main·preload는 바꾸지 않았다. 빠른 연속 판의 개별 저장은 보장하지 않는다. 웹 원격 토큰(Bearer, 쿠키 없음) 비밀번호 검사 예외는 ohSorryWeb `437725d`에서 구현됐다. 운영 반영에는 웹 배포와 ohSorryAdmin `sql/32_chart_arrange_regular.sql` 운영 적용이 필요하다.
+- 검증: `node --test src/main/playLog.test.mjs src/renderer/src/play-upload.test.mjs` 34/34 통과, `npm run typecheck`의 node/web tsc 통과. 기존 `spSkillCpi` fixture SHA 3건은 별도 기존 항목이며, 이번 대상 테스트의 신규 실패는 0건이다. 실기·운영 배포는 미확인이다.
+
 ### v0.0.143 — 2026-10-15 플레이 기록기·최근 100판 업로드·DBR 자동 저장
 
 - 플레이 기록기: 결과 화면마다 메모리 값을 CSV 한 줄(19열)로 저장한다. 배틀은 CurrentSong + 판정 블록 양쪽 합으로 곡·점수를 정하고 `source` 열(playdata/currentsong)로 구분한다. 정의는 `docs/play-logger.md`.
