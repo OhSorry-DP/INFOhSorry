@@ -918,8 +918,8 @@ export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string,
   return idx;
 }
 
-// 따옴표 밖의 개행으로 끝난 레코드만 사용해 append 중인 마지막 레코드를 제외한다.
-export function parseRecentPlays(csv: string): PlayCsvRow[] {
+type PlayHistoryParse = { rows: PlayCsvRow[]; lastCompleteError: { columns: number } | null };
+function tokenizePlayHistory(csv: string): string[][] {
   const records: string[][] = [];
   let record: string[] = []; let field = ''; let quoted = false;
   for (let i = 0; i < csv.length; i++) {
@@ -933,10 +933,79 @@ export function parseRecentPlays(csv: string): PlayCsvRow[] {
       records.push(record); record = []; field = '';
     } else field += c;
   }
+  return records;
+}
+export function parsePlayHistoryDetailed(csv: string): PlayHistoryParse {
+  const records = tokenizePlayHistory(csv);
   const header = records.shift();
-  if (!header || !PLAY_CSV_KEYS.every((key, i) => header[i] === key)) return [];
-  return records.filter(row => row.length === PLAY_CSV_KEYS.length).slice(-100)
-    .map(row => Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i]])) as PlayCsvRow);
+  if (!header || !PLAY_CSV_KEYS.every((key, i) => header[i] === key)) return { rows: [], lastCompleteError: null };
+  const valid: PlayCsvRow[] = [];
+  let lastCompleteError: { columns: number } | null = null;
+  for (const row of records) {
+    if (row.length !== PLAY_CSV_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
+    valid.push(Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i]])) as PlayCsvRow);
+    lastCompleteError = null;
+  }
+  return { rows: valid, lastCompleteError };
+}
+export function parsePlayHistory(csv: string): PlayCsvRow[] { return parsePlayHistoryDetailed(csv).rows; }
+// 기존 최근 100행 동작을 유지한다.
+export function parseRecentPlays(csv: string): PlayCsvRow[] { return parsePlayHistory(csv).slice(-100); }
+
+export function isCompletedPlay(row: PlayCsvRow): boolean {
+  // INFOhSorry/docs/play-logger.md:168-170: 일반 DP 행에서 BAD와 놓친 POOR를 포함한 판정 합계가 notes와 같을 때 완주다. 콤보 브레이크는 BAD+놓친 POOR이며 공POOR는 끊지 않으므로 합계에서 제외한다. BP(miss_count)는 BAD+POOR(공POOR 포함)로 게임 BP와 같은 값이므로 그대로 쓴다.
+  const j = row.judge_16.trim().split(/\s+/).map(Number);
+  const notes = Number(row.notes);
+  return j.length === 16 && j.every(Number.isFinite) && j.every(Number.isInteger) && Number.isFinite(notes) && notes > 0
+    && (j[0] + j[1] + j[2]) + (j[5] + j[6] + j[7]) + j[10] + j[11] === notes;
+}
+const strictNumber = (value: string): number | null => {
+  if (!value.trim()) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n !== 4294967295 ? n : null;
+};
+export function decodeArrangeScore(row: PlayCsvRow) {
+  const lamp = strictNumber(row.clear_lamp); const bp = strictNumber(row.miss_count); const ex = strictNumber(row.ex_score);
+  return { lamp: lamp != null && lamp >= 1 && lamp <= 8 ? lamp : null, bp, ex };
+}
+export function compareArrangeScores(previous: { lamp: number | null; bp: number | null; ex: number | null } | null,
+  current: { lamp: number | null; bp: number | null; ex: number | null }) {
+  const improved = { lamp: previous?.lamp != null && current.lamp != null && current.lamp > previous.lamp,
+    bp: previous?.bp != null && current.bp != null && current.bp < previous.bp,
+    ex: previous?.ex != null && current.ex != null && current.ex > previous.ex };
+  const count = Number(improved.lamp) + Number(improved.bp) + Number(improved.ex);
+  return { previous: previous ?? { lamp: null, bp: null, ex: null }, improved, count };
+}
+export function evaluateAutomaticArrange(history: PlayCsvRow[] | PlayHistoryParse) {
+  const parsed = Array.isArray(history) ? { rows: history, lastCompleteError: null } : history;
+  if (parsed.lastCompleteError != null) return { excluded: true as const, reason: 'last_row_invalid' };
+  const rows = parsed.rows;
+  const last = rows[rows.length - 1];
+  if (!last || !isCompletedPlay(last)) return { excluded: true as const, reason: 'current_not_completed' };
+  const currentRow = last;
+  if (!['DPB', 'DPN', 'DPH', 'DPA', 'DPL'].includes(currentRow.difficulty)) return { excluded: true as const, reason: 'not_dp' };
+  const currentSettings = currentRow.settings_p1_11.trim().split(/\s+/).map(Number);
+  const validSettings = (p: number[]) => p.length === 11 && p.every(Number.isInteger) && p[3] >= 0 && p[3] <= 1
+    && [p[0],p[5]].every(v => v >= 0 && v <= 4) && p[2] === 0 && p[9] === 0 && p[10] === 0;
+  const decode = (row: PlayCsvRow, p: number[]) => {
+    if (row.source !== 'playdata' || row.battle_flag !== '0' || !validSettings(p)) return null;
+    return decodeArrangeScore(row);
+  };
+  const current = decode(currentRow, currentSettings);
+  const previousRows = rows.slice(0, -1).filter(row => row.song_id === currentRow.song_id && row.difficulty === currentRow.difficulty
+    && isCompletedPlay(row)).map(row => decode(row, row.settings_p1_11.trim().split(/\s+/).map(Number))).filter((v): v is NonNullable<typeof v> => v !== null);
+  if (!current) return { excluded: true as const, reason: 'invalid_current' };
+  const best = previousRows.reduce<{ lamp: number | null; bp: number | null; ex: number | null }>((acc, value) => ({
+    lamp: value.lamp == null ? acc.lamp : Math.max(acc.lamp ?? -Infinity, value.lamp),
+    bp: value.bp == null ? acc.bp : Math.min(acc.bp ?? Infinity, value.bp),
+    ex: value.ex == null ? acc.ex : Math.max(acc.ex ?? -Infinity, value.ex),
+  }), { lamp: null, bp: null, ex: null });
+  const compared = compareArrangeScores(previousRows.length ? best : null, current);
+  const diffs: Record<string, number> = { DPB: 0, DPN: 1, DPH: 2, DPA: 3, DPL: 4 };
+  const option = currentSettings;
+  const v = [0,8,24,16,2][option[0]] | [0,32,96,64,4][option[5]] | (option[3] ? 1 : 0);
+  return { current: currentRow, previous: compared.previous, improved: compared.improved, count: compared.count,
+    arrange: v === 0 ? -2 : v, diff: diffs[currentRow.difficulty], excluded: false as const };
 }
 
 export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecognized: boolean): PlayCsvRow[] | null | undefined {

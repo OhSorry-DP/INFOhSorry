@@ -45,6 +45,63 @@ test('헤더 제외, 빈 CSV, 따옴표/쉼표/한글/이스케이프, 불완전
     assert.deepEqual(plain(parseRecentPlays(csv([row(1)]) + tail)), [row(1)]);
   }
 });
+test('전체 이력 파서 공유 tokenizer: 인용/한글/개행/미완결 꼬리/19열 오류/최근100', () => {
+  const api = sync(); const rows = Array.from({ length: 101 }, (_, i) => row(i));
+  rows[0].title = '한글, "인용"\\줄\n개행';
+  const input = csv(rows) + '"unfinished';
+  assert.equal(api.parsePlayHistory(input).length, 101);
+  assert.equal(api.parseRecentPlays(input).length, 100);
+  assert.match(api.parsePlayHistory(input)[0].title, /한글/);
+  assert.match(api.parsePlayHistory(input)[0].title, /\n/);
+  const malformed = keys.slice(0, 18).join(',') + '\n';
+  const detail = api.parsePlayHistoryDetailed(csv([rows[0]]) + malformed);
+  assert.equal(detail.rows.length, 1); assert.deepEqual(plain(detail.lastCompleteError), { columns: 18 });
+  assert.equal(api.evaluateAutomaticArrange(detail).reason, 'last_row_invalid');
+});
+test('완주 판정은 실제 16 judge 값과 notes만 사용하고 미완주/불량 판정은 제외', () => {
+  const api = sync();
+  const make = (notes, judged, miss = '0') => ({ ...row(1), notes: String(notes), miss_count: miss, judge_16: judged.join(' ') });
+  assert.equal(api.isCompletedPlay(make(1058, [751,246,52,4,6,0,0,0,0,0,9,0,160,0,138,0], '10')), true);
+  assert.equal(api.isCompletedPlay(make(1453, [776,431,211,10,48,0,0,0,0,0,35,0,317,0,325,0], '58')), true);
+  assert.equal(api.isCompletedPlay(make(1058, [642,236,77,4,10,0,0,0,0,0,15,0,139,0,174,0])), false);
+  assert.equal(api.isCompletedPlay(make(0, Array(16).fill(0))), false);
+  assert.equal(api.isCompletedPlay(make(1, [1, 0])), false);
+  assert.equal(api.isCompletedPlay(make(1, [...Array(15).fill(0), 'NaN'])), false);
+});
+test('자동 배열 순수 비교 표, 유효 숫자 sentinel, BP0 및 첫 기록', () => {
+  const { compareArrangeScores } = sync();
+  const cases = [
+    [{lamp:4,bp:50,ex:1400},{lamp:5,bp:40,ex:1500},3], [{lamp:5,bp:50,ex:1400},{lamp:5,bp:40,ex:1500},2],
+    [{lamp:5,bp:50,ex:1500},{lamp:5,bp:40,ex:1500},1], [null,{lamp:5,bp:40,ex:1500},0],
+    [{lamp:null,bp:50,ex:null},{lamp:5,bp:40,ex:1500},1], [{lamp:5,bp:0,ex:1500},{lamp:5,bp:0,ex:1500},0],
+    [{lamp:4,bp:60,ex:1600},{lamp:6,bp:30,ex:1500},2], [{lamp:6,bp:20,ex:1700},{lamp:5,bp:30,ex:1600},0],
+    [{lamp:4,bp:50,ex:1400},{lamp:5,bp:40,ex:1500},3],
+  ];
+  for (const [previous,current,count] of cases) assert.equal(compareArrangeScores(previous,current).count,count);
+  assert.equal(compareArrangeScores(null,{lamp:5,bp:0,ex:10}).count,0);
+  const complete = row(1); complete.notes='1'; complete.judge_16='1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0';
+  const base = { ...complete, source:'playdata', battle_flag:'0', difficulty:'DPA', song_id:'80123', clear_lamp:'5', miss_count:'0', ex_score:'100', settings_p1_11:'1 2 0 1 5 4 0 0 0 0 0' };
+  const opts = sync().evaluateAutomaticArrange([base]); assert.equal(opts.count,0); assert.equal(opts.previous.lamp,null);
+  const api = sync();
+  const arrange = (p0, p5, flip = 0) => api.evaluateAutomaticArrange([{ ...base, settings_p1_11:`${p0} 2 0 ${flip} 5 ${p5} 0 0 0 0 0` }]).arrange;
+  for (const [p0,p5,flip,expected] of [[0,0,0,-2],[0,0,1,1],[2,1,0,56],[3,1,1,49],[4,4,0,6],[4,3,0,66],[4,3,1,67]]) assert.equal(arrange(p0,p5,flip),expected);
+  for (const patch of [{difficulty:'SPx'},{battle_flag:'1'}, {settings_p1_11:'1 2 1 1 5 4 0 0 0 0 0'},
+    {settings_p1_11:'1 2 0 1 5 4 0 0 0 1 0'}, {settings_p1_11:'1 2 0 1 5 4 0 0 0 0'},
+    {settings_p1_11:'1 2 0 1 5 4 0 0 0 0 0 9'}]) assert.equal(api.evaluateAutomaticArrange([{...base,...patch}]).excluded,true);
+  assert.equal(api.evaluateAutomaticArrange([{...base, difficulty:'SPB'}]).reason,'not_dp');
+  for (const value of ['', ' ', '-1', '4294967295', '-2', 'NaN']) {
+    assert.deepEqual(plain(api.decodeArrangeScore({...base, clear_lamp:value, miss_count:value, ex_score:value})), {lamp:null,bp:null,ex:null});
+  }
+  assert.deepEqual(plain(api.decodeArrangeScore({...base, clear_lamp:'0', miss_count:'0', ex_score:'0'})), {lamp:null,bp:0,ex:0});
+  assert.equal(sync().evaluateAutomaticArrange([{...base,judge_16:'0 0 0'}]).excluded,true);
+});
+test('완주 최신 이력 선택과 물리 순서: 이전 최고는 전체101행에 보존', () => {
+  const api = sync(); const make = (lamp, bp, ex, timestamp) => ({ ...row(timestamp), timestamp:String(timestamp), song_id:'80123', difficulty:'DPA', notes:'1', judge_16:'1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', source:'playdata', battle_flag:'0', settings_p1_11:'1 2 0 0 5 4 0 0 0 0 0', clear_lamp:String(lamp), miss_count:String(bp), ex_score:String(ex) });
+  const history = [make(6,20,1700,1), ...Array.from({length:100},(_,i)=>make(4,50,1400,2)), make(5,30,1600,2)];
+  const result = api.evaluateAutomaticArrange(history); assert.equal(result.previous.lamp,6); assert.equal(result.count,0);
+  assert.equal(api.evaluateAutomaticArrange([make(4,50,1400,1),make(5,40,1500,1)]).current.timestamp,'1');
+  assert.equal(api.evaluateAutomaticArrange([make(4,50,1400,1),make(5,40,1500,2),{...make(5,40,1500,3),judge_16:'0 0'}]).excluded,true);
+});
 test('수동/pending/종료 업로드는 게임 없이 계속 실행, pending plays 생략, NULL/[] 계약', async () => {
   const calls = [];
   const api = sync({ window: { infohsorry: { serviceStatus: { get: async () => ({ uploadEnabled: true }) } } },
