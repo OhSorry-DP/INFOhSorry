@@ -41,7 +41,7 @@ import { ProfileCard } from './ProfileCard';
 import AccountSelector from './AccountSelector';
 import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
-import { parseRecentPlays, parsePlayHistoryDetailed, evaluateAutomaticArrange, uploadAutomaticArrange, playsForGame, uploadAutomaticDbr, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
+import { parseRecentPlays, parsePlayHistoryDetailed, evaluateAutomaticArrange, uploadAutomaticArrange, playsForGame, buildUploadPlays, uploadAutomaticDbr, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
@@ -1369,9 +1369,19 @@ export default function App() {
     const startedAt = Date.now();
     const gameRecognized = async (): Promise<boolean> => (await window.infohsorry.session.getState()).pid != null
       && !(await readIidxIdFresh()).processMissing;
-    if (trigger !== 'pending' && window.infohsorry.upload.readPlayCsv && await gameRecognized()) {
-      const csv = await window.infohsorry.upload.readPlayCsv(snapshot.iidxId);
-      if (csv.ok) snapshot = { ...snapshot, plays: parseRecentPlays(csv.csv ?? '') };
+    if (await gameRecognized()) {
+      try {
+        const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+        const csv = typeof readPlayCsv === 'function'
+          ? await readPlayCsv(snapshot.iidxId)
+          : { ok: false, error: 'play CSV read unavailable' };
+        snapshot = { ...snapshot, appVersion: APP_VERSION, plays: buildUploadPlays({ ...csv, appVersion: csv.appVersion ?? APP_VERSION, gameVersion: csv.gameVersion ?? '' }) };
+      } catch (error) {
+        console.warn('[upload] play CSV refresh failed:', error);
+        snapshot = { ...snapshot, appVersion: APP_VERSION, plays: buildUploadPlays({ ok: false, appVersion: APP_VERSION, gameVersion: '' }) };
+      }
+    } else {
+      snapshot = { ...snapshot, plays: undefined };
     }
     const savePending = window.infohsorry.upload.savePending;
     const saved = typeof savePending === 'function' ? await savePending(snapshot) : { ok: false, error: 'pending save unavailable' };
