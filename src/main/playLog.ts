@@ -28,7 +28,7 @@ export const DIFF_NAMES = ['SPB', 'SPN', 'SPH', 'SPA', 'SPL', 'DPB', 'DPN', 'DPH
 export const PLAY_LOG_HEADER = [
   'timestamp', 'song_id', 'title', 'difficulty', 'notes', 'ex_score', 'pgreat', 'great', 'miss_count',
   'clear_lamp', 'dj_rate_pct', 'dj_rank', 'judge_16', 'settings_p1_11', 'settings_p2_11', 'battle_flag',
-  'gauge_p1_w77', 'gauge_p2_w78', 'source',
+  'gauge_p1_w77', 'gauge_p2_w78', 'source', 'app_version', 'game_version',
 ].join(',');
 
 export type OffsetKey = 'songList' | 'judgeData' | 'playSettings' | 'playData' | 'currentSong';
@@ -158,6 +158,8 @@ export interface PlaySnapshot {
   p2Settings: number[];
   gauge: [number, number];
   source: PlaySource;
+  appVersion: string;
+  gameVersion: string;
 }
 
 // 한 플레이 = CSV 한 줄 (PLAY_LOG_HEADER 와 같은 열 순서)
@@ -183,5 +185,7 @@ export function buildPlayRow(s: PlaySnapshot): string {
     s.gauge[0],
     s.gauge[1],
     s.source,
+    csvField(s.appVersion),
+    csvField(s.gameVersion),
   ].join(',');
 }

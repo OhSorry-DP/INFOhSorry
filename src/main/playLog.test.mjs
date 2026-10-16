@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { PLAY_CSV_KEYS } from '../shared/uploadSnapshot.ts';
 import {
   PLAY_LOG_HEADER,
   PLAY_LOG_LAYOUT as L,
@@ -90,6 +91,7 @@ test('곡 조회: 없는 ID 는 null', () => {
 });
 
 test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x28 값', () => {
+  assert.equal(PLAY_LOG_HEADER, PLAY_CSV_KEYS.join(','));
   const p1 = Array.from({ length: 11 }, (_, i) => (i === 10 ? 1 : 0));
   const row = buildPlayRow({
     timestamp: '2026-10-14T11:11:20.779Z',
@@ -107,6 +109,8 @@ test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x
     p2Settings: Array.from({ length: 11 }, () => 0),
     gauge: [0, 56],
     source: 'playdata',
+    appVersion: '1.2.3',
+    gameVersion: '2026101400',
   });
   const f = splitCsv(row);
   assert.equal(f.length, PLAY_LOG_HEADER.split(',').length);
@@ -119,14 +123,45 @@ test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x
   assert.equal(f[16], '0'); // gauge_p1
   assert.equal(f[17], '56'); // gauge_p2
   assert.equal(f[18], 'playdata');
+  assert.equal(f[19], '1.2.3');
+  assert.equal(f[20], '2026101400');
 });
 
 test('CSV 행: 제목의 따옴표는 두 번 써서 이스케이프', () => {
   const row = buildPlayRow({
     timestamp: 't', songId: 1, title: 'a"b', diff: 0, notes: 0, exScore: 0, pgreat: 0, great: 0, miss: 0, lamp: 0,
-    judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'playdata',
+    judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'playdata', appVersion: '', gameVersion: '',
   });
   assert.ok(row.includes('"a""b"'));
+});
+
+test('CSV 21 fields: versions containing commas, quotes, and newlines round trip', () => {
+  const appVersion = 'app, "stable"\nnext';
+  const gameVersion = 'game\n"rev",2';
+  const row = buildPlayRow({
+    timestamp: '2026-10-14T11:11:20.779Z', songId: 1, title: 'title', diff: 0, notes: 1, exScore: 1, pgreat: 0, great: 1, miss: 0, lamp: -1,
+    judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'currentsong', appVersion, gameVersion,
+  });
+  const fields = splitCsv(row);
+  assert.equal(fields.length, 21);
+  assert.equal(fields[19], appVersion);
+  assert.equal(fields[20], gameVersion);
+});
+
+test('CSV battle row preserves normal lamp and the legacy 19-field prefix', () => {
+  const snapshot = {
+    timestamp: '2026-10-14T11:11:20.779Z', songId: 80126, title: 'battle', diff: 2, notes: 1672,
+    exScore: 1788, pgreat: 719, great: 350, miss: 114, lamp: -1, judge16: BATTLE_JUDGE,
+    p1Settings: Array.from({ length: 11 }, () => 0), p2Settings: Array.from({ length: 11 }, () => 0),
+    gauge: [0, 56], source: 'currentsong', appVersion: 'app', gameVersion: 'game',
+  };
+  const fields = splitCsv(buildPlayRow(snapshot));
+  assert.equal(fields.length, 21);
+  assert.deepEqual(fields.slice(0, 19), [
+    snapshot.timestamp, '80126', 'battle', 'SPH', '1672', '1788', '719', '350', '114', '-1',
+    '53.47', 'C', BATTLE_JUDGE.join(' '), '0 0 0 0 0 0 0 0 0 0 0', '0 0 0 0 0 0 0 0 0 0 0',
+    '0', '0', '56', 'currentsong',
+  ]);
 });
 
 // 실제 배틀 플레이(2026-10-14 14:51 UTC)의 값: The 88's Instigation SPH, 양쪽 SP 차트(836노트 x 2)
