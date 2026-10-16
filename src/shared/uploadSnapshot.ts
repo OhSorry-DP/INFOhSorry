@@ -59,5 +59,29 @@ export type UploadOutcome =
   | { kind: 'skip-no-dirty' }
   | { kind: 'skip-no-snapshot'; reason: string };
 
-export const PLAY_CSV_KEYS = ["timestamp", "song_id", "title", "difficulty", "notes", "ex_score", "pgreat", "great", "miss_count", "clear_lamp", "dj_rate_pct", "dj_rank", "judge_16", "settings_p1_11", "settings_p2_11", "battle_flag", "gauge_p1_w77", "gauge_p2_w78", "source"] as const;
+export const PLAY_CSV_LEGACY_KEYS = ["timestamp", "song_id", "title", "difficulty", "notes", "ex_score", "pgreat", "great", "miss_count", "clear_lamp", "dj_rate_pct", "dj_rank", "judge_16", "settings_p1_11", "settings_p2_11", "battle_flag", "gauge_p1_w77", "gauge_p2_w78", "source"] as const;
+export const PLAY_CSV_KEYS = [...PLAY_CSV_LEGACY_KEYS, "app_version", "game_version"] as const;
 export type PlayCsvRow = Record<(typeof PLAY_CSV_KEYS)[number], string>;
+
+export const PLAY_ERROR_CODES = {
+  id: -1, skipped: -2, memory: -3, write: -4, marker: -5, offsets: -6,
+  requiredKey: -7, csvMissing: -8, header: -9, row0: -10, read: -11,
+} as const;
+
+export type PlayCsvReadResult = { ok: boolean; csv?: string; error?: string; found?: boolean; appVersion?: string; gameVersion?: string };
+export type PlayErrorCode = (typeof PLAY_ERROR_CODES)[keyof typeof PLAY_ERROR_CODES];
+
+export function buildPlayErrorRow(code: number, versions: { appVersion: string; gameVersion: string }, timestamp: string): PlayCsvRow {
+  if (!Number.isInteger(code) || code >= 0) throw new RangeError('Play error code must be a negative integer');
+  const row = Object.fromEntries(PLAY_CSV_KEYS.map((key) => [key, ''])) as PlayCsvRow;
+  row.timestamp = timestamp;
+  for (const key of PLAY_CSV_KEYS.slice(1, 19)) row[key] = String(code);
+  row.app_version = versions.appVersion;
+  row.game_version = versions.gameVersion;
+  return row;
+}
+
+export function isPlayErrorRow(row: PlayCsvRow): boolean {
+  const values = PLAY_CSV_KEYS.slice(1, 19).map((key) => row[key]);
+  return /^-\d+$/.test(values[0]) && values.every((value) => value === values[0]);
+}
