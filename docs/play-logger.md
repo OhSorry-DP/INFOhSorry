@@ -95,7 +95,37 @@ Reflux `Utils.FetchGameState` 와 같은 규칙입니다.
 
 ## 6. CSV 열
 
-한 줄 = 결과 화면 한 번. 헤더 19개 열입니다.
+한 줄 = 결과 화면 한 번. 신규 CSV 헤더는 21개 열입니다. 기존 19개 헤더는 그대로 유지하며, 업로드 파서는 19/21열 혼합 행을 모두 허용합니다.
+
+```csv
+timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version
+```
+
+기존 19개 열 뒤에 `app_version`, `game_version`이 추가됩니다. 19열 레거시 행의 두 버전 값은 빈 문자열로 정규화합니다. 버전 확보에 실패해도 오류 코드나 offsets fallback 버전을 넣지 않고 빈 문자열을 사용합니다.
+
+기록·업로드 오류 행도 21개 문자열 필드입니다. `timestamp`는 오류 발생 시각 또는 업로드 시각의 실제 ISO 시각이고, `song_id`부터 `source`까지 18개 칸은 같은 음수 정수 문자열입니다. 마지막 두 버전 칸은 확보한 실제 버전이며 확보하지 못하면 빈 문자열입니다. 오류 판별은 timestamp와 버전을 제외한 18개 값이 같은 음수 정수 문자열인지로 합니다. `clear_lamp=-1` 하나만으로 오류로 판정하지 않습니다. INF 배틀 기록에는 `clear_lamp=-1`인 정상 행이 있습니다.
+
+오류 코드는 다음과 같습니다.
+
+| 코드 | 의미 |
+|---|---|
+| -1 | 저장 시 ID 읽기 실패·무효·pid 불일치 |
+| -2 | 저장 메모리에서 판 없음 |
+| -3 | 저장 메모리 읽기 예외 |
+| -4 | CSV 디렉터리·헤더·행 쓰기 실패 |
+| -5 | attach 뒤 30,000ms 동안 마커 미발견 |
+| -6 | 게임은 있으나 offsets 읽기 실패 또는 없음 |
+| -7 | offsets 필수 키 누락 또는 0 |
+| -8 | CSV 없음(ENOENT) |
+| -9 | CSV 헤더 불일치 |
+| -10 | 유효한 완결 행 없음 |
+| -11 | CSV 읽기 실패·IPC 거부·API 없음 |
+
+attach 성공 뒤 30,000ms 동안 마커가 없으면 한 번 진단합니다. ID가 있으면 오류 행을 기록하고, 없으면 diag에만 남깁니다. 이후 offsets 재attach는 마커 탐색을 다시 시작합니다. 중복 pid 구간에서는 같은 오류를 한 번만 기록합니다. ID 없는 오류와 -4는 diag 전용이며 큐·재시도는 없습니다. 이미 잡은 마커는 재검증하지 않습니다. pending 업로드도 매 시도마다 CSV를 다시 읽습니다.
+
+renderer는 fresh 읽기와 정규식 검증을 통과한 ID를 `{pid, iidxId}`로 main에 전달합니다. main은 자체 ID 읽기를 먼저 수행하고, 자체 읽기가 실패하거나 무효일 때만 같은 pid의 전달값을 대체로 사용합니다.
+
+기존 500ms/1500ms 타이밍과 실제 판 경계 계산은 유지됩니다. 기록기는 기존 결과 전환 조건으로 판을 저장하며 타이밍 설명은 변경하지 않습니다.
 
 | 열 | 값의 출처 | 설명 |
 |----|-----------|------|
