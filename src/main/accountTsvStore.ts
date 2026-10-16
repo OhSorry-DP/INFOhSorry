@@ -6,6 +6,7 @@ import { findProcessId } from './memory';
 import { mergeAccountMeta, type AccountMeta, type AccountSnapshotRequest, type AccountSnapshotResult } from '../shared/account';
 import type { InfinitasSessionState } from '../shared/session';
 import type { TsvReadResult } from '../shared/types';
+import type { PlayCsvReadResult } from '../shared/uploadSnapshot';
 
 const IIDX_RE = /^[A-Z]\d{12}$/;
 // 기존 스냅샷 대비 허용하는 최소 행 수 비율
@@ -95,12 +96,12 @@ export async function setLastSelected(iidxId: string | null): Promise<void> { co
 export function accountPlayCsvPath(iidxId: string): string | null {
   return IIDX_RE.test(iidxId) ? join(accountDir(iidxId), 'plays.csv') : null;
 }
-export async function readAccountPlayCsv(iidxId: string): Promise<{ ok: boolean; csv?: string; error?: string }> {
+export async function readAccountPlayCsv(iidxId: string): Promise<PlayCsvReadResult> {
   const path = accountPlayCsvPath(iidxId);
   if (!path) return { ok: false, error: 'invalid id' };
   try { return { ok: true, csv: await fsp.readFile(path, 'utf8') }; }
   catch (e) {
-    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true, csv: '' };
+    if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true, found: false, csv: '' };
     return { ok: false, error: (e as Error).message };
   }
 }
