@@ -394,23 +394,49 @@ test('자동 배열 HTTP/네트워크 실패는 재시도 없이 반환하고 �
 test('saveOnce 실제 저장 경계: A→B 경로, 미취득 생략, append 성공 후 해당 계정 알림, 공용 CSV 불변', () => {
   const store = load(read('../../main/accountTsvStore.ts'), { electron: { app: { getPath: () => '/fixture/userData' } }, fs: { promises: {} }, path,
     './tsv': {}, './memory': {}, '../shared/account': {} });
-  const logger = read('../../main/playLogger.ts');
-  const save = logger.slice(logger.indexOf('  const saveOnce ='), logger.indexOf('  const tick ='));
   const files = new Map([['/fixture/userData/play-log/plays.csv', Buffer.from('공용 원본\r\n')]]);
-  const original = Buffer.from(files.values().next().value); const events = []; let id = 'C123456789012'; let fail = false;
-  const api = load(`export function save() { ${save} saveOnce(); }`, {}, {
-    opts: { getAccount: () => id, onAppend: e => events.push({ ...e }), log() {} }, handle: {},
-    accountPlayCsvPath: store.accountPlayCsvPath, dirname: path.dirname, mkdirSync() {},
-    existsSync: p => files.has(p), writeFileSync: (p, value) => files.set(p, Buffer.from(value)),
-    appendFileSync: (p, value) => { if (fail) throw new Error('append failed'); files.set(p, Buffer.concat([files.get(p), Buffer.from(value)])); },
-    PLAY_LOG_HEADER: keys.join(','), buildSnapshotRow: () => ({ row: csvLine(row(1)).trimEnd(), songId: 1 }),
+  const original = Buffer.from(files.values().next().value); const events = []; const logs = [];
+  let id = 'C123456789012'; let phase = 0; let fail = false; let clock = 0; let serial = 0;
+  const timers = new Map(); const scheduleTimer = (fn, ms) => { const timerId = ++serial; timers.set(timerId, { at: clock + ms, fn }); return timerId; };
+  const memory = {
+    findInfinitas: () => ({ pid: 7, handle: 7, modBaseAddr: 0x140000000n }), closeHandle() {},
+    readBytes(_handle, address, size) {
+      const buffer = Buffer.alloc(size);
+      if (size === 96) for (const offset of [0,8,16]) buffer.writeInt32LE(20000, offset);
+      else if (address === 0x1400010b0n) buffer.writeInt32LE(phase ? 0 : 1);
+      else if (address === 0x140001fe8n) buffer.writeInt32LE(0);
+      return buffer;
+    },
+  };
+  const logger = load(read('../../main/playLogger.ts'), { fs: {
+    statSync: () => ({ mtimeMs: 1, size: 1 }), readFileSync: () => 'judgeData=0x140001000\nplaySettings=0x140002000\nplayData=0x140003000\nsongList=0x140004000',
+    existsSync: p => files.has(p), mkdirSync() {}, writeFileSync: (p, value) => files.set(p, Buffer.from(value)),
+    appendFileSync: (p, value) => { if (fail) throw new Error('append failed'); const prior = files.get(p) ?? Buffer.alloc(0); files.set(p, Buffer.concat([prior, Buffer.from(value)])); },
+  }, path: { dirname: p => path.dirname(p) }, './accountTsvStore': { accountPlayCsvPath: store.accountPlayCsvPath },
+  './memory': memory, './playLog': load(read('../../main/playLog.ts')),
+  '../shared/uploadSnapshot': shared }, {
+    performance: { now: () => clock }, Date, setTimeout: scheduleTimer, clearTimeout: timerId => timers.delete(timerId),
   });
-  api.save(); id = 'C999999999999'; api.save(); id = null; api.save();
-  assert.deepEqual(events, [{ iidxId: 'C123456789012' }, { iidxId: 'C999999999999' }]);
+  const stop = logger.startPlayLogger({ offsetsPath: '/fixture/offsets.txt', appVersion: 'test', getGameVersion: () => 'game',
+    getAccount: () => id, onAppend: event => events.push({ ...event }), log: line => logs.push(line) });
+  const advance = to => {
+    for (;;) {
+      const next = [...timers].filter(([, timer]) => timer.at <= to).sort((a,b) => a[1].at-b[1].at || a[0]-b[0])[0];
+      if (!next) break;
+      timers.delete(next[0]); clock = next[1].at; next[1].fn();
+    }
+    clock = to;
+  };
+  const play = accountId => { id = accountId; phase = 0; advance(clock + 2000); phase = 1; advance(clock + 500); advance(clock + 1500); };
+  advance(2000); phase = 1; advance(2500); advance(4000);
+  play('C999999999999'); play(null);
+  assert.deepEqual(events, [{ iidxId: 'C123456789012' }, { iidxId: 'C999999999999' }], JSON.stringify(logs));
   for (const account of ['C123456789012', 'C999999999999']) assert.ok(files.has(store.accountPlayCsvPath(account)));
-  id = 'C123456789012'; fail = true; assert.throws(() => api.save(), /append failed/); assert.equal(events.length, 2);
+  assert.equal(logs.filter(line => line.includes('error -1 ')).length, 1);
+  id = 'C123456789012'; fail = true; play(id); assert.equal(events.length, 2);
   assert.deepEqual(files.get('/fixture/userData/play-log/plays.csv'), original);
   assert.equal(store.accountPlayCsvPath('../outside'), null);
+  stop();
 });
 test('기존 예약·초기 2초·재시작 pending·종료 흐름과 IPC 연결 유지', () => {
   const app = read('./App.tsx'); const main = read('../../main/index.ts'); const preload = read('../../preload/index.ts');
