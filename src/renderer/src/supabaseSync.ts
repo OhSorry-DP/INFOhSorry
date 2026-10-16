@@ -1,4 +1,4 @@
-import { PLAY_CSV_KEYS, type PlayCsvRow } from '../../shared/uploadSnapshot';
+import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
 // Supabase 새 디비 (users + scores) upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
 // ohSorry / INFOhSorry 가 같은 DB 공유 (iidx_id text PK 라 namespace 호환).
 //
@@ -918,7 +918,7 @@ export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string,
   return idx;
 }
 
-type PlayHistoryParse = { rows: PlayCsvRow[]; lastCompleteError: { columns: number } | null };
+type PlayHistoryParse = { rows: PlayCsvRow[]; lastCompleteError: { columns: number } | null; errorCode?: number };
 function tokenizePlayHistory(csv: string): string[][] {
   const records: string[][] = [];
   let record: string[] = []; let field = ''; let quoted = false;
@@ -938,21 +938,35 @@ function tokenizePlayHistory(csv: string): string[][] {
 export function parsePlayHistoryDetailed(csv: string): PlayHistoryParse {
   const records = tokenizePlayHistory(csv);
   const header = records.shift();
-  if (!header || !PLAY_CSV_KEYS.every((key, i) => header[i] === key)) return { rows: [], lastCompleteError: null };
+  const legacyHeader = !!header && header.length === PLAY_CSV_LEGACY_KEYS.length && PLAY_CSV_LEGACY_KEYS.every((key, i) => header[i] === key);
+  const currentHeader = !!header && header.length === PLAY_CSV_KEYS.length && PLAY_CSV_KEYS.every((key, i) => header[i] === key);
+  if (!legacyHeader && !currentHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
   const valid: PlayCsvRow[] = [];
   let lastCompleteError: { columns: number } | null = null;
   for (const row of records) {
-    if (row.length !== PLAY_CSV_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
-    valid.push(Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i]])) as PlayCsvRow);
+    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
+    const mapped = Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i] ?? ''])) as PlayCsvRow;
+    valid.push(mapped);
     lastCompleteError = null;
   }
   return { rows: valid, lastCompleteError };
+}
+export function buildUploadPlays(result: PlayCsvReadResult): PlayCsvRow[] {
+  const versions = { appVersion: result.appVersion ?? '', gameVersion: result.gameVersion ?? '' };
+  const error = (code: number) => [buildPlayErrorRow(code, versions, new Date().toISOString())];
+  if (!result.ok) return error(-11);
+  if (result.found === false) return error(-8);
+  const parsed = parsePlayHistoryDetailed(result.csv ?? '');
+  if (parsed.errorCode === -9) return error(-9);
+  if (parsed.rows.length === 0) return error(-10);
+  return parsed.rows.slice(-100);
 }
 export function parsePlayHistory(csv: string): PlayCsvRow[] { return parsePlayHistoryDetailed(csv).rows; }
 // 기존 최근 100행 동작을 유지한다.
 export function parseRecentPlays(csv: string): PlayCsvRow[] { return parsePlayHistory(csv).slice(-100); }
 
 export function isCompletedPlay(row: PlayCsvRow): boolean {
+  if (isPlayErrorRow(row)) return false;
   // INFOhSorry/docs/play-logger.md:168-170: 일반 DP 행에서 BAD와 놓친 POOR를 포함한 판정 합계가 notes와 같을 때 완주다. 콤보 브레이크는 BAD+놓친 POOR이며 공POOR는 끊지 않으므로 합계에서 제외한다. BP(miss_count)는 BAD+POOR(공POOR 포함)로 게임 BP와 같은 값이므로 그대로 쓴다.
   const j = row.judge_16.trim().split(/\s+/).map(Number);
   const notes = Number(row.notes);
@@ -981,7 +995,7 @@ export function evaluateAutomaticArrange(history: PlayCsvRow[] | PlayHistoryPars
   if (parsed.lastCompleteError != null) return { excluded: true as const, reason: 'last_row_invalid' };
   const rows = parsed.rows;
   const last = rows[rows.length - 1];
-  if (!last || !isCompletedPlay(last)) return { excluded: true as const, reason: 'current_not_completed' };
+  if (!last || isPlayErrorRow(last) || !isCompletedPlay(last)) return { excluded: true as const, reason: 'current_not_completed' };
   const currentRow = last;
   if (!['DPB', 'DPN', 'DPH', 'DPA', 'DPL'].includes(currentRow.difficulty)) return { excluded: true as const, reason: 'not_dp' };
   const currentSettings = currentRow.settings_p1_11.trim().split(/\s+/).map(Number);
@@ -1016,6 +1030,7 @@ export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecogni
 export const GAUGE_COLUMN = 'gauge_p2_w78';
 export interface BattleRandomScore { diff: number; lamp: number; ex_score: number }
 export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
+  if (isPlayErrorRow(row)) return null;
   const p1 = row.settings_p1_11.split(' ').map(Number);
   if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
     || row.battle_flag !== '1' || p1[0] !== 1 || p1[5] !== 1 || p1[2] !== 1) return null;

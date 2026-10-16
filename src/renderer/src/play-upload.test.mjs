@@ -28,12 +28,77 @@ const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`
 const csv = rows => keys.join(',') + '\n' + rows.map(csvLine).join('');
 const plain = x => JSON.parse(JSON.stringify(x));
 
+test('19/21 정확한 헤더만 허용하고 추가 열은 헤더 오류', () => {
+  const api = sync();
+  const legacy = keys.slice(0, 19);
+  const current = keys;
+  assert.equal(api.parsePlayHistoryDetailed(legacy.join(',') + '\n').errorCode, undefined);
+  assert.equal(api.parsePlayHistoryDetailed(current.join(',') + '\n').errorCode, undefined);
+  const extra = [...current, 'unexpected'];
+  assert.equal(api.parsePlayHistoryDetailed(extra.join(',') + '\n').errorCode, -9);
+});
+test('두 헤더와 두 행 길이를 섞어 읽고 실제 버전은 보존', () => {
+  const api = sync();
+  const base = row(1); base.title = 'plain'; base.app_version = 'app-real'; base.game_version = 'game-real';
+  const legacyValues = keys.slice(0, 19).map(key => base[key]);
+  const currentValues = keys.map(key => base[key]);
+  const legacyHeader = shared.PLAY_CSV_LEGACY_KEYS;
+  const legacyCsv = `${legacyHeader.join(',')}\n${legacyValues.join(',')}\n${currentValues.join(',')}\n`;
+  const legacyParsed = api.parsePlayHistory(legacyCsv);
+  assert.equal(legacyParsed.length, 2);
+  assert.equal(legacyParsed[0].app_version, ''); assert.equal(legacyParsed[0].game_version, '');
+  assert.equal(legacyParsed[1].app_version, 'app-real'); assert.equal(legacyParsed[1].game_version, 'game-real');
+  const currentHeaderInput = `${shared.PLAY_CSV_KEYS.join(',')}\n${legacyValues.join(',')}\n${currentValues.join(',')}\n`;
+  const currentHeaderRows = api.parsePlayHistory(currentHeaderInput);
+  assert.equal(currentHeaderRows[0].app_version, ''); assert.equal(currentHeaderRows[1].game_version, 'game-real');
+});
+test('20/22열 행은 거부하고 quote, CRLF/LF, 잘린 마지막 레코드 의미 유지', () => {
+  const api = sync(); const source = row(1);
+  source.title = '한글, "인용"\\줄\n개행';
+  const line19 = keys.slice(0,19).map(key => `"${source[key].replaceAll('"','""')}"`).join(',');
+  const line21 = keys.map(key => `"${source[key].replaceAll('"','""')}"`).join(',');
+  const bad20 = line19 + ',extra'; const bad22 = line21 + ',x';
+  const input = `${keys.slice(0,19).join(',')}\r\n${line19}\r\n${bad20}\n${line21}\n${bad22}\n"broken`;
+  const detail = api.parsePlayHistoryDetailed(input);
+  assert.equal(detail.rows.length, 2); assert.equal(detail.rows[0].title, source.title);
+  assert.deepEqual(plain(detail.lastCompleteError), { columns: 22 });
+});
+test('업로드 결과 오류 코드, 버전 보존, 오류 생성 시 요청 시각 사용', () => {
+  const fixed = '2026-10-17T00:00:00.000Z';
+  const api = sync({ Date: class extends Date { constructor(...args) { super(...(args.length ? args : [fixed])); } } });
+  const checks = [[{ok:true,found:false,appVersion:'a',gameVersion:'g'},-8], [{ok:true,csv:'bad',appVersion:'a',gameVersion:'g'},-9],
+    [{ok:true,csv:keys.join(',')+'\n',appVersion:'a',gameVersion:'g'},-10], [{ok:false,appVersion:'a',gameVersion:'g'},-11]];
+  for (const [result, code] of checks) {
+    const [errorRow] = api.buildUploadPlays(result);
+    assert.equal(errorRow.timestamp, fixed); assert.equal(errorRow.app_version, 'a'); assert.equal(errorRow.game_version, 'g');
+    assert.equal(errorRow.song_id, String(code));
+  }
+});
+test('CSV 오류 행은 ISO 시각과 함께 유지되고 업로드는 최근 100행만 선택', () => {
+  const api = sync(); const err = shared.buildPlayErrorRow(-4, {appVersion:'v',gameVersion:'g'}, '2026-10-17T00:00:00.000Z');
+  const values = keys.map(key => err[key]);
+  const csvInput = `${keys.join(',')}\n${values.join(',')}\n${Array.from({length:101},(_,i)=>{
+    const x=row(i); x.timestamp=String(i); x.title='plain'; return keys.map(key=>x[key]).join(',');
+  }).join('\n')}\n`;
+  const upload = api.buildUploadPlays({ok:true,csv:csvInput,appVersion:'v',gameVersion:'g'});
+  assert.equal(upload.length,100); assert.equal(upload[0].timestamp,'1'); assert.equal(upload.at(-1).timestamp,'100');
+  const parsedError = api.parsePlayHistory(`${keys.join(',')}\n${values.join(',')}\n`)[0];
+  assert.equal(parsedError.timestamp,'2026-10-17T00:00:00.000Z'); assert.equal(shared.isPlayErrorRow(parsedError),true);
+});
+test('오류 행은 DBR/완주/자동 배열에서 제외하고 정상 lamp -1은 오류가 아님', () => {
+  const api = sync(); const error = shared.buildPlayErrorRow(-3,{appVersion:'',gameVersion:''},'2026-10-17T00:00:00.000Z');
+  const normal = {...row(1), clear_lamp:'-1', notes:'1', judge_16:'1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'};
+  assert.equal(shared.isPlayErrorRow(normal),false); assert.equal(api.isCompletedPlay(normal),true);
+  assert.equal(api.decodeBattleRandomPlay(error),null); assert.equal(api.isCompletedPlay(error),false);
+  assert.equal(api.evaluateAutomaticArrange([normal,error]).reason,'current_not_completed');
+});
+
 test('101??? ??? 100?: ?? SP/DP/??, ?? source ???? ?? ?? ??', () => {
   const rows = Array.from({ length: 101 }, (_, i) => row(i));
   const parsed = plain(sync().parseRecentPlays(csv(rows)));
   assert.deepEqual(parsed, rows.slice(1));
-  assert.equal(keys.length, 19);
-  assert.equal(keys.at(-1), 'source');
+  assert.equal(keys.length, 21);
+  assert.equal(keys.at(-1), 'game_version');
   assert.deepEqual(parsed.map(play => play.source), rows.slice(1).map(play => play.source));
   assert.equal(parsed.some(play => play.source === 'playdata'), true);
   assert.equal(parsed.some(play => play.source === 'currentsong'), true);
@@ -140,7 +205,7 @@ const actualRows = () => sync().parseRecentPlays(actualCsvWithFinalLf.replaceAll
 const p1With = (r, index, value) => { const words = r.settings_p1_11.split(' '); words[index] = String(value); return { ...r, settings_p1_11: words.join(' ') }; };
 test('실제 19열 3줄: Bang Pad DBR 램프 변환, 부적격 두 줄도 plays 유지', async () => {
   const api = sync(); const rows = api.parseRecentPlays(actualCsvWithFinalLf.replaceAll(String.fromCharCode(10), String.fromCharCode(13, 10)));
-  assert.equal(keys.length, 19); assert.equal(rows.length, 3);
+  assert.equal(keys.length, 21); assert.equal(rows.length, 3);
   assert.deepEqual(plain(api.decodeBattleRandomPlay(rows[0])), { diff: 3, lamp: 1, ex_score: 1637 });
   assert.equal(api.decodeBattleRandomPlay(rows[1]), null); assert.equal(api.decodeBattleRandomPlay(rows[2]), null);
   assert.deepEqual(plain(api.playsForGame(rows, true)), plain(rows));
@@ -406,7 +471,7 @@ test('계정 CSV 읽기 IPC 저장소는 UTF-8 원본을 반환하고 없는 파
   assert.deepEqual(plain(await store.readAccountPlayCsv('C123456789012')), { ok: true, csv: content });
   assert.equal(calls[0].file, store.accountPlayCsvPath('C123456789012'));
   assert.equal(calls[0].encoding, 'utf8');
-  assert.deepEqual(plain(await store.readAccountPlayCsv('C999999999999')), { ok: true, csv: '' });
+  assert.deepEqual(plain(await store.readAccountPlayCsv('C999999999999')), { ok: true, found: false, csv: '' });
   assert.deepEqual(plain(await store.readAccountPlayCsv('../outside')), { ok: false, error: 'invalid id' });
   assert.equal(calls.length, 2);
 });
