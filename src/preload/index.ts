@@ -18,6 +18,7 @@ import type {
 import type { InfinitasSessionState } from '../shared/session';
 import type { AccountMeta, TsvChangedEvent, AccountSnapshotRequest, AccountSnapshotResult } from '../shared/account';
 import type { RemoteProfileMap } from '../shared/profileOffsets';
+import type { PlayCsvReadResult } from '../shared/uploadSnapshot';
 
 const api = {
   // TSV 직접 읽기
@@ -207,6 +208,8 @@ const api = {
         maxBytes,
         valueOffset,
       ),
+    setPlayAccount: (account: { pid: number; iidxId: string }): Promise<{ ok: boolean }> =>
+      ipcRenderer.invoke('playlog:set-account', account),
   },
 
   // 셸 액션
@@ -253,7 +256,7 @@ const api = {
 
   // 업로드 — main(앱 종료/INFINITAS 종료 감지)이 "마지막 업로드" 를 요청하면 renderer 가 받아 1회 업로드 후 done 신호.
   upload: {
-    readPlayCsv: (iidxId: string): Promise<{ ok: boolean; csv?: string; error?: string }> => ipcRenderer.invoke('account:readPlayCsv', iidxId),
+    readPlayCsv: (iidxId: string): Promise<PlayCsvReadResult> => ipcRenderer.invoke('account:readPlayCsv', iidxId),
     onPlayAppend: (cb: (event: { iidxId: string }) => void): (() => void) => {
       const listener = (_evt: unknown, event: { iidxId: string }): void => cb(event);
       ipcRenderer.on('play:appended', listener);
