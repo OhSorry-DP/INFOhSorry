@@ -264,6 +264,8 @@ if (!IS_HOST) {
           maxBytes,
           valueOffset,
         ) as ReturnType<Window['infohsorry']['memory']['readViaAnchor']>,
+      // 기록기 계정 전달은 호스트 renderer 가 한다 — 원격 브라우저에서는 보내지 않는다
+      setPlayAccount: async () => ({ ok: false }),
     },
     shell: {
       showInFolder: (path: string) =>
