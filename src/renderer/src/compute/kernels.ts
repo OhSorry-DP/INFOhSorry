@@ -80,10 +80,8 @@ export function runKernel(kind: S1Kind, input: ComputeInput, options: KernelOpti
         .filter(c => !excluded.has(normFn(c.title) + '|' + c.slot));
       if (!charts.length) return null;
       const own = charts.map(c => ({ title: c.title, diff: DIFF[c.slot], gameLevel: 12, lampNum: LAMP[c.lamp] ?? 0 }));
-      const r = libs.spSkillCpi.computeSpStarGuarded
-        ? libs.spSkillCpi.computeSpStarGuarded(own, libs.cpi, { normFn })
-        : libs.spSkillCpi.computeUserSpCpi(own, libs.cpi, { normFn, mode: 'unified' });
-      return r.cpi == null ? null : r;
+      if (typeof libs.spSkillCpi?.computeSpStarGuarded !== 'function') throw new Error('SP_STAR_GUARDED_UNAVAILABLE');
+      return libs.spSkillCpi.computeSpStarGuarded(own, libs.cpi, { normFn });
     }
     case 'weakness': {
       const allCharts = rowsToWeaknessCharts(input.rows);

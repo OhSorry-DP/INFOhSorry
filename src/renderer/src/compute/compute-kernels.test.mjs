@@ -6,7 +6,9 @@ import { createHash } from 'node:crypto';
 import { createRealm, localFetch, readData, localRoot } from './test-support.mjs';
 
 const realm = createRealm({ fetch: localFetch });
+const spOnlyRealm = createRealm({ fetch: localFetch });
 const { runKernel, rowsToWeaknessCharts } = realm.load('./kernels');
+const { runKernel: runSpOnlyKernel } = spOnlyRealm.load('./kernels');
 const resources = realm.load('./workerResources').createWorkerResources();
 const { encodeValue, decodeValue } = realm.load('./workerRuntime');
 const copy = value => structuredClone(value);
@@ -77,18 +79,56 @@ test('r parity: App score adapter and inference call', async () => {
   }
 });
 
-test('SP parity: guarded and legacy unified UMD methods', async () => {
+test('SP-only resource chain loads onlyOSR before guarded kernel use', async () => {
+  const spResources = spOnlyRealm.load('./workerResources').createWorkerResources();
+  const { libs } = await spResources.load('sp-star');
+  assert.deepEqual(Array.from(spOnlyRealm.load('./workerResources').DEFAULT_RESOURCES['sp-star'], s => s.globalKey || s.key),
+    ['OhsorryNorm', 'onlyOSR', 'cpiStar', 'spSkillCpi', 'cpi']);
+  assert.equal(typeof libs.onlyOSR.inferOhsorryStar, 'function');
+  assert.equal(typeof libs.spSkillCpi.computeSpStarGuarded, 'function');
+});
+
+test('SP guarded result preserves independent CPI and song-star axes through worker DTO', async () => {
   const { libs } = await resources.load('sp-star');
   const own = cpi.slice(0, 120).map((c, i) => ({ title: c.title, diff: c.diff, gameLevel: 12, lampNum: i % 3 ? 5 : 1 }));
   const r = libs.spSkillCpi.computeSpStarGuarded(realm.dto(own), libs.cpi, { normFn: libs.OhsorryNorm.norm });
-  assert.notEqual(r.cpi, null);
-  assert.deepEqual(copy(runKernel('sp-star', input, realm.dto({}), libs)), copy(r));
-  const guarded = libs.spSkillCpi.computeSpStarGuarded;
+  assert.deepEqual(copy(r), { star: 8.39, starRounded: 8.4, nFit: 598, validStages: ['ec', 'cl', 'hc'],
+    method: 'bin', reason: null, cpi: 1155, cpiInt: 1155, nPairs: 600, sl: 8, st: null, ereterCompatStar: null });
+  const kernelResult = runKernel('sp-star', input, realm.dto({}), libs);
+  assert.deepEqual(copy(kernelResult), copy(r));
+  assert.deepEqual(copy(decodeValue(encodeValue(kernelResult))), copy(r));
+
+  const noCpiRows = cpi.slice(0, 120).map(row => ({ ...row, ec: null, cl: null, hc: null, ex: null, fc: null }));
+  const starOnly = libs.spSkillCpi.computeSpStarGuarded(realm.dto(own), realm.dto(noCpiRows), { normFn: libs.OhsorryNorm.norm });
+  assert.equal(starOnly.star, 8.39); assert.equal(starOnly.cpi, null); assert.equal(starOnly.cpiInt, null); assert.equal(starOnly.nPairs, 0);
+  const starOnlyResult = runKernel('sp-star', input, realm.dto({}), { ...libs, cpi: realm.dto(noCpiRows) });
+  assert.deepEqual(copy(decodeValue(encodeValue(starOnlyResult))), copy(starOnly));
+
+  const noSongStarRows = cpi.slice(0, 120).map(row => ({ ...row, estEc: null, estCl: null, estHc: null, estExh: null, estFc: null }));
+  const cpiOnly = libs.spSkillCpi.computeSpStarGuarded(realm.dto(own), realm.dto(noSongStarRows), { normFn: libs.OhsorryNorm.norm });
+  assert.equal(cpiOnly.star, null); assert.equal(cpiOnly.starRounded, null); assert.equal(cpiOnly.nFit, 0);
+  assert.deepEqual(copy(cpiOnly.validStages), []); assert.equal(cpiOnly.method, null); assert.equal(cpiOnly.reason, 'no_data');
+  assert.equal(cpiOnly.cpi, 1155); assert.equal(cpiOnly.cpiInt, 1155); assert.equal(cpiOnly.nPairs, 600);
+  const cpiOnlyResult = runKernel('sp-star', input, realm.dto({}), { ...libs, cpi: realm.dto(noSongStarRows) });
+  assert.deepEqual(copy(decodeValue(encodeValue(cpiOnlyResult))), copy(cpiOnly));
+
+  const empty = libs.spSkillCpi.computeSpStarGuarded(realm.dto([]), libs.cpi, { normFn: libs.OhsorryNorm.norm });
+  assert.equal(empty.star, null); assert.equal(empty.cpi, null); assert.equal(empty.reason, 'no_data');
+});
+
+test('SP guarded absence, zero result, and invalid asset failures stay explicit', async () => {
+  const { libs } = await resources.load('sp-star');
+  const noGuard = { ...libs, spSkillCpi: { computeUserSpCpi: () => ({ cpi: 0 }) } };
+  assert.throws(() => runKernel('sp-star', input, realm.dto({}), noGuard), /SP_STAR_GUARDED_UNAVAILABLE/);
+  const zero = { star: 0, starRounded: 0, nFit: 30, validStages: ['ec'], method: 'bin', reason: null,
+    cpi: null, cpiInt: null, nPairs: 0, sl: 0, st: null, ereterCompatStar: null };
+  const original = libs.spSkillCpi.computeSpStarGuarded;
   try {
-    libs.spSkillCpi.computeSpStarGuarded = undefined;
-    const expected = libs.spSkillCpi.computeUserSpCpi(realm.dto(own), libs.cpi, { normFn: libs.OhsorryNorm.norm, mode: 'unified' });
-    assert.deepEqual(copy(runKernel('sp-star', input, realm.dto({}), libs)), copy(expected));
-  } finally { libs.spSkillCpi.computeSpStarGuarded = guarded; }
+    libs.spSkillCpi.computeSpStarGuarded = () => zero;
+    assert.deepEqual(copy(runKernel('sp-star', input, realm.dto({}), libs)), zero);
+    libs.spSkillCpi.computeSpStarGuarded = () => { throw new Error('INVALID_SP_ASSET_HASH'); };
+    assert.throws(() => runKernel('sp-star', input, realm.dto({}), libs), /INVALID_SP_ASSET_HASH/);
+  } finally { libs.spSkillCpi.computeSpStarGuarded = original; }
 });
 
 test('weakness parity: original gistLib adapter and PlayData inference with all entries', async () => {
