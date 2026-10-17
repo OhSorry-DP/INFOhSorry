@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### v0.0.147 — 2026-10-17 SP 대표★: 곡★(β)+onlyOSR 커널 연결
+
+- SP 대표★를 새 공용 커널(곡★ `est*` + onlyOSR nativeV3)로 계산한다. CPI 가 없는 유저·곡도 ★ 가 나오며, CPI(`cpi`/`cpiInt`)와 ★ 는 독립 필드로 전달된다.
+- SP 자원 로드 순서 normTitle→onlyOSR→cpiStar→spSkillCpi→cpi.json. offline fixture SHA(onlyOSR·spSkillCpi·cpi.json) 갱신.
+- 검증: compute-kernels 신규 SP 테스트 통과(남은 실패는 기존 fixture SHA drift), `npm run typecheck`·`npm run release` 통과. 실게임 미검증.
+
 ### v0.0.146 — 2026-10-17 플레이 기록 진단: 오류 행·버전 열
 
 - 운영에서 성적은 올라오는데 plays 가 빈 배열(`[]`)인 계정이 있었다. 유저 PC 자료 없이 원인을 보려고 기록기 탈락 이유를 plays 에 남긴다.
