@@ -241,6 +241,7 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
   const [dbrOnly, setDbrOnly] = useState(false);
   const [dbrDates, setDbrDates] = useState<{ date_kst: string; row_count: number }[] | null>(null); // lazy
   const [dbrMap, setDbrMap] = useState<Map<string, number> | null>(null); // DBR 난이도 (textageid|diff → dbrLevel)
+  const dbrRequestGeneration = useMemo(() => ({ current: 0 }), []);
 
   // 시스템 시간 기준 KST 오늘 날짜 — 마운트 1회만 계산. 헤더 라벨 + supabaseDates 첫 entry 중복 제거에 사용.
   // 자정 넘기는 케이스는 다음 마운트 시 refresh (over-engineering 회피).
@@ -269,7 +270,14 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
       setPastRows(null);
       if (next) {
         if (normalizedId && /^[A-Z0-9]+$/.test(normalizedId)) {
-          fetchRecentDates(normalizedId, true).then(setDbrDates).catch(() => setDbrDates([]));
+          const generation = ++dbrRequestGeneration.current;
+          setDbrDates(null);
+          setError(null);
+          fetchRecentDates(normalizedId, true).then((dates) => {
+            if (generation === dbrRequestGeneration.current) setDbrDates(dates);
+          }).catch((e) => {
+            if (generation === dbrRequestGeneration.current) setError((e as Error).message || 'DBR 날짜 조회 실패');
+          });
         } else {
           setDbrDates([]);
         }
@@ -277,7 +285,11 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
       }
       return next;
     });
-  }, [normalizedId, dbrMap]);
+  }, [normalizedId, dbrMap, dbrRequestGeneration]);
+
+  useEffect(() => {
+    dbrRequestGeneration.current++;
+  }, [normalizedId]);
 
   // 마운트 / iidxId 변경 시: supabase 날짜 + latest (PREV source) 병렬 fetch.
   // 두 호출 다 실패해도 "오늘 (라이브)" 박스는 TSV-only 모드로 동작.
@@ -319,7 +331,7 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
     let cancelled = false;
     void (async () => {
       try {
-        const charts = await fetchRecentCharts(normalizedId, targetDate);
+        const charts = await fetchRecentCharts(normalizedId, targetDate, dbrOnly);
         const filtered = charts.filter((c) => (dbrOnly ? c.playedVersion === -10 : c.playedVersion !== -10));
         if (!cancelled) setPastRows(filtered);
       } catch (e) {

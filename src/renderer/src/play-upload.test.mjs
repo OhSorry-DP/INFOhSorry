@@ -21,7 +21,8 @@ const keys = Array.from(shared.PLAY_CSV_KEYS);
 const source = read('./supabaseSync.ts');
 function sync(globals = {}) {
   return load(source, { '../../shared/uploadSnapshot': shared,
-    '../../shared/match': { norm: x => OhsorryNorm.norm(x), slotToDiff: x => x }, '../../shared/dataSource': { DATA_BASE: 'https://fixture.invalid' } }, globals);
+    '../../shared/match': { norm: x => OhsorryNorm.norm(x), slotToDiff: x => x }, '../../shared/dataSource': { DATA_BASE: 'https://fixture.invalid' },
+    './dbr-history': { getDbrRecentData: () => ({ complete: true, rows: [] }), getDbrRecentDates: () => ({ complete: true, dates: [] }), validateDbrHistory: () => true } }, globals);
 }
 const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : '001']));
 const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`).join(',') + '\r\n';

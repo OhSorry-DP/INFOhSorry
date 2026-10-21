@@ -21,6 +21,7 @@ import type { StarResult, SongChart } from '../../shared/types';
 import type { RecInputChart } from '../../shared/recommend';
 import { norm, slotToDiff } from '../../shared/match';
 import { DATA_BASE } from '../../shared/dataSource';
+import { getDbrRecentData, getDbrRecentDates, validateDbrHistory, type DbrHistory } from './dbr-history';
 
 export const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
@@ -796,6 +797,13 @@ function viewRowToRecent(r: {
 export async function fetchRecentDates(iidxId: string, dbrOnly = false): Promise<{ date_kst: string; row_count: number }[]> {
   const id = String(iidxId || '').trim().replace(/-/g, '');
   if (!id) return [];
+  if (dbrOnly) {
+    const history = await fetchDbrHistory(id);
+    if (history == null) return [];
+    const result = getDbrRecentDates(history) as unknown as { complete: boolean; dates: { date_kst: string; row_count: number }[] };
+    if (!result.complete) throw new Error('DBR history: complete=false');
+    return result.dates;
+  }
   const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_dates`, {
     method: 'POST',
     headers: HEADERS,
@@ -804,6 +812,22 @@ export async function fetchRecentDates(iidxId: string, dbrOnly = false): Promise
   if (!res.ok) throw new Error(`Recent 날짜 조회 실패 (HTTP ${res.status})`);
   const rows = await res.json();
   return Array.isArray(rows) ? rows : [];
+}
+
+async function fetchDbrHistory(iidxId: string) {
+  const id = String(iidxId || '').trim().replace(/-/g, '').toUpperCase();
+  if (!/^[A-Z0-9]+$/.test(id)) throw new Error('DBR history: invalid IIDX ID');
+  const res = await fetch(`${DATA_BASE}/dbr/${encodeURIComponent(id)}.json?fresh=1`, { cache: 'no-store' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`DBR history HTTP ${res.status}`);
+  let doc: unknown;
+  try { doc = await res.json(); } catch { throw new Error('DBR history: invalid JSON'); }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error('DBR history: invalid document');
+  const history = (doc as { history?: unknown }).history;
+  if (history == null) throw new Error('DBR history: complete=false');
+  validateDbrHistory(history);
+  if (!(history as { complete: boolean }).complete) throw new Error('DBR history: complete=false');
+  return history as DbrHistory;
 }
 
 // DBR 난이도 맵 — dbr-inf-recommend.json(gist) 에서 textageid|diff → dbrLevel 로드 (1회 캐시).
@@ -832,9 +856,30 @@ export async function loadDbrMap(): Promise<Map<string, number>> {
   return m;
 }
 
-export async function fetchRecentCharts(iidxId: string, dateKst: string): Promise<RecentChartRow[]> {
+export async function fetchRecentCharts(iidxId: string, dateKst: string, dbrOnly = false): Promise<RecentChartRow[]> {
   const id = String(iidxId || '').trim().replace(/-/g, '');
   if (!id || !dateKst) return [];
+  if (dbrOnly) {
+    const history = await fetchDbrHistory(id);
+    if (history == null) return [];
+    const result = getDbrRecentData(history, dateKst) as unknown as { complete: boolean; rows: Array<{
+      song_id: number; diff: number; lamp: number | null; ex_score: number | null; played_version: number;
+      prev_lamp: number | null; prev_ex_score: number | null; prev_played_version: number | null;
+      textage_song_id?: string; date: string;
+    }> };
+    if (!result.complete) throw new Error('DBR history: complete=false');
+    const [songs, textageMeta] = await Promise.all([getSongsById(), getTextageMeta()]);
+    return result.rows.flatMap((r) => {
+      const song = songs.get(r.song_id);
+      if (!song?.title) return [];
+      return [viewRowToRecent({
+        title: song.title, diff: r.diff, lamp: r.lamp ?? 0, ex_score: r.ex_score ?? 0,
+        prev_lamp: r.prev_lamp, prev_ex_score: r.prev_ex_score,
+        prev_played_version: r.prev_played_version, played_version: r.played_version,
+        textage_song_id: song.textage_song_id, date: r.date,
+      }, textageMeta)];
+    });
+  }
   const [rowsRes, textageMeta] = await Promise.all([
     fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_data`, {
       method: 'POST',
@@ -846,7 +891,7 @@ export async function fetchRecentCharts(iidxId: string, dateKst: string): Promis
   if (!rowsRes.ok) throw new Error(`Recent 데이터 조회 실패 (HTTP ${rowsRes.status})`);
   const rows = await rowsRes.json();
   if (!Array.isArray(rows)) return [];
-  return rows.map((r) => viewRowToRecent(r, textageMeta));
+  return rows.filter((r) => r.played_version !== -10).map((r) => viewRowToRecent(r, textageMeta));
 }
 
 // make_grid_data — 차트별 dedup latest row. "당일" 박스의 PREV (마지막 supabase upload 시점 값) source.
