@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 미배포 — 2026-10-22 DBR Recent 를 R2 로 전환
+### v0.0.148 — 2026-10-22 DBR Recent 를 R2 로 전환
 
 - DBR 모드 Recent 의 날짜·차트를 Supabase RPC(`make_recent_dates`/`make_recent_data` DBR 모드) 대신 R2 `dbr/{ID}.json` 의 `history` 로 계산한다. 계산기 `src/renderer/src/dbr-history.ts` 는 웹 `shared/dbr-history.js` 이식(11열 계약·KST·bigint ID·직전 기록).
 - 곡 정보 없는 행은 SQL INNER JOIN 처럼 제외. 이력 미완료·HTTP 실패는 빈 목록이 아니라 오류로 표시, 계정 전환 중 늦은 응답은 버린다. 일반 Recent 결과에서 -10 행 제외.
