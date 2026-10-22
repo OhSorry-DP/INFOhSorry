@@ -343,12 +343,13 @@ export default function App() {
         const plan = await planScoreSync(id, tsv.rows, opts);
         console.table(plan.counts);
         console.table(plan.deletions.map((d) => ({
-          scoreId: d.scoreId,
+          histIndex: 'histIndex' in d ? d.histIndex : null,
+          songId: 'songId' in d ? d.songId : null,
           title: d.title,
           slot: d.slot,
           dateKst: d.dateKst,
-          dbExScore: d.db.exScore,
-          dbLamp: d.db.lamp,
+          dbExScore: d.db?.exScore ?? null,
+          dbLamp: d.db?.lamp ?? null,
           tsvExScore: d.tsv?.exScore ?? null,
           tsvLamp: d.tsv?.lamp ?? null,
           category: d.category,
@@ -356,23 +357,11 @@ export default function App() {
         if (plan.ambiguousSamples.length > 0) console.table(plan.ambiguousSamples);
         console.log(`tsv: 차트 ${plan.tsvStats.charts} / 플레이 ${plan.tsvStats.played} / 곡 매칭 실패 ${plan.tsvStats.unmatched}`);
         if (plan.blockedByRatio) {
-          console.warn('[syncScores] 삭제 대상이 INF 기록의 30% 를 넘어 SQL 을 만들지 않았다 — tsv 가 오염됐거나 부분 파일일 수 있다. 확인 후에도 진행하려면 syncScores(id, { force: true })');
+          console.warn('[syncScores] R2 비교가 비율 기준으로 차단됐다. 후보를 실행하지 않았다.');
           return plan;
         }
-        if (!plan.sql) {
-          console.log('[syncScores] 삭제할 행이 없다.');
-          return plan;
-        }
-        console.log(plan.sql);
-        if (plan.sql) {
-          try {
-            await navigator.clipboard.writeText(plan.sql);
-            console.log('생성된 SQL을 클립보드에 복사했습니다.');
-          } catch (e) {
-            console.log('SQL 클립보드 복사 실패:', e);
-          }
-        }
-        console.log('Supabase SQL Editor에 붙여넣어 실행한 뒤, 게임을 끈 상태에서 수동 업로드로 정상 기록을 다시 올려라.');
+        if (plan.deletions.length > 0) console.warn('[syncScores] R2 비교 후보이며 실행되지 않았음.');
+        else console.log('[syncScores] R2 비교 후보 없음.');
         return plan;
       } catch (e) {
         console.error('[syncScores] 실패:', e);
@@ -1423,6 +1412,7 @@ export default function App() {
       }
       if (trigger !== 'pending') writeLastUploadAt(snapshot.iidxId, Date.now());
       console.log(`[upload] success duration=${durationMs}ms -> pending cleared`);
+      addDiagLine('점수 업로드 완료 · 공식값은 덤프 후 반영');
       return { kind: 'success', durationMs };
     } catch (e) {
       const durationMs = Date.now() - startedAt;
@@ -2156,6 +2146,9 @@ export default function App() {
               if (selectedViewerId) void loadViewerAccount(selectedViewerId);
             }}
           />
+          {cardId != null && cardId === rowsOwnerId && bundleReady && isFloorSeedCurrent(rowsState.scope, accountScopeRef.current) && (
+            <div className="profile-card-star-note">잠정 · 덤프 후 반영</div>
+          )}
           <nav className="tabs">
             {/* 표시 순서: RECENT → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
             <button
