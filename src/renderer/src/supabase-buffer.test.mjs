@@ -78,10 +78,66 @@ test('업로드 users payload 공식값 제외와 1001행 실패 전파, INF 0 �
   assert.match(source, /played_version:\s*PLAYED_VERSION_INF/);
   assert.match(source, /SCORE_UPSERT_CHUNK_SIZE = 1000/);
   assert.match(source, /SCORE_UPSERT_CHUNK_SIZE = 1000[\s\S]*?scoreRows\.slice\(i \* SCORE_UPSERT_CHUNK_SIZE, \(i \+ 1\) \* SCORE_UPSERT_CHUNK_SIZE\)/);
-  const rows = Array.from({ length: 1001 }, (_, i) => ({ song_id: i + 1 }));
-  const chunks = Array.from({ length: Math.ceil(rows.length / 1000) }, (_, i) => rows.slice(i * 1000, (i + 1) * 1000));
-  assert.deepEqual(chunks.map(chunk => chunk.length), [1000, 1]);
-  const response = { ok: false, status: 500 };
-  assert.equal(response.ok, false); assert.equal(response.status, 500);
+  await testUploadProfileRealCall();
   assert.match(source, /return \{ ok: false, error: `scores chunk \$\{i \+ 1\}\/\$\{total\} HTTP \$\{chartRes\.status\}/);
 });
+
+async function testUploadProfileRealCall() {
+  const hist = [[100,3,5,2100,0,'2026-10-23T01:02:03.123457+00:00','2026-10-23',1,null,1500]];
+  const profile = { iidxId: '893-88691', djName: 'fixture', spRadar: null, dpRadar: null };
+  const row = (id, ex = 2100) => ({ song_id: id, diff: 3, lamp: 5, ex_score: ex, played_version: 0,
+    date: '2026-10-23T01:02:03.123457+00:00', play_style: 1, bp: 0, note_count: 1500 });
+  const run = async ({ histReply, scoreStatus = 200, count = 1 } = {}) => {
+    const calls = [];
+    const songs = count === 1 ? [{ song_id: 100, title: 'song0', ac: 2, legen: 0 }]
+      : Array.from({ length: count }, (_, i) => ({ song_id: i + 100, title: `song${i}`, ac: 2, legen: 0 }));
+    const fetch = async (url, opts = {}) => {
+      calls.push({ url, opts });
+      if (url.includes('/hist/')) return histReply ?? { ok: true, status: 200, json: async () => hist };
+      if (url.includes('/rpc/upsert_user')) return { ok: true, status: 200, json: async () => null };
+      if (url.includes('/rpc/upsert_user_radar')) return { ok: true, status: 200, json: async () => null };
+      if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => songs };
+      if (url.includes('/rpc/upsert_scores')) return { ok: scoreStatus === 200, status: scoreStatus, text: async () => 'fail' };
+      throw Error(url);
+    };
+    const charts = Array.from({ length: count }, (_, i) => ({ title: count === 1 ? 'song0' : `song${i}`, slot: 'DPA', diff: 'ANOTHER',
+      exScore: 2100, lamp: 'HC', missCount: 0, noteCount: 1500 }));
+    class FixtureDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-10-23T01:02:03.123Z'])); } }
+    const api = load(fetch, FixtureDate);
+    const result = await api.uploadProfile({ appVersion: 'fixture', profile, starResult: null, charts,
+      allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+    return { calls, result };
+  };
+  let out = await run({ histReply: { ok: true, status: 200, json: async () => [[100,3,5,2200,0,'2026-10-23T01:02:03.123000Z','2026-10-23',1,null,1500]] } });
+  assert.equal(out.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, 0);
+  assert.equal(out.calls.filter(c => c.url.includes('/rpc/upsert_user')).length, 1);
+  out = await run({ histReply: { ok: true, status: 200, json: async () => [] } });
+  assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
+  out = await run({ histReply: { ok: false, status: 404 } });
+  assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
+  for (const histReply of [
+    { ok: false, status: 500 },
+    { ok: true, status: 200, json: async () => { throw Error('bad json'); } },
+    { ok: true, status: 200, json: async () => ({ scores: [], history: [], updatedAt: '2026-10-23T02:00:00Z', v: 1 }) },
+    { ok: true, status: 200, json: async () => [[100,3,5,2000,33,'bad-date','2026-10-22',1,null,1500]] },
+  ]) {
+    out = await run({ histReply });
+    assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
+  }
+  const bulkFetch = async (url, opts = {}) => {
+    if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
+    if (url.includes('/rpc/upsert_user')) return { ok: true, status: 200 };
+    if (url.includes('/rest/v1/songs')) return { ok: true, status: 200,
+      json: async () => Array.from({ length: 20 }, (_, i) => ({ song_id: i + 100, title: `song${i}`, ac: 2, legen: 0 })) };
+    if (url.includes('/rpc/upsert_scores')) { bulkCalls.push(JSON.parse(opts.body).p_rows.length); return { ok: false, status: 500, text: async () => 'fixture failure' }; }
+    throw Error(url);
+  };
+  const bulkCalls = [];
+  const bulkApi = load(bulkFetch, class FixtureDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-10-23T01:02:03Z'])); } });
+  const bulkResult = await bulkApi.uploadProfile({ appVersion: 'fixture', profile, starResult: null,
+    charts: Array.from({ length: 20 }, (_, i) => ({ title: `song${i}`, slot: 'DPA', diff: 'ANOTHER', exScore: 2100, lamp: 'HC', missCount: 0, noteCount: 1500 })),
+    allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+  assert.deepEqual(bulkCalls, [20]);
+  assert.equal(bulkResult.ok, false);
+  assert.match(bulkResult.error, /scores chunk 1\/1 HTTP 500/);
+}
