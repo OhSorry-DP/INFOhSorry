@@ -605,6 +605,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
 
   // dedup map — key: `${song_id}|${iidx_id}|${diff}|${played_version}` → row
   const dedup = new Map<string, ScoreRow>();
+  const ensuredSongBits = new Set<number>();
   let unmatched = 0;
   let invalidDiff = 0;
   const unmatchedSamples: string[] = [];
@@ -655,6 +656,27 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         unmatched++;
         if (unmatchedSamples.length < 10) unmatchedSamples.push(c.title + ' (' + (e as Error).message + ')');
         continue;
+      }
+    }
+    // TSV 전곡 패스 밖에 있는 입력도 점수 필터링 전에 INF 비트를 보충한다.
+    const isLegForBits = c.diff === 'LEGGENDARIA';
+    const songCandidates = songMap.get(norm(c.title));
+    const songEntry = songCandidates?.find((entry) => entry.song_id === songId);
+    const requiredBitMissing = !songEntry || (isLegForBits
+      ? ((songEntry.legen ?? 0) & 2) === 0
+      : ((songEntry.ac ?? 0) & 2) === 0);
+    if (requiredBitMissing && !ensuredSongBits.has(songId)) {
+      const txMap = await getTextageByTitle();
+      const newId = await callEnsureSong(c.title, txMap.get(norm(c.title)) || null,
+        isLegForBits ? null : 2, isLegForBits ? 2 : null);
+      if (newId === songId) {
+        if (songEntry) {
+          if (isLegForBits) songEntry.legen = (songEntry.legen ?? 0) | 2;
+          else songEntry.ac = (songEntry.ac ?? 0) | 2;
+        }
+        ensuredSongBits.add(songId);
+      } else {
+        console.warn(`[supabaseSync] ensure_song INF bit 보충 실패 또는 ID 불일치: ${c.title} (expected ${songId}, got ${newId ?? 'null'})`);
       }
     }
     const lampInt = c.lamp != null && LAMP_MAP[c.lamp] != null ? LAMP_MAP[c.lamp] : null;
@@ -742,7 +764,9 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   if (dpAllUnmatched > 0) console.warn(`[supabaseSync] DP(전레벨) song 매칭 실패 ${dpAllUnmatched}건 (skip, songs 미등록)`);
   if (dpAllCount > 0) console.log(`[supabaseSync] DP 전레벨 scores: +${dpAllCount}건 신규 (play_style:1, lv11/12 제외 보강분)`);
 
-  let scoreRows = [...dedup.values()];
+  const originalScoreCount = allChartsForScores.length;
+  const dedupScoreRows = [...dedup.values()];
+  let scoreRows = [...dedupScoreRows];
   if (scoreRows.length > 0) {
     const histResult = await getUploadHist(iidxIdNorm);
     if (histResult.status === 'ok' && histResult.hist.length > 0) {
@@ -763,7 +787,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   if (autoEnsured > 0) console.log(`[supabaseSync] songs 마스터 자동 등록 (ensure_song) ${autoEnsured}건:`, autoEnsuredSamples);
   if (unmatched > 0) console.warn(`[supabaseSync] song 매칭 실패 ${unmatched}건 (skip). 샘플:`, unmatchedSamples);
   if (invalidDiff > 0) console.warn(`[supabaseSync] diff 변환 실패 ${invalidDiff}건 (skip)`);
-  console.log(`[supabaseSync] appVersion=${appVersion} scores upsert: ${scoreRows.length}건 (전체 ${allChartsForScores.length}건 중, dedup 후)`);
+  console.log(`[supabaseSync] appVersion=${appVersion} scores: 원본 ${originalScoreCount}건 / dedup ${dedupScoreRows.length}건 / 제외 ${dedupScoreRows.length - scoreRows.length}건 / 전송 ${scoreRows.length}건`);
 
   if (scoreRows.length === 0) {
     return { ok: true };
@@ -771,6 +795,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
 
   const SCORE_UPSERT_CHUNK_SIZE = 1000;
   const total = Math.ceil(scoreRows.length / SCORE_UPSERT_CHUNK_SIZE);
+  let successfulScoreCount = 0;
   // 버퍼 계약에서 재전송 안전성을 소비자 측 best skip에 의존하지 않는다.
   for (let i = 0; i < total; i++) {
     const chunk = scoreRows.slice(i * SCORE_UPSERT_CHUNK_SIZE, (i + 1) * SCORE_UPSERT_CHUNK_SIZE);
@@ -785,6 +810,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         const errText = await chartRes.text().catch(() => '');
         return { ok: false, error: `scores chunk ${i + 1}/${total} HTTP ${chartRes.status} ${errText}` };
       }
+      successfulScoreCount += chunk.length;
     } catch (e) {
       return { ok: false, error: `scores chunk ${i + 1}/${total} error: ${(e as Error).message}` };
     }
@@ -959,6 +985,7 @@ async function fetchUploadHist(id: string): Promise<UploadHistResult> {
   } catch (e) {
     return { status: 'error', error: (e as Error).message };
   }
+  console.log(`[supabaseSync] scores RPC 성공 전송 ${successfulScoreCount}건`);
 }
 
 function normalizedRecentId(iidxId: string): string {
