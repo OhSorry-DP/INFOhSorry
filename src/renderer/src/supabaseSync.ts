@@ -605,7 +605,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
 
   // dedup map — key: `${song_id}|${iidx_id}|${diff}|${played_version}` → row
   const dedup = new Map<string, ScoreRow>();
-  const ensuredSongBits = new Set<number>();
+  const ensuredSongBits = new Set<string>();
   let unmatched = 0;
   let invalidDiff = 0;
   const unmatchedSamples: string[] = [];
@@ -665,7 +665,8 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     const requiredBitMissing = !songEntry || (isLegForBits
       ? ((songEntry.legen ?? 0) & 2) === 0
       : ((songEntry.ac ?? 0) & 2) === 0);
-    if (requiredBitMissing && !ensuredSongBits.has(songId)) {
+    const ensuredSongBitsKey = `${songId}|${isLegForBits ? 'legen' : 'ac'}`;
+    if (requiredBitMissing && !ensuredSongBits.has(ensuredSongBitsKey)) {
       const txMap = await getTextageByTitle();
       const newId = await callEnsureSong(c.title, txMap.get(norm(c.title)) || null,
         isLegForBits ? null : 2, isLegForBits ? 2 : null);
@@ -674,7 +675,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
           if (isLegForBits) songEntry.legen = (songEntry.legen ?? 0) | 2;
           else songEntry.ac = (songEntry.ac ?? 0) | 2;
         }
-        ensuredSongBits.add(songId);
+        ensuredSongBits.add(ensuredSongBitsKey);
       } else {
         console.warn(`[supabaseSync] ensure_song INF bit 보충 실패 또는 ID 불일치: ${c.title} (expected ${songId}, got ${newId ?? 'null'})`);
       }
