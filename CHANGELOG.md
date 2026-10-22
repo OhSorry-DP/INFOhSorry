@@ -2,6 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### (미릴리즈) — 2026-10-22 Supabase scores 버퍼화 3단계: 일반 Recent·grid R2 전환·업로드 직후 공식값 쓰기 제거
+
+- `supabaseSync.ts`: 일반 Recent(날짜·차트·PREV)를 R2 `hist/{ID}.json`, grid 를 R2 `user/{ID}.json` 의 `dp` 로 계산(계정별 60초 캐시). `make_recent_dates`·`make_recent_data`·`make_grid_data` RPC 읽기 제거. users 업로드는 `p_star` null·r★/SP CPI/★ 생략(공식값은 덤프가 반영), ereter★·단위·plays·원본 레이더는 유지. scores 업로드·1000행 청크 그대로.
+- `App.tsx`: 계산 카드의 로컬 ★ 들에 「잠정 · 덤프 후 반영」, 업로드 진단 문구 변경. 기록기 루프·업로드 경계 불변.
+- `scoreSync.ts`: 정비 계획을 R2 hist 비교 후보로(Supabase scores 조회·DELETE SQL 생성 제거, 실행기 없음).
+- 검증: 테스트 80/80, typecheck·build 통과, 변이 3종 검출. 실기 미검증.
+
 ### v0.0.148 — 2026-10-22 DBR Recent 를 R2 로 전환
 
 - DBR 모드 Recent 의 날짜·차트를 Supabase RPC(`make_recent_dates`/`make_recent_data` DBR 모드) 대신 R2 `dbr/{ID}.json` 의 `history` 로 계산한다. 계산기 `src/renderer/src/dbr-history.ts` 는 웹 `shared/dbr-history.js` 이식(11열 계약·KST·bigint ID·직전 기록).
