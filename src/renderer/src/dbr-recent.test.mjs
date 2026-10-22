@@ -73,22 +73,22 @@ test('DBR 차트는 메타가 없는 song_id 행만 제외', async () => {
   assert.equal(charts[0].title, 'Fixture Song');
 });
 
-test('일반 날짜는 기존 RPC, 일반 차트는 RPC 응답에서 DBR 제외', async () => {
+test('일반 날짜·차트는 R2 hist를 읽고 DBR을 제외', async () => {
   const calls = [];
   const api = loadSync(async (url, options) => { calls.push({ url, options });
-    if (url.includes('make_recent_dates')) return { ok: true, status: 200, json: async () => [{ date_kst: '2026-10-20', row_count: 2 }] };
-    if (url.includes('make_recent_data')) return { ok: true, status: 200, json: async () => [
-      { title: 'DP Song', diff: 3, lamp: 5, ex_score: 10, played_version: 0 },
-      { title: 'DBR Song', diff: 3, lamp: 5, ex_score: 20, played_version: -10 },
+    if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [
+      [7,3,5,10,0,'2026-10-20T00:00:00Z','2026-10-20',1,2,100],
+      [8,3,5,20,-10,'2026-10-20T00:00:00Z','2026-10-20',1,2,100],
     ] };
+    if (url.includes('/user/')) return { ok: true, status: 200, json: async () => ({ dp: [], sp: [] }) };
+    if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => [{ song_id: 7, title: 'DP Song', ac: 2, legen: 0, textage_song_id: 'tx7' }] };
     if (url.includes('textage-meta')) return { ok: true, json: async () => ({ songs: {} }) };
     throw Error(url);
   });
   await api.fetchRecentDates('C123');
   const charts = await api.fetchRecentCharts('C123', '2026-10-20');
-  assert.equal(calls.filter(c => c.url.includes('/rpc/')).length, 2);
-  assert.equal(calls[0].options.body.includes('"p_dbr":false'), true);
-  assert.deepEqual(charts.map(c => c.title), ['DP Song']);
+  assert.equal(calls.filter(c => c.url.includes('/rpc/')).length, 0);
+  assert.deepEqual(plain(charts).map(c => c.title), ['DP Song']);
 });
 
 test('R2 404는 빈 날짜, HTTP 오류와 incomplete 기록은 명시적으로 실패', async () => {

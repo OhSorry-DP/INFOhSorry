@@ -379,15 +379,12 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         ...(plays !== undefined ? { p_plays: plays } : {}),
         p_iidx_id: iidxIdNorm,
         p_dj_name: profile.djName ?? null,
-        p_star: starResult ? Number(starResult.star.toFixed(4)) : null,
+        p_star: null,
         p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
         // SP/DP 단위 — v0.0.108 부터 게임 메모리에서 직접 읽어 업로드 (프로필 struct 의 정수 index).
         //   못 읽음/미취득이면 null → RPC COALESCE 가 기존 값 유지 (eagate 배치값을 null 로 덮지 않음).
         p_sp_rank: spRankVal,
         p_dp_rank: dpRankVal,
-        p_sp_cpi: spCpiVal,    // SP 대표 실력값(CPI). null → COALESCE 보존
-        p_sp_star: spStarVal,  // 発狂★相当. null → COALESCE 보존
-        p_r_star: typeof rStar === 'number' && Number.isFinite(rStar) ? Number(rStar.toFixed(2)) : null,
       }),
     });
     if (!userRes.ok) {
@@ -623,7 +620,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
 
   const SCORE_UPSERT_CHUNK_SIZE = 1000;
   const total = Math.ceil(scoreRows.length / SCORE_UPSERT_CHUNK_SIZE);
-  // 앞 청크가 이미 들어가도 upsert_scores는 멱등(historical best 미달 skip)이라 재전송 안전하다.
+  // 버퍼 계약에서 재전송 안전성을 소비자 측 best skip에 의존하지 않는다.
   for (let i = 0; i < total; i++) {
     const chunk = scoreRows.slice(i * SCORE_UPSERT_CHUNK_SIZE, (i + 1) * SCORE_UPSERT_CHUNK_SIZE);
     console.log(`[supabaseSync] scores 청크 ${i + 1}/${total} (${chunk.length}행)`);
@@ -644,15 +641,15 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   return { ok: true };
 }
 
-// ─── Recent 탭 RPC (ohSorryWeb modules/api.js 의 호출 형식 그대로 옮김) ─────────────
+// ─── Recent 탭 R2 (일반 hist/user) ───────────────────────────────────────────
 //
-// 두 RPC + 한 가지 dedup-latest helper:
+// 두 R2 객체:
 //   1) fetchRecentDates(id)            → [{ date_kst, row_count }, ...] desc
 //   2) fetchRecentCharts(id, dateKst)  → 그날의 raw chart entry 들 (prev/now 포함)
-//   3) fetchUserLatestCharts(id)       → make_grid_data 의 dedup row → (norm(title)+'|'+diffStr) 인덱스
+//   3) fetchUserLatestCharts(id)       → user dp grid → (norm(title)+'|'+diffStr) 인덱스
 //      "당일" 박스에서 TSV row 와 비교할 supabase 마지막 row 들.
 //
-// make_recent_data 가 LATERAL prev row 까지 같이 반환 — UI 가 prev → now diff 표기에 그대로 사용.
+// 일반 hist는 원래 순회 순서로 PREV를 계산한다.
 
 const DIFF_INT_TO_STR: Record<number, string> = {
   0: 'BEGINNER', 1: 'NORMAL', 2: 'HYPER', 3: 'ANOTHER', 4: 'LEGGENDARIA',
@@ -794,8 +791,38 @@ function viewRowToRecent(r: {
 }
 
 // p_dbr=false(기본): DP 일반 플레이 날짜, true: DBR(배틀, played_version=-10) 날짜.
+const recentCache = new Map<string, { expiresAt: number; promise: Promise<{ hist: unknown[]; user: unknown }> }>();
+const RECENT_CACHE_TTL_MS = 60_000;
+function normalizedRecentId(iidxId: string): string {
+  return String(iidxId || '').trim().replace(/-/g, '').toUpperCase();
+}
+async function fetchRecentObjects(id: string): Promise<{ hist: unknown[]; user: unknown }> {
+  const cached = recentCache.get(id);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = (async () => {
+    const [histRes, userRes] = await Promise.all([
+      fetch(`${DATA_BASE}/hist/${encodeURIComponent(id)}.json`),
+      fetch(`${DATA_BASE}/user/${encodeURIComponent(id)}.json`),
+    ]);
+    const read = async (res: Response, kind: string) => {
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`${kind} HTTP ${res.status}`);
+      try { return await res.json(); } catch { throw new Error(`${kind}: invalid JSON`); }
+    };
+    const [histDoc, userDoc] = await Promise.all([read(histRes, 'Recent history'), read(userRes, 'Recent user')]);
+    if (histDoc === null && userDoc === null) return { hist: [], user: {} };
+    if (histDoc === null || userDoc === null) throw new Error('Recent R2 object missing');
+    if (!Array.isArray(histDoc)) throw new Error('Recent history: invalid format');
+    if (!userDoc || typeof userDoc !== 'object' || Array.isArray(userDoc)
+      || !Array.isArray((userDoc as { dp?: unknown }).dp)) throw new Error('Recent user: invalid format');
+    return { hist: histDoc, user: userDoc };
+  })();
+  recentCache.set(id, { expiresAt: Date.now() + RECENT_CACHE_TTL_MS, promise });
+  try { return await promise; } catch (e) { recentCache.delete(id); throw e; }
+}
+
 export async function fetchRecentDates(iidxId: string, dbrOnly = false): Promise<{ date_kst: string; row_count: number }[]> {
-  const id = String(iidxId || '').trim().replace(/-/g, '');
+  const id = normalizedRecentId(iidxId);
   if (!id) return [];
   if (dbrOnly) {
     const history = await fetchDbrHistory(id);
@@ -804,14 +831,17 @@ export async function fetchRecentDates(iidxId: string, dbrOnly = false): Promise
     if (!result.complete) throw new Error('DBR history: complete=false');
     return result.dates;
   }
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_dates`, {
-    method: 'POST',
-    headers: HEADERS,
-    body: JSON.stringify({ p_iidx_id: id, p_dbr: !!dbrOnly }),
-  });
-  if (!res.ok) throw new Error(`Recent 날짜 조회 실패 (HTTP ${res.status})`);
-  const rows = await res.json();
-  return Array.isArray(rows) ? rows : [];
+  const { hist } = await fetchRecentObjects(id);
+  const counts = new Map<string, number>();
+  for (const raw of hist) {
+    if (!Array.isArray(raw)) throw new Error('Recent history: invalid row');
+    const pv = raw[4], ex = raw[3], date = raw[6], style = raw[7];
+    if (style !== 1 || !(typeof ex === 'number' && ex > 0) || pv === -10) continue;
+    if (typeof date !== 'string') throw new Error('Recent history: invalid date');
+    counts.set(date, (counts.get(date) || 0) + 1);
+  }
+  return Array.from(counts, ([date_kst, row_count]) => ({ date_kst, row_count }))
+    .sort((a, b) => b.date_kst.localeCompare(a.date_kst));
 }
 
 async function fetchDbrHistory(iidxId: string) {
@@ -857,7 +887,7 @@ export async function loadDbrMap(): Promise<Map<string, number>> {
 }
 
 export async function fetchRecentCharts(iidxId: string, dateKst: string, dbrOnly = false): Promise<RecentChartRow[]> {
-  const id = String(iidxId || '').trim().replace(/-/g, '');
+  const id = normalizedRecentId(iidxId);
   if (!id || !dateKst) return [];
   if (dbrOnly) {
     const history = await fetchDbrHistory(id);
@@ -880,18 +910,29 @@ export async function fetchRecentCharts(iidxId: string, dateKst: string, dbrOnly
       }, textageMeta)];
     });
   }
-  const [rowsRes, textageMeta] = await Promise.all([
-    fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_data`, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({ p_iidx_id: id, p_date_kst: dateKst }),
-    }),
-    getTextageMeta().catch(() => null),
-  ]);
-  if (!rowsRes.ok) throw new Error(`Recent 데이터 조회 실패 (HTTP ${rowsRes.status})`);
-  const rows = await rowsRes.json();
-  if (!Array.isArray(rows)) return [];
-  return rows.filter((r) => r.played_version !== -10).map((r) => viewRowToRecent(r, textageMeta));
+  const [{ hist }, textageMeta, songs] = await Promise.all([fetchRecentObjects(id), getTextageMeta().catch(() => null), getSongsById()]);
+  const lastByKey = new Map<string, { lamp: number; ex_score: number; played_version: number; bp: number | null }>();
+  const rows: RecentChartRow[] = [];
+  for (const row of hist) {
+    if (!Array.isArray(row)) throw new Error('Recent history: invalid row');
+    const [songId, diff, lamp, ex, pv, date, dk, style, bp, noteCount] = row;
+    if (style !== 1 || !(typeof ex === 'number' && ex > 0) || pv === -10) continue;
+    const key = `${songId}|${diff}|${pv}`;
+    const prev = lastByKey.get(key) || (typeof pv === 'number' && pv >= 2 ? lastByKey.get(`${songId}|${diff}|${pv - 1}`) : null);
+    if (dk === dateKst) {
+      const song = songs.get(songId as number);
+      if (song?.title) rows.push(viewRowToRecent({ title: song.title, diff: diff as number, lamp: lamp as number,
+        ex_score: ex as number, prev_lamp: prev?.lamp ?? null, prev_ex_score: prev?.ex_score ?? null,
+        prev_played_version: prev?.played_version ?? null, played_version: pv as number,
+        textage_song_id: song.textage_song_id, date: typeof date === 'string' ? date : null,
+      }, textageMeta));
+    }
+    lastByKey.set(key, { lamp: lamp as number, ex_score: ex as number, played_version: pv as number,
+      bp: typeof bp === 'number' ? bp : null });
+    // noteCount is read to preserve the 8/10-column contract; textage metadata remains authoritative for UI.
+    void noteCount;
+  }
+  return rows;
 }
 
 // make_grid_data — 차트별 dedup latest row. "당일" 박스의 PREV (마지막 supabase upload 시점 값) source.
@@ -908,24 +949,14 @@ export interface LatestChartEntry {
 async function fetchGridDataRows(id: string): Promise<Array<{
   title: string; diff: number; lamp: number; ex_score: number; played_version?: number; textage_song_id?: string | null;
 }>> {
-  const out: Array<{ title: string; diff: number; lamp: number; ex_score: number; played_version?: number; textage_song_id?: string | null }> = [];
-  const pageSize = 1000;
-  let offset = 0;
-  while (true) {
-    const url = `${SUPABASE_URL}/rest/v1/rpc/make_grid_data?limit=${pageSize}&offset=${offset}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({ p_iidx_id: id }),
-    });
-    if (!res.ok) throw new Error(`grid data 조회 실패 (HTTP ${res.status})`);
-    const rows = await res.json();
-    if (!Array.isArray(rows)) break;
-    out.push(...rows);
-    if (rows.length < pageSize) break;
-    offset += pageSize;
-  }
-  return out;
+  const [{ user }, songs] = await Promise.all([fetchRecentObjects(id), getSongsById()]);
+  const doc = user as { dp: Array<Record<string, unknown>> };
+  return doc.dp.map((r) => {
+    const song = songs.get(Number(r.song_id));
+    return { title: song?.title ?? '', diff: Number(r.diff), lamp: Number(r.lamp), ex_score: Number(r.ex_score),
+      played_version: typeof r.played_version === 'number' ? r.played_version : undefined,
+      textage_song_id: song?.textage_song_id ?? null };
+  });
 }
 export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string, LatestChartEntry>> {
   const id = String(iidxId || '').trim().replace(/-/g, '');
