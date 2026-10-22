@@ -23,6 +23,132 @@ import { norm, slotToDiff } from '../../shared/match';
 import { DATA_BASE } from '../../shared/dataSource';
 import { getDbrRecentData, getDbrRecentDates, validateDbrHistory, type DbrHistory } from './dbr-history';
 
+// BEGIN SCORE_HISTORY_UPLOAD_FILTER_SYNC
+// Canonical source: D:/work/ohSorry-data/.github/scripts/score-history.mjs
+// Pure score history merge helpers. Date parsing follows dbr-history.mjs day()/instant().
+
+const SCORE_HISTORY_COLS = 10;
+const scoreHistoryFail = (message: string): never => { throw new TypeError(message); };
+
+function scoreHistoryDay(value: unknown): string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
+    || !Number.isFinite(Date.parse(`${value}T00:00:00Z`))
+    || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) scoreHistoryFail('invalid date_kst');
+  return value;
+}
+
+function scoreHistoryInstant(value: unknown): bigint {
+  const m = typeof value === 'string' && value.match(
+    /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}(?::?\d{2})?)$/,
+  );
+  if (!m) scoreHistoryFail('date requires a timestamp with timezone (up to 6 fractional digits)');
+  scoreHistoryDay(m[1]);
+  if (+m[2] > 23 || +m[3] > 59 || +m[4] > 59) scoreHistoryFail('invalid timestamp time');
+  const zone = m[6] === 'Z' ? 'Z' : m[6].length === 3 ? `${m[6]}:00`
+    : m[6].includes(':') ? m[6] : `${m[6].slice(0, 3)}:${m[6].slice(3)}`;
+  const ms = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}${zone}`);
+  if (!Number.isFinite(ms)) scoreHistoryFail('invalid timestamp timezone');
+  return BigInt(ms) * 1000n + BigInt((m[5] || '').padEnd(6, '0'));
+}
+
+function scoreHistoryInteger(value: unknown, label: string, nullable = false): void {
+  if (nullable && value === null) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    scoreHistoryFail(`${label} must be a finite integer${nullable ? ' or null' : ''}`);
+  }
+}
+
+function normalizeScoreHistoryRow(row: unknown, kind: 'hist' | 'incoming', index: number): { row: unknown[]; time: bigint } {
+  if (!Array.isArray(row) || (row.length !== 8 && row.length !== SCORE_HISTORY_COLS)) {
+    scoreHistoryFail(`${kind} row at index ${index} must have 8 or 10 columns`);
+  }
+  const r: unknown[] = row.length === 8 ? [...row, null, null] : [...row];
+  for (const i of [0, 1, 4, 7]) scoreHistoryInteger(r[i], `column ${i}`);
+  if (r[4] === -10 && kind === 'incoming') scoreHistoryFail(`incoming row at index ${index} cannot be DBR (-10)`);
+  if (r[7] !== 0 && r[7] !== 1) scoreHistoryFail(`column 7 at ${kind} row ${index} must be 0 or 1`);
+  for (const i of [2, 3, 8, 9]) scoreHistoryInteger(r[i], `column ${i}`, true);
+  const time = scoreHistoryInstant(r[5]);
+  scoreHistoryDay(r[6]);
+  const kst = new Date(Number(time / 1000n) + 9 * 3600000).toISOString().slice(0, 10);
+  if (kst !== r[6]) scoreHistoryFail(`${kind} row at index ${index}: date_kst does not match date in KST`);
+  return { row: r, time };
+}
+
+const scoreHistoryChartKey = (r: unknown[]) => JSON.stringify([r[0], r[1], r[4], r[7]]);
+const scoreHistoryNaturalKey = (r: unknown[]) => JSON.stringify([r[0], r[1], r[4], r[7], r[6]]);
+const scoreHistoryEx = (r: unknown[]) => (r[3] as number | null) ?? -1;
+const scoreHistoryLamp = (r: unknown[]) => (r[2] as number | null) ?? 0;
+
+/** Merge one SQL-request batch into score history without mutating input arrays. */
+function mergeScoreHistory(histRows: unknown[][], incomingRows: unknown[][]): unknown[][] {
+  if (!Array.isArray(histRows) || !Array.isArray(incomingRows)) scoreHistoryFail('histRows and incomingRows must be arrays');
+  const hist = histRows.map((r, i) => normalizeScoreHistoryRow(r, 'hist', i));
+  const incoming = incomingRows.map((r, i) => normalizeScoreHistoryRow(r, 'incoming', i));
+  const keys = new Set<string>();
+  for (let i = 0; i < hist.length; i += 1) {
+    const r = hist[i].row;
+    if (r[4] === -10) continue;
+    const key = scoreHistoryNaturalKey(r);
+    if (keys.has(key)) scoreHistoryFail(`duplicate natural key in hist at row ${i}: ${key}`);
+    keys.add(key);
+  }
+  const incomingKeys = new Set<string>();
+  for (let i = 0; i < incoming.length; i += 1) {
+    const key = scoreHistoryChartKey(incoming[i].row);
+    if (incomingKeys.has(key)) scoreHistoryFail(`duplicate incoming chart key at row ${i}: ${key}`);
+    incomingKeys.add(key);
+  }
+  const result = hist.map(({ row }) => [...row]);
+  for (const item of incoming) {
+    const row = item.row;
+    if (row[4] === -10) continue;
+    const ck = scoreHistoryChartKey(row);
+    const matches = result.map((r, i) => ({ r, i })).filter(({ r }) => r[4] !== -10 && scoreHistoryChartKey(r) === ck);
+    if (!matches.some(({ r }) => scoreHistoryEx(r) > scoreHistoryEx(row) || (scoreHistoryEx(r) === scoreHistoryEx(row) && scoreHistoryLamp(r) >= scoreHistoryLamp(row)))) {
+      const nk = scoreHistoryNaturalKey(row);
+      const slot = result.findIndex((r) => r[4] !== -10 && scoreHistoryNaturalKey(r) === nk);
+      if (slot < 0) result.push([...row]);
+      else {
+        const old = result[slot];
+        const replacement = [...row];
+        replacement[8] = row[8] ?? (row[3] !== null && row[3] === old[3] ? old[8] : null);
+        replacement[9] = row[9] ?? old[9];
+        result[slot] = replacement;
+      }
+    }
+    for (const old of result) {
+      if (old[4] === -10 || scoreHistoryChartKey(old) !== ck) continue;
+      if (old[9] === null && row[9] !== null) old[9] = row[9];
+      if (old[8] === null && row[8] !== null && row[3] !== null && old[3] === row[3]) old[8] = row[8];
+    }
+  }
+  return result;
+}
+
+/** Return original incoming rows whose canonical merge changes history. */
+function filterScoreHistoryRows(histRows: unknown[][], incomingRows: unknown[][]): unknown[][] {
+  if (!Array.isArray(histRows) || !Array.isArray(incomingRows)) scoreHistoryFail('histRows and incomingRows must be arrays');
+  const baseline = mergeScoreHistory(histRows, []);
+  const normalizedIncoming = incomingRows.map((r, i) => normalizeScoreHistoryRow(r, 'incoming', i));
+  mergeScoreHistory([], incomingRows);
+  const byChart = new Map<string, unknown[][]>();
+  for (const row of baseline) {
+    if (row[4] === -10) continue;
+    const key = scoreHistoryChartKey(row);
+    const group = byChart.get(key) ?? [];
+    group.push(row);
+    byChart.set(key, group);
+  }
+  const changed: unknown[][] = [];
+  for (let i = 0; i < normalizedIncoming.length; i += 1) {
+    const item = normalizedIncoming[i];
+    const group = byChart.get(scoreHistoryChartKey(item.row)) ?? [];
+    if (JSON.stringify(mergeScoreHistory(group, [incomingRows[i]])) !== JSON.stringify(group)) changed.push(incomingRows[i]);
+  }
+  return changed;
+}
+// END SCORE_HISTORY_UPLOAD_FILTER_SYNC
+
 export const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
 const SUPABASE_KEY =
@@ -360,6 +486,14 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const rawId = profile.iidxId;
   if (!rawId) return { ok: false, error: 'iidx_id 없음' };
   const iidxIdNorm = rawId.replace(/-/g, '');
+  const uploadHistCache = new Map<string, Promise<UploadHistResult>>();
+  const getUploadHist = (id: string): Promise<UploadHistResult> => {
+    const cached = uploadHistCache.get(id);
+    if (cached) return cached;
+    const pending = fetchUploadHist(id);
+    uploadHistCache.set(id, pending);
+    return pending;
+  };
 
   // 1. users upsert (RPC upsert_user) — INF 는 sp_rank/dp_rank 없음, ereter_star 만 옵션
   //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
@@ -608,7 +742,24 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   if (dpAllUnmatched > 0) console.warn(`[supabaseSync] DP(전레벨) song 매칭 실패 ${dpAllUnmatched}건 (skip, songs 미등록)`);
   if (dpAllCount > 0) console.log(`[supabaseSync] DP 전레벨 scores: +${dpAllCount}건 신규 (play_style:1, lv11/12 제외 보강분)`);
 
-  const scoreRows = [...dedup.values()];
+  let scoreRows = [...dedup.values()];
+  if (scoreRows.length > 0) {
+    const histResult = await getUploadHist(iidxIdNorm);
+    if (histResult.status === 'ok' && histResult.hist.length > 0) {
+      try {
+        const histRows = histResult.hist.map((row) => [row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8] ?? null, row[9] ?? null]);
+        const incomingRows = scoreRows.map((row) => [row.song_id, row.diff, row.lamp, row.ex_score, row.played_version,
+          row.date, new Date(new Date(row.date).getTime() + 9 * 3600000).toISOString().slice(0, 10), row.play_style, row.bp, row.note_count]);
+        const filtered = filterScoreHistoryRows(histRows, incomingRows);
+        const included = new Set(filtered);
+        scoreRows = scoreRows.filter((_row, index) => included.has(incomingRows[index]));
+      } catch (e) {
+        console.warn(`[supabaseSync] 업로드 hist 비교 실패; 사용자 전체 전송: ${(e as Error).message}`);
+      }
+    } else if (histResult.status === 'error') {
+      console.warn(`[supabaseSync] 업로드 hist 조회 실패; 사용자 전체 전송: ${histResult.error}`);
+    }
+  }
   if (autoEnsured > 0) console.log(`[supabaseSync] songs 마스터 자동 등록 (ensure_song) ${autoEnsured}건:`, autoEnsuredSamples);
   if (unmatched > 0) console.warn(`[supabaseSync] song 매칭 실패 ${unmatched}건 (skip). 샘플:`, unmatchedSamples);
   if (invalidDiff > 0) console.warn(`[supabaseSync] diff 변환 실패 ${invalidDiff}건 (skip)`);
@@ -793,6 +944,23 @@ function viewRowToRecent(r: {
 // p_dbr=false(기본): DP 일반 플레이 날짜, true: DBR(배틀, played_version=-10) 날짜.
 const recentCache = new Map<string, { expiresAt: number; promise: Promise<{ hist: unknown[]; user: unknown }> }>();
 const RECENT_CACHE_TTL_MS = 60_000;
+type UploadHistResult = { status: 'ok'; hist: unknown[][] } | { status: 'notfound' } | { status: 'error'; error: string };
+
+/** Fetch raw upload-comparison history without Recent's paired user read or TTL cache. */
+async function fetchUploadHist(id: string): Promise<UploadHistResult> {
+  try {
+    const response = await fetch(`${DATA_BASE}/hist/${encodeURIComponent(id)}.json`);
+    if (response.status === 404) return { status: 'notfound' };
+    if (!response.ok) return { status: 'error', error: `HTTP ${response.status}` };
+    let document: unknown;
+    try { document = await response.json(); } catch { return { status: 'error', error: 'invalid JSON' }; }
+    if (!Array.isArray(document)) return { status: 'error', error: 'invalid hist schema' };
+    return { status: 'ok', hist: document as unknown[][] };
+  } catch (e) {
+    return { status: 'error', error: (e as Error).message };
+  }
+}
+
 function normalizedRecentId(iidxId: string): string {
   return String(iidxId || '').trim().replace(/-/g, '').toUpperCase();
 }
