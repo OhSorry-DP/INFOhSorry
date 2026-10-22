@@ -28,7 +28,7 @@ import { getDbrRecentData, getDbrRecentDates, validateDbrHistory, type DbrHistor
 // Pure score history merge helpers. Date parsing follows dbr-history.mjs day()/instant().
 
 const SCORE_HISTORY_COLS = 10;
-const scoreHistoryFail = (message: string): never => { throw new TypeError(message); };
+const scoreHistoryFail: (message: string) => never = (message) => { throw new TypeError(message); };
 
 function scoreHistoryDay(value: unknown): string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
@@ -986,7 +986,6 @@ async function fetchUploadHist(id: string): Promise<UploadHistResult> {
   } catch (e) {
     return { status: 'error', error: (e as Error).message };
   }
-  console.log(`[supabaseSync] scores RPC 성공 전송 ${successfulScoreCount}건`);
 }
 
 function normalizedRecentId(iidxId: string): string {
