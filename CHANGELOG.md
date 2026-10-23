@@ -2,13 +2,13 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### (미릴리즈) — 2026-10-23 Supabase scores 버퍼화 4단계: R2 hist 기준 업로드 필터
+### 0.0.149 — 2026-10-23 Supabase scores 버퍼화 4단계: R2 hist 기준 업로드 필터
 
 - INF 업로드에 정본 `score-history.mjs` `filterScoreHistoryRows` 의 동기 사본을 반영했다. NULL 보충·당일 교체·버전 비교·33 늦은 업로드 유지. 빈 hist·404·조회 실패 시 전체 전송하고 업로더 별칭 미적용, 0행이어도 프로필 등 후처리 유지. 릴리즈 게시와 구버전 전환 완료를 구분한다.
 - 🔴 기존 3단계 배포 안내 대신 [data-serving.md](../docs/data-serving.md)의 「4단계 결과」를 따른다. 빈 별칭표 선게시 → data(누적 OFF) → gist → Web → Admin → INF → 구 업로더 비중 확인·SQL 03 → 01 → 누적 ON·운영 읽기 전용 대조 → 다음 daily snapshot 직후 89388691 시범 삭제 순이다. compact cron 중단으로 DB 가 증가한다. 운영 배포·삭제는 대기.
 - 랭킹·1위 R2 집계(R01~R10)·전 유저 삭제 확대·필터 O(n²) 최적화(3천 행 1.9초)·삭제 후 재유입 행 수 측정은 후속이다. 버전 bump 없음.
 
-### (미릴리즈) — 2026-10-22 Supabase scores 버퍼화 3단계: 일반 Recent·grid R2 전환·업로드 직후 공식값 쓰기 제거
+### 0.0.149 — 2026-10-22 Supabase scores 버퍼화 3단계: 일반 Recent·grid R2 전환·업로드 직후 공식값 쓰기 제거
 
 - `supabaseSync.ts`: 일반 Recent(날짜·차트·PREV)를 R2 `hist/{ID}.json`, grid 를 R2 `user/{ID}.json` 의 `dp` 로 계산(계정별 60초 캐시). `make_recent_dates`·`make_recent_data`·`make_grid_data` RPC 읽기 제거. users 업로드는 `p_star` null·r★/SP CPI/★ 생략(공식값은 덤프가 반영), ereter★·단위·plays·원본 레이더는 유지. scores 업로드·1000행 청크 그대로.
 - `App.tsx`: 계산 카드의 로컬 ★ 들에 「잠정 · 덤프 후 반영」, 업로드 진단 문구 변경. 기록기 루프·업로드 경계 불변.
