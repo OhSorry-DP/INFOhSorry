@@ -7,11 +7,11 @@ import ts from 'typescript';
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
 const source = read('./supabaseSync.ts');
 const compile = sourceText => ts.transpileModule(`${sourceText}\nexports.__scoreHistoryMemos = [dayMemo, instantMemo]; exports.__filterScoreHistoryRows = filterScoreHistoryRows;`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-const code = compile(source);
-const fastDumpCode = compile(source.replace('const FAST_DUMP_ENQUEUE_INF = false;', 'const FAST_DUMP_ENQUEUE_INF = true;'));
+const fastDumpCode = compile(source);
+const slowDumpCode = compile(source.replace('const FAST_DUMP_ENQUEUE_INF = true;', 'const FAST_DUMP_ENQUEUE_INF = false;'));
 function load(fetchImpl, dateImpl = Date, options = {}) {
   const exports = {};
-  vm.runInNewContext(options.fastDump ? fastDumpCode : code, { exports, require: name => {
+  vm.runInNewContext(options.fastDump === false ? slowDumpCode : fastDumpCode, { exports, require: name => {
     if (name === './dbr-history') return {};
     if (name === '../../shared/dataSource') return { DATA_BASE: 'https://fixture.invalid/data' };
     if (name === '../../shared/match') return { norm: x => String(x).toLowerCase(), slotToDiff: x => x };
@@ -187,7 +187,7 @@ test('score history 날짜 캐시 두 개는 32769개 유효 입력 뒤에도 �
 });
 
 test('완료 중계 기본 OFF는 기존 업로드 요청과 반환을 유지', async () => {
-  assert.match(source, /const FAST_DUMP_ENQUEUE_INF = false/);
+  assert.match(source, /const FAST_DUMP_ENQUEUE_INF = true/);
   const calls = [];
   const fetch = async (url, opts = {}) => {
     calls.push({ url, opts });
@@ -197,7 +197,7 @@ test('완료 중계 기본 OFF는 기존 업로드 요청과 반환을 유지', 
     if (url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
     throw Error(url);
   };
-  const api = load(fetch);
+  const api = load(fetch, Date, { fastDump: false });
   const result = await api.uploadProfile({ appVersion: 'fixture', profile: { iidxId: 'C123' }, starResult: null,
     charts: [{ title: 'song0', slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC' }], allTsvCharts: [], spCharts: [], dpAllCharts: [] });
   assert.deepEqual(plain(result), { ok: true });

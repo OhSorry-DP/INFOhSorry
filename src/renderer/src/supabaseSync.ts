@@ -169,7 +169,7 @@ export const HEADERS = {
   apikey: SUPABASE_KEY,
   Authorization: `Bearer ${SUPABASE_KEY}`,
 };
-const FAST_DUMP_ENQUEUE_INF = false;
+const FAST_DUMP_ENQUEUE_INF = true;
 
 // 새 디비 변환 매핑 (dbConn.js 와 동일)
 export const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANOTHER: 3, LEGGENDARIA: 4 };
