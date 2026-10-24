@@ -169,6 +169,7 @@ export const HEADERS = {
   apikey: SUPABASE_KEY,
   Authorization: `Bearer ${SUPABASE_KEY}`,
 };
+const FAST_DUMP_ENQUEUE_INF = false;
 
 // 새 디비 변환 매핑 (dbConn.js 와 동일)
 export const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANOTHER: 3, LEGGENDARIA: 4 };
@@ -825,6 +826,54 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
       successfulScoreCount += chunk.length;
     } catch (e) {
       return { ok: false, error: `scores chunk ${i + 1}/${total} error: ${(e as Error).message}` };
+    }
+  }
+  if (FAST_DUMP_ENQUEUE_INF && successfulScoreCount > 0) {
+    try {
+      const bearer = await existingRemoteBearer(iidxIdNorm);
+      if (!bearer) {
+        console.warn('[supabaseSync] INF dump 완료 중계 생략: remote Bearer 없음');
+      } else {
+        const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+          ? crypto.randomUUID() : null;
+        if (!requestId) {
+          console.warn('[supabaseSync] INF dump 완료 중계 생략: UUID 생성 불가');
+        } else {
+          const body = JSON.stringify({ source: 'inf', iidx_id: iidxIdNorm, request_id: requestId });
+          let result: Response | null = null;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), 5000);
+            try {
+              result = await fetch('https://iidx.in/api/dump-trigger?upload_complete=1', {
+                method: 'POST', credentials: 'omit', signal: controller.signal,
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` }, body,
+              });
+              clearTimeout(timeout);
+              if (!result.ok) {
+                console.warn(`[supabaseSync] INF dump 완료 중계 HTTP ${result.status}`);
+                if (result.status >= 500 && attempt === 0) continue;
+                break;
+              }
+              try {
+                const response = await result.json();
+                if (typeof response?.accepted !== 'boolean') throw new Error('invalid accepted response');
+                if (response.accepted === false) console.warn('[supabaseSync] INF dump 완료 중계 accepted:false');
+              } catch (e) {
+                console.warn('[supabaseSync] INF dump 완료 중계 응답 손상:', (e as Error).message);
+                if (attempt === 0) continue;
+              }
+              break;
+            } catch (e) {
+              clearTimeout(timeout);
+              console.warn(`[supabaseSync] INF dump 완료 중계 결과 불명 (시도 ${attempt + 1}/2):`, (e as Error).message);
+              if (attempt === 1) break;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[supabaseSync] INF dump 완료 중계 실패:', (e as Error).message);
     }
   }
   return { ok: true };

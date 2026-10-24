@@ -6,16 +6,20 @@ import ts from 'typescript';
 
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
 const source = read('./supabaseSync.ts');
-const code = ts.transpileModule(`${source}\nexports.__scoreHistoryMemos = [dayMemo, instantMemo]; exports.__filterScoreHistoryRows = filterScoreHistoryRows;`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
-function load(fetchImpl, dateImpl = Date) {
+const compile = sourceText => ts.transpileModule(`${sourceText}\nexports.__scoreHistoryMemos = [dayMemo, instantMemo]; exports.__filterScoreHistoryRows = filterScoreHistoryRows;`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const code = compile(source);
+const fastDumpCode = compile(source.replace('const FAST_DUMP_ENQUEUE_INF = false;', 'const FAST_DUMP_ENQUEUE_INF = true;'));
+function load(fetchImpl, dateImpl = Date, options = {}) {
   const exports = {};
-  vm.runInNewContext(code, { exports, require: name => {
+  vm.runInNewContext(options.fastDump ? fastDumpCode : code, { exports, require: name => {
     if (name === './dbr-history') return {};
     if (name === '../../shared/dataSource') return { DATA_BASE: 'https://fixture.invalid/data' };
     if (name === '../../shared/match') return { norm: x => String(x).toLowerCase(), slotToDiff: x => x };
     if (name === '../../shared/uploadSnapshot') return { PLAY_CSV_KEYS: [], PLAY_CSV_LEGACY_KEYS: [], buildPlayErrorRow() {}, isPlayErrorRow() { return false; } };
     return {};
-  }, fetch: fetchImpl, Date: dateImpl, window: { infohsorry: { serviceStatus: { get: async () => ({ uploadEnabled: true }) } } }, console: { warn() {}, log() {} }, Map, Set, BigInt, JSON, Math, Number, String, Object, Array, Promise, Error, TypeError });
+  }, fetch: fetchImpl, Date: dateImpl, URL, crypto: options.crypto ?? { randomUUID: () => '00000000-0000-4000-8000-000000000001' }, AbortController, setTimeout, clearTimeout,
+    localStorage: options.localStorage ?? { getItem: () => null, setItem() {} },
+    window: { infohsorry: { serviceStatus: { get: async () => ({ uploadEnabled: true }) } } }, console: options.console ?? { warn() {}, log() {} }, Map, Set, BigInt, JSON, Math, Number, String, Object, Array, Promise, Error, TypeError });
   return exports;
 }
 const plain = x => JSON.parse(JSON.stringify(x));
@@ -30,6 +34,15 @@ function fixture(fetchImpl) { return async url => {
   if (url.includes('textage-meta')) return { ok: true, status: 200, json: async () => ({ songs: {} }) };
   throw Error(`unexpected ${url}`);
 }; }
+const pagedSongs = url => {
+  const parsed = new URL(url);
+  const limit = Number(parsed.searchParams.get('limit'));
+  const offset = Number(parsed.searchParams.get('offset'));
+  return Array.from({ length: Math.max(0, Math.min(limit, 1001 - offset)) }, (_, i) => {
+    const songId = offset + i + 1;
+    return { song_id: songId, title: `song${songId - 1}`, ac: 2, legen: 0 };
+  });
+};
 
 test('user dp는 song 메타와 결합되고 sp 동명행은 제외', async () => {
   const api = load(fixture(async (_url, kind) => ({ ok: true, status: 200, json: async () => kind === 'user' ? { ...user, dp: user.dp, sp: [{ ...user.dp[0], ex_score: 999 }] } : hist })));
@@ -171,4 +184,131 @@ test('score history 날짜 캐시 두 개는 32769개 유효 입력 뒤에도 �
   assert.deepEqual(run(...first), expected);
   assert.ok(api.__scoreHistoryMemos[0].size <= 2);
   assert.ok(api.__scoreHistoryMemos[1].size <= 3);
+});
+
+test('완료 중계 기본 OFF는 기존 업로드 요청과 반환을 유지', async () => {
+  assert.match(source, /const FAST_DUMP_ENQUEUE_INF = false/);
+  const calls = [];
+  const fetch = async (url, opts = {}) => {
+    calls.push({ url, opts });
+    if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
+    if (url.includes('/rpc/upsert_user')) return { ok: true, status: 200 };
+    if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => [{ song_id: 7, title: 'song0', ac: 2, legen: 0 }] };
+    if (url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
+    throw Error(url);
+  };
+  const api = load(fetch);
+  const result = await api.uploadProfile({ appVersion: 'fixture', profile: { iidxId: 'C123' }, starResult: null,
+    charts: [{ title: 'song0', slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC' }], allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+  assert.deepEqual(plain(result), { ok: true });
+  assert.equal(calls.some(c => c.url.includes('dump-trigger') || c.url.includes('/auth/')), false);
+});
+
+test('완료 중계 ON은 1001행 청크 성공 뒤 C/K INF ID로 한 번 호출', async () => {
+  const calls = [];
+  const fetch = async (url, opts = {}) => {
+    calls.push({ url, opts });
+    if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
+    if (url.endsWith('/auth/issue')) return { ok: true, json: async () => ({ url: 'https://iidx.in/?ticket=fixture' }) };
+    if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ token: 'bearer-fixture' }) };
+    if (url.endsWith('/auth/session')) return { ok: true, json: async () => ({ logged_in: true, iidx_id: 'CK123' }) };
+    if (url.includes('/rpc/upsert_user')) return { ok: true, status: 200 };
+    if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => pagedSongs(url) };
+    if (url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
+    if (url.includes('dump-trigger')) return { ok: true, status: 200, json: async () => ({ accepted: true }) };
+    throw Error(url);
+  };
+  const api = load(fetch, Date, { fastDump: true });
+  const result = await api.uploadProfile({ appVersion: 'fixture', profile: { iidxId: 'C-K123' }, starResult: null,
+    charts: Array.from({ length: 1001 }, (_, i) => ({ title: `song${i}`, slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC' })),
+    allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+  assert.equal(result.ok, true);
+  assert.deepEqual(calls.filter(c => c.url.includes('/rpc/upsert_scores')).map(c => JSON.parse(c.opts.body).p_rows.length), [1000, 1]);
+  const relay = calls.filter(c => c.url.includes('dump-trigger'));
+  assert.equal(relay.length, 1);
+  assert.equal(relay[0].url, 'https://iidx.in/api/dump-trigger?upload_complete=1');
+  assert.equal(relay[0].opts.credentials, 'omit');
+  assert.equal(relay[0].opts.headers.Authorization, 'Bearer bearer-fixture');
+  assert.deepEqual(JSON.parse(relay[0].opts.body), { source: 'inf', iidx_id: 'CK123', request_id: '00000000-0000-4000-8000-000000000001' });
+});
+
+test('완료 중계는 첫 청크 실패·후속 청크 실패·전송 0행에서 호출하지 않음', async () => {
+  for (const failAt of [1, 2, 0]) {
+    const calls = [];
+    const fetch = async (url, opts = {}) => {
+      calls.push({ url, opts });
+      if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => failAt === 0 ? [[1,3,5,999,0,'2026-10-23T01:02:03Z','2026-10-23',1,null,1500]] : [] };
+      if (url.endsWith('/auth/issue')) return { ok: true, json: async () => ({ url: 'https://iidx.in/?ticket=t' }) };
+      if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ token: 't' }) };
+      if (url.endsWith('/auth/session')) return { ok: true, json: async () => ({ logged_in: true, iidx_id: 'K123' }) };
+      if (url.includes('/rpc/upsert_user')) return { ok: true, status: 200 };
+      if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => pagedSongs(url) };
+      if (url.includes('/rpc/upsert_scores')) return { ok: failAt === 0 || calls.filter(c => c.url.includes('/rpc/upsert_scores')).length !== failAt, status: 500, text: async () => 'fail' };
+      throw Error(url);
+    };
+    const api = load(fetch, Date, { fastDump: true });
+    const result = await api.uploadProfile({ appVersion: 'fixture', profile: { iidxId: 'K123' }, starResult: null,
+      charts: Array.from({ length: failAt === 0 ? 0 : 1001 }, (_, i) => ({ title: `song${i}`, slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC' })),
+      allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+    assert.equal(calls.some(c => c.url.includes('dump-trigger')), false);
+    if (failAt > 0) assert.equal(result.ok, false);
+    else assert.equal(result.ok, true);
+  }
+});
+
+test('완료 중계는 Bearer 대상 불일치와 응답 유실을 안전하게 처리', async () => {
+  for (const sessionId of ['OTHER', 'K123']) {
+    const calls = [];
+    let relayAttempts = 0;
+    const fetch = async (url, opts = {}) => {
+      calls.push({ url, opts });
+      if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
+      if (url.endsWith('/auth/issue')) return { ok: true, json: async () => ({ url: 'https://iidx.in/?ticket=t' }) };
+      if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ token: 't' }) };
+      if (url.endsWith('/auth/session')) return { ok: true, json: async () => ({ logged_in: true, iidx_id: sessionId }) };
+      if (url.includes('/rpc/upsert_user') || url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
+      if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => [{ song_id: 1, title: 'song0', ac: 2, legen: 0 }] };
+      if (url.includes('dump-trigger')) { relayAttempts++; if (relayAttempts === 1) throw Error('lost'); return { ok: true, status: 200 }; }
+      throw Error(url);
+    };
+    const warnings = [];
+    const api = load(fetch, Date, { fastDump: true, console: { log() {}, warn(...args) { warnings.push(args); } } });
+    const result = await api.uploadProfile({ appVersion: 'fixture', profile: { iidxId: 'K123' }, starResult: null,
+      charts: [{ title: 'song0', slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC' }], allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+    assert.equal(result.ok, true);
+    const relay = calls.filter(c => c.url.includes('dump-trigger'));
+    assert.equal(relay.length, sessionId === 'K123' ? 2 : 0);
+    if (relay.length) assert.equal(JSON.parse(relay[0].opts.body).request_id, JSON.parse(relay[1].opts.body).request_id);
+    else assert.ok(warnings.length > 0);
+  }
+});
+
+test('완료 중계는 5xx·손상 JSON만 동일 UUID로 재시도하고 4xx는 한 번만 호출', async () => {
+  for (const scenario of ['5xx', 'broken-json', '4xx']) {
+    const calls = [];
+    const fetch = async (url, opts = {}) => {
+      calls.push({ url, opts });
+      if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
+      if (url.endsWith('/auth/issue')) return { ok: true, json: async () => ({ url: 'https://iidx.in/?ticket=t' }) };
+      if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ token: 't' }) };
+      if (url.endsWith('/auth/session')) return { ok: true, json: async () => ({ logged_in: true, iidx_id: 'K123' }) };
+      if (url.includes('/rpc/upsert_user') || url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
+      if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => pagedSongs(url).slice(0, 1) };
+      if (url.includes('dump-trigger')) {
+        const attempt = calls.filter(c => c.url.includes('dump-trigger')).length;
+        if (scenario === '4xx') return { ok: false, status: 401 };
+        if (attempt === 1 && scenario === '5xx') return { ok: false, status: 503 };
+        if (attempt === 1) return { ok: true, status: 200, json: async () => { throw Error('invalid JSON'); } };
+        return { ok: true, status: 200, json: async () => ({ accepted: true }) };
+      }
+      throw Error(url);
+    };
+    const api = load(fetch, Date, { fastDump: true });
+    const result = await api.uploadProfile({ appVersion: 'fixture', profile: { iidxId: 'K123' }, starResult: null,
+      charts: [{ title: 'song0', slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC' }], allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+    assert.equal(result.ok, true);
+    const relay = calls.filter(c => c.url.includes('dump-trigger'));
+    assert.equal(relay.length, scenario === '4xx' ? 1 : 2);
+    if (relay.length === 2) assert.equal(JSON.parse(relay[0].opts.body).request_id, JSON.parse(relay[1].opts.body).request_id);
+  }
 });
