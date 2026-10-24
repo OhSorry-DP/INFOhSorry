@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 0.0.151 — 2026-10-25 점수 업로드 완료 통지 켬
+
+- `supabaseSync.ts`: `FAST_DUMP_ENQUEUE_INF = true`. 모든 점수 청크가 성공하면 `https://iidx.in/api/dump-trigger?upload_complete=1` 로 완료를 알려, 서버가 세대를 발급하고 빠른 경로(Edge)가 그리드·Recent 를 먼저 게시한다. 실패해도 업로드 결과는 그대로이고 기존 느린 덤프가 폴백이다.
+- 테스트: supabase-buffer 12/12(기본 ON·OFF 치환 둘 다 검사)·typecheck 통과. 상수를 false 로 되돌리면 4건 실패로 검출.
+
 ### 0.0.150 — 2026-10-24 점수 업로드 완료 통지 (기본 OFF)
 
 - `supabaseSync.ts` `uploadProfile`: `FAST_DUMP_ENQUEUE_INF`(false) 를 켜면 모든 점수 청크가 성공한 뒤 기존 원격 Bearer(`existingRemoteBearer`)로 `https://iidx.in/api/dump-trigger?upload_complete=1` 에 완료를 알린다(`credentials:'omit'`). 5초 timeout, fetch 예외·timeout·5xx·손상 응답은 같은 UUID 로 1회 재전송, 4xx·`accepted:false` 는 재시도 없음. 실패·Bearer 없음은 로그만이고 업로드 결과는 바뀌지 않는다. 버전 bump 없음 — 다음 릴리즈에 포함, 켜는 것은 별도 릴리즈.
