@@ -6,7 +6,7 @@ import ts from 'typescript';
 
 const read = name => readFileSync(new URL(name, import.meta.url), 'utf8');
 const source = read('./supabaseSync.ts');
-const code = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+const code = ts.transpileModule(`${source}\nexports.__scoreHistoryMemos = [dayMemo, instantMemo]; exports.__filterScoreHistoryRows = filterScoreHistoryRows;`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
 function load(fetchImpl, dateImpl = Date) {
   const exports = {};
   vm.runInNewContext(code, { exports, require: name => {
@@ -141,3 +141,34 @@ async function testUploadProfileRealCall() {
   assert.equal(bulkResult.ok, false);
   assert.match(bulkResult.error, /scores chunk 1\/1 HTTP 500/);
 }
+
+test('score history 날짜 파싱 캐시는 성공 결과와 실패 예외를 일관되게 반환', () => {
+  const api = load(async () => { throw Error('unused'); });
+  const date = '2026-10-23';
+  const instant = '2026-10-23T01:02:03.123457Z';
+  const row = (timestamp, dayValue) => [[1, 1, 1, 1, 1, timestamp, dayValue, 1, null, null]];
+  const run = (timestamp, dayValue) => {
+    const result = api.__filterScoreHistoryRows([], row(timestamp, dayValue));
+    return plain(result);
+  };
+  assert.deepEqual(run(instant, date), run(instant, date));
+  const getError = () => { try { run('bad timestamp', date); } catch (e) { return { name: e.name, message: e.message }; } return null; };
+  assert.deepEqual(getError(), getError());
+  assert.deepEqual(getError(), { name: 'TypeError', message: 'date requires a timestamp with timezone (up to 6 fractional digits)' });
+});
+
+test('score history 날짜 캐시 두 개는 32769개 유효 입력 뒤에도 기존 결과를 유지', () => {
+  const api = load(async () => { throw Error('unused'); });
+  const row = (timestamp, dayValue) => [[1, 1, 1, 1, 1, timestamp, dayValue, 1, null, null]];
+  const run = (timestamp, dayValue) => plain(api.__filterScoreHistoryRows([], row(timestamp, dayValue)));
+  const first = ['2026-10-23T01:02:03Z', '2026-10-23'];
+  const expected = run(...first);
+  const base = Date.UTC(2000, 0, 1);
+  for (let i = 0; i < 32769; i += 1) {
+    const day = new Date(base + i * 86400000).toISOString().slice(0, 10);
+    run(`${day}T00:00:00Z`, day);
+  }
+  assert.deepEqual(run(...first), expected);
+  assert.ok(api.__scoreHistoryMemos[0].size <= 2);
+  assert.ok(api.__scoreHistoryMemos[1].size <= 3);
+});

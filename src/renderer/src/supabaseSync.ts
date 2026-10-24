@@ -29,15 +29,23 @@ import { getDbrRecentData, getDbrRecentDates, validateDbrHistory, type DbrHistor
 
 const SCORE_HISTORY_COLS = 10;
 const scoreHistoryFail: (message: string) => never = (message) => { throw new TypeError(message); };
+const DATE_PARSE_MEMO_LIMIT = 32768;
+const dayMemo = new Map<string, string>();
+const instantMemo = new Map<string, bigint>();
 
 function scoreHistoryDay(value: unknown): string {
+  if (typeof value === 'string' && dayMemo.has(value)) return value;
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
     || !Number.isFinite(Date.parse(`${value}T00:00:00Z`))
     || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) scoreHistoryFail('invalid date_kst');
+  if (dayMemo.size >= DATE_PARSE_MEMO_LIMIT) dayMemo.clear();
+  dayMemo.set(value, value);
   return value;
 }
 
 function scoreHistoryInstant(value: unknown): bigint {
+  const cached = typeof value === 'string' ? instantMemo.get(value) : undefined;
+  if (cached !== undefined) return cached;
   const m = typeof value === 'string' && value.match(
     /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}(?::?\d{2})?)$/,
   );
@@ -48,7 +56,10 @@ function scoreHistoryInstant(value: unknown): bigint {
     : m[6].includes(':') ? m[6] : `${m[6].slice(0, 3)}:${m[6].slice(3)}`;
   const ms = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}${zone}`);
   if (!Number.isFinite(ms)) scoreHistoryFail('invalid timestamp timezone');
-  return BigInt(ms) * 1000n + BigInt((m[5] || '').padEnd(6, '0'));
+  const result = BigInt(ms) * 1000n + BigInt((m[5] || '').padEnd(6, '0'));
+  if (instantMemo.size >= DATE_PARSE_MEMO_LIMIT) instantMemo.clear();
+  instantMemo.set(value, result);
+  return result;
 }
 
 function scoreHistoryInteger(value: unknown, label: string, nullable = false): void {
