@@ -2,12 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 0.0.149 — 2026-10-24 점수 업로드 완료 통지 (기본 OFF, 미릴리즈)
+### 0.0.150 — 2026-10-24 점수 업로드 완료 통지 (기본 OFF)
 
 - `supabaseSync.ts` `uploadProfile`: `FAST_DUMP_ENQUEUE_INF`(false) 를 켜면 모든 점수 청크가 성공한 뒤 기존 원격 Bearer(`existingRemoteBearer`)로 `https://iidx.in/api/dump-trigger?upload_complete=1` 에 완료를 알린다(`credentials:'omit'`). 5초 timeout, fetch 예외·timeout·5xx·손상 응답은 같은 UUID 로 1회 재전송, 4xx·`accepted:false` 는 재시도 없음. 실패·Bearer 없음은 로그만이고 업로드 결과는 바뀌지 않는다. 버전 bump 없음 — 다음 릴리즈에 포함, 켜는 것은 별도 릴리즈.
 - 테스트: supabase-buffer 12/12·typecheck 통과. 전체 src 의 기존 실패 3건(`compute/analysis-engine`·`compute/accepted-bundle` fixture)은 이번 변경과 무관.
 
-### 0.0.149 — 2026-10-24 업로드 필터 날짜 파싱 메모 (미릴리즈)
+### 0.0.150 — 2026-10-24 업로드 필터 날짜 파싱 메모
 
 - `supabaseSync.ts` 동기화 블록(정본 `ohsorry-data/.github/scripts/score-history.mjs`)의 `scoreHistoryDay`·`scoreHistoryInstant` 가 성공한 파싱 결과만 `Map` 에 메모한다(각 상한 32,768개, 넘으면 비움). 실패 입력은 저장하지 않아 예외는 그대로다. 업로드 동작은 변경 없음. 버전 bump 없음 — 다음 릴리즈에 포함.
 
