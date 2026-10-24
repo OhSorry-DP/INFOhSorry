@@ -2,6 +2,10 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 0.0.149 — 2026-10-24 업로드 필터 날짜 파싱 메모 (미릴리즈)
+
+- `supabaseSync.ts` 동기화 블록(정본 `ohsorry-data/.github/scripts/score-history.mjs`)의 `scoreHistoryDay`·`scoreHistoryInstant` 가 성공한 파싱 결과만 `Map` 에 메모한다(각 상한 32,768개, 넘으면 비움). 실패 입력은 저장하지 않아 예외는 그대로다. 업로드 동작은 변경 없음. 버전 bump 없음 — 다음 릴리즈에 포함.
+
 ### 0.0.149 — 2026-10-23 Supabase scores 버퍼화 4단계: R2 hist 기준 업로드 필터
 
 - INF 업로드에 정본 `score-history.mjs` `filterScoreHistoryRows` 의 동기 사본을 반영했다. NULL 보충·당일 교체·버전 비교·33 늦은 업로드 유지. 빈 hist·404·조회 실패 시 전체 전송하고 업로더 별칭 미적용, 0행이어도 프로필 등 후처리 유지. 릴리즈 게시와 구버전 전환 완료를 구분한다.
