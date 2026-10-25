@@ -22,7 +22,8 @@ const source = read('./supabaseSync.ts');
 function sync(globals = {}) {
   return load(source, { '../../shared/uploadSnapshot': shared,
     '../../shared/match': { norm: x => OhsorryNorm.norm(x), slotToDiff: x => x }, '../../shared/dataSource': { DATA_BASE: 'https://fixture.invalid' },
-    './dbr-history': { getDbrRecentData: () => ({ complete: true, rows: [] }), getDbrRecentDates: () => ({ complete: true, dates: [] }), validateDbrHistory: () => true } }, globals);
+    './dbr-history': { getDbrRecentData: () => ({ complete: true, rows: [] }), getDbrRecentDates: () => ({ complete: true, dates: [] }), validateDbrHistory: () => true },
+    './diagLog': { addDiagLine() {} } }, globals);
 }
 const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : '001']));
 const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`).join(',') + '\r\n';
@@ -177,14 +178,14 @@ test('수동/pending/종료 업로드는 게임 없이 계속 실행, pending pl
   for (const trigger of ['manual', 'pending', 'final']) {
     calls.length = 0;
     assert.equal((await api.uploadProfile({ ...base, plays: [row(1)], gameRecognized: async () => false })).ok, true, trigger);
-    const sent = calls.find(x => x.url.endsWith('/rpc/upsert_user'));
+    const sent = calls.find(x => x.url.endsWith('/rpc/upsert_user_upload_profile'));
     assert.ok(sent);
     assert.equal('p_plays' in sent.body, false);
   }
   for (const plays of [undefined, null, [], [row(1)]]) {
     calls.length = 0;
     await api.uploadProfile({ ...base, plays, gameRecognized: async () => true });
-    const body = calls.find(x => x.url.endsWith('/rpc/upsert_user')).body;
+    const body = calls.find(x => x.url.endsWith('/rpc/upsert_user_upload_profile')).body;
     assert.equal('p_plays' in body, plays !== undefined);
     if (plays !== undefined) assert.deepEqual(body.p_plays, plays);
   }
@@ -192,7 +193,7 @@ test('수동/pending/종료 업로드는 게임 없이 계속 실행, pending pl
 test('전송 순간 재확인: serviceStatus 대기 중 게임이 종료되어도 기존 업로드는 유지', async () => {
   let recognized = true; let body;
   const api = sync({ window: { infohsorry: { serviceStatus: { get: async () => { recognized = false; return { uploadEnabled: true }; } } } },
-    fetch: async (url, options) => { if (url.endsWith('/rpc/upsert_user')) body = JSON.parse(options.body); return { ok: true, json: async () => [] }; } });
+    fetch: async (url, options) => { if (url.endsWith('/rpc/upsert_user_upload_profile')) body = JSON.parse(options.body); return { ok: true, json: async () => [] }; } });
   assert.equal((await api.uploadProfile({ profile: { iidxId: 'C123456789012' }, charts: [], starResult: null,
     plays: [row(0)], gameRecognized: async () => recognized })).ok, true);
   assert.equal('p_plays' in body, false);

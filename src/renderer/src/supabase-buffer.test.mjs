@@ -126,7 +126,9 @@ async function testUploadProfileRealCall() {
   };
   let out = await run({ histReply: { ok: true, status: 200, json: async () => [[100,3,5,2200,0,'2026-10-23T01:02:03.123000Z','2026-10-23',1,null,1500]] } });
   assert.equal(out.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, 0);
-  assert.equal(out.calls.filter(c => new URL(c.url).pathname === '/rest/v1/rpc/upsert_user_upload_profile').length, 1);
+  const profileCall = out.calls.find(c => new URL(c.url).pathname === '/rest/v1/rpc/upsert_user_upload_profile');
+  assert.ok(profileCall);
+  assert.deepEqual(Object.keys(JSON.parse(profileCall.opts.body)).sort(), ['p_dj_name', 'p_dp_rank', 'p_ereter_star', 'p_iidx_id', 'p_sp_rank', 'p_star'].sort());
   out = await run({ histReply: { ok: true, status: 200, json: async () => [] } });
   assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
   out = await run({ histReply: { ok: false, status: 404 } });

@@ -836,13 +836,13 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     let diagAccepted: boolean | null = null, diagAttempts = 0;
     const diag = () => { try { addDiagLine(`[inf-dump] stage=complete result=${diagResult} accepted=${diagAccepted === null ? 'unknown' : diagAccepted} http=${diagHttp === null ? 'none' : diagHttp} reason=${diagReason} attempts=${diagAttempts} elapsed_ms=${Math.max(0, Date.now() - startedAt)}`); } catch {} };
     try {
-      const bearer = await existingRemoteBearer(iidxIdNorm);
+      const bearer = await existingRemoteBearer(iidxIdNorm, deadline);
       if (!bearer) {
-        diagReason = 'auth_failed';
+        diagReason = 'bearer_missing';
         console.warn('[supabaseSync] INF dump 완료 중계 생략: remote Bearer 없음');
       } else {
-        const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-          ? crypto.randomUUID() : null;
+        let requestId: string | null = null;
+        try { requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : null; } catch {}
         if (!requestId) {
           diagReason = 'uuid_missing';
           console.warn('[supabaseSync] INF dump 완료 중계 생략: UUID 생성 불가');
@@ -891,7 +891,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         }
       }
     } catch (e) {
-      diagResult = 'failure'; diagReason = 'auth_failed';
+      diagResult = 'failure'; diagReason = (e as { code?: string }).code ?? 'auth_failed';
       console.warn('[supabaseSync] INF dump 완료 중계 실패:', (e as Error).message);
     } finally { diag(); }
   }
@@ -1411,13 +1411,17 @@ function matchAutomaticSong(songs: Map<string, SongEntry[]>, title: string, diff
 }
 const REMOTE_API_ORIGIN = 'https://iidx.in';
 // Web 원격 인증과 같은 issue/exchange와 Bearer 세션을 사용한다. 별도 토큰 저장소는 없다.
-async function existingRemoteBearer(iidxId: string): Promise<string | null> {
+async function existingRemoteBearer(iidxId: string, deadline = Date.now() + 30_000): Promise<string | null> {
   const key = 'ohsorry:remoteAuthToken';
   let token = localStorage.getItem(key);
   const authJson = async (url: string, init: RequestInit = {}) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw Object.assign(new Error('deadline'), { code: 'deadline' });
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5000);
-    try { const response = await fetch(url, { ...init, signal: controller.signal }); return { response, data: response.ok ? await response.json() : null }; }
+    const timeout = setTimeout(() => controller.abort(), Math.min(5000, remaining));
+    let stage = 'fetch';
+    try { const response = await fetch(url, { ...init, signal: controller.signal }); stage = 'body'; return { response, data: response.ok ? await response.json() : null }; }
+    catch (error) { if (controller.signal.aborted) throw Object.assign(new Error('timeout'), { code: stage === 'fetch' ? 'auth_fetch_timeout' : 'auth_body_timeout' }); throw error; }
     finally { clearTimeout(timeout); }
   };
   const validSession = async (value: string) => {
