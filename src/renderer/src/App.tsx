@@ -1090,6 +1090,21 @@ export default function App() {
     rResources, !!ratingData, workerCurrent, value => raiseFloor('rStarFloor', value));
   const spTask = useComputeTask<SpSkillResult>('sp-star', workerInput, {},
     spResources, true, workerCurrent);
+  const starTaskStatusRef = useRef<{ dp?: string; r?: string; sp?: string }>({});
+  useEffect(() => {
+    const observed = [
+      ['dp', 'DP★', dpTask.task.status, dpTask.task.value?.star],
+      ['r', 'r★', rTask.task.status, rTask.task.value],
+      ['sp', 'SP★', spTask.task.status, spTask.task.value?.star],
+    ] as const;
+    for (const [key, label, status, value] of observed) {
+      if (starTaskStatusRef.current[key] === status) continue;
+      starTaskStatusRef.current[key] = status;
+      if (status === 'pending') addDiagLine(`${label} 계산 중`);
+      else if (status === 'ready') addDiagLine(`${label} 계산 완료 ${typeof value === 'number' ? value.toFixed(2) : '-'}`);
+      else if (status === 'error') addDiagLine(`${label} 계산 실패: 알 수 없는 오류`);
+    }
+  }, [dpTask.task.status, dpTask.task.value, rTask.task.status, rTask.task.value, spTask.task.status, spTask.task.value]);
   const dp12StarResult = dpTask.value;
   const userRStar = rTask.value;
   const spStarResult = spTask.value;
@@ -2146,9 +2161,6 @@ export default function App() {
               if (selectedViewerId) void loadViewerAccount(selectedViewerId);
             }}
           />
-          {cardId != null && cardId === rowsOwnerId && bundleReady && isFloorSeedCurrent(rowsState.scope, accountScopeRef.current) && (
-            <div className="profile-card-star-note">잠정 · 덤프 후 반영</div>
-          )}
           <nav className="tabs">
             {/* 표시 순서: RECENT → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
             <button
@@ -2208,21 +2220,9 @@ export default function App() {
                   · 갱신 {formatRelativeTime(tsvMtime)}
                 </span>
               )}
-              {/* 별값 계산 상태 — 계산 중·실패인 항목만 갱신 표시 옆에 띄우고, 전부 끝나면 숨긴다 */}
               {(() => {
-                const starTasks = [['DP★', dpTask], ['r★', rTask], ['SP★', spTask]] as const;
-                const active = starTasks.filter(([, t]) => t.task.status === 'pending' || t.task.status === 'error');
-                if (active.length === 0) return null;
-                return (
-                  <span role="status" aria-live="polite" className="updated-at">
-                    {active.map(([label, t]) => ` · ${label} ${t.task.status === 'error' ? '계산 실패' : '계산 중'}`).join('')}
-                    {active.some(([, t]) => t.task.status === 'error') && (
-                      <button onClick={() => {
-                        for (const [, t] of active) if (t.task.status === 'error') t.retry();
-                      }}>다시 계산</button>
-                    )}
-                  </span>
-                );
+                const failed = [dpTask, rTask, spTask].filter(t => t.task.status === 'error');
+                return failed.length > 0 ? <button type="button" onClick={() => failed.forEach(t => t.retry())}>다시 계산</button> : null;
               })()}
               {!IS_BROWSER_REMOTE && (() => {
                 const remainingMs = Math.max(0, lastUploadAt + MANUAL_UPLOAD_COOLDOWN_MS - manualUploadNow);
