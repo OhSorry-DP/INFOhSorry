@@ -171,6 +171,7 @@ export const HEADERS = {
   Authorization: `Bearer ${SUPABASE_KEY}`,
 };
 const FAST_DUMP_ENQUEUE_INF = true;
+const successfulUploadHist = new Map<string, unknown[][]>();
 
 // 새 디비 변환 매핑 (dbConn.js 와 동일)
 export const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANOTHER: 3, LEGGENDARIA: 4 };
@@ -508,45 +509,6 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     return pending;
   };
 
-  // 1. users upsert (RPC upsert_user) — INF 는 sp_rank/dp_rank 없음, ereter_star 만 옵션
-  //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
-  const spCpiVal = (typeof spCpi === 'number' && isFinite(spCpi)) ? Math.round(spCpi) : null;
-  const spStarVal = (typeof spStar === 'number' && isFinite(spStar)) ? Number(spStar.toFixed(1)) : null;
-  // SP/DP 단위 — 게임 메모리에서 읽은 값 (supabase 스케일 int). 못 읽었거나 미취득이면 null →
-  //   RPC COALESCE 가 기존 DB값 유지 (eagate 배치가 넣어둔 값을 지우지 않음).
-  const spRankVal = typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
-  const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
-  try {
-    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
-    const plays = playsForGame(input.plays, input.gameRecognized ? await input.gameRecognized() : true);
-    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_upload_profile`, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({
-        ...(plays !== undefined ? { p_plays: plays } : {}),
-        p_iidx_id: iidxIdNorm,
-        p_dj_name: profile.djName ?? null,
-        p_star: null,
-        p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
-        // SP/DP 단위 — v0.0.108 부터 게임 메모리에서 직접 읽어 업로드 (프로필 struct 의 정수 index).
-        //   못 읽음/미취득이면 null → RPC COALESCE 가 기존 값 유지 (eagate 배치값을 null 로 덮지 않음).
-        p_sp_rank: spRankVal,
-        p_dp_rank: dpRankVal,
-      }),
-    });
-    if (!userRes.ok) {
-      const errText = await userRes.text().catch(() => '');
-      return { ok: false, error: `users HTTP ${userRes.status} ${errText}` };
-    }
-    console.log(`[supabase] users upsert OK ${iidxIdNorm} — SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'}`);
-  } catch (e) {
-    return { ok: false, error: `users error: ${(e as Error).message}` };
-  }
-
-  // 1-B. user_radars upsert — 메모리에서 읽은 SP(0) / DP(1) 노트레이더.
-  //   실패해도 scores 업로드는 계속한다 (레이더는 부가 정보 — 점수 유실이 더 치명적).
-  await uploadRadars(iidxIdNorm, profile);
-
   // 2. scores upsert — chart row 변환 + songs 매칭 + ac flag dedup
   const allChartsForScores = [...charts, ...(unclassifiedCharts ?? [])];
   const isDpSlot = (slot: unknown): boolean => (
@@ -781,21 +743,27 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const originalScoreCount = allChartsForScores.length;
   const dedupScoreRows = [...dedup.values()];
   let scoreRows = [...dedupScoreRows];
+  const incomingRows = scoreRows.map((row) => [row.song_id, row.diff, row.lamp, row.ex_score, row.played_version,
+    row.date, new Date(new Date(row.date).getTime() + 9 * 3600000).toISOString().slice(0, 10), row.play_style, row.bp, row.note_count]);
+  let sentIncoming: unknown[][] = [];
   if (scoreRows.length > 0) {
+    const localHist = successfulUploadHist.get(iidxIdNorm) ?? [];
     const histResult = await getUploadHist(iidxIdNorm);
-    if (histResult.status === 'ok' && histResult.hist.length > 0) {
-      try {
-        const histRows = histResult.hist.map((row) => [row[0], row[1], row[2], row[3], row[4], row[5], row[6], row[7], row[8] ?? null, row[9] ?? null]);
-        const incomingRows = scoreRows.map((row) => [row.song_id, row.diff, row.lamp, row.ex_score, row.played_version,
-          row.date, new Date(new Date(row.date).getTime() + 9 * 3600000).toISOString().slice(0, 10), row.play_style, row.bp, row.note_count]);
-        const filtered = filterScoreHistoryRows(histRows, incomingRows);
-        const included = new Set(filtered);
-        scoreRows = scoreRows.filter((_row, index) => included.has(incomingRows[index]));
-      } catch (e) {
-        console.warn(`[supabaseSync] 업로드 hist 비교 실패; 사용자 전체 전송: ${(e as Error).message}`);
-      }
-    } else if (histResult.status === 'error') {
-      console.warn(`[supabaseSync] 업로드 hist 조회 실패; 사용자 전체 전송: ${histResult.error}`);
+    let baseline = localHist;
+    try {
+      if (histResult.status === 'ok') baseline = mergeScoreHistory(histResult.hist, localHist);
+      else if (histResult.status === 'error') console.warn(`[supabaseSync] upload hist unavailable; using local history: ${histResult.error}`);
+    } catch (e) {
+      console.warn(`[supabaseSync] upload hist invalid; using local history: ${(e as Error).message}`);
+    }
+    try {
+      const filtered = filterScoreHistoryRows(baseline, incomingRows);
+      const included = new Set(filtered);
+      scoreRows = scoreRows.filter((_row, index) => included.has(incomingRows[index]));
+      sentIncoming = filtered;
+    } catch (e) {
+      // Preserve full-send fallback without recording unvalidated incoming.
+      console.warn(`[supabaseSync] upload incoming comparison failed; sending all: ${(e as Error).message}`);
     }
   }
   if (autoEnsured > 0) console.log(`[supabaseSync] songs 마스터 자동 등록 (ensure_song) ${autoEnsured}건:`, autoEnsuredSamples);
@@ -806,6 +774,45 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   if (scoreRows.length === 0) {
     return { ok: true };
   }
+
+  // 1. users upsert (RPC upsert_user) — INF 는 sp_rank/dp_rank 없음, ereter_star 만 옵션
+  //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
+  const spCpiVal = (typeof spCpi === 'number' && isFinite(spCpi)) ? Math.round(spCpi) : null;
+  const spStarVal = (typeof spStar === 'number' && isFinite(spStar)) ? Number(spStar.toFixed(1)) : null;
+  // SP/DP 단위 — 게임 메모리에서 읽은 값 (supabase 스케일 int). 못 읽었거나 미취득이면 null →
+  //   RPC COALESCE 가 기존 DB값 유지 (eagate 배치가 넣어둔 값을 지우지 않음).
+  const spRankVal = typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
+  const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
+  try {
+    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
+    const plays = playsForGame(input.plays, input.gameRecognized ? await input.gameRecognized() : true);
+    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_upload_profile`, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify({
+        ...(plays !== undefined ? { p_plays: plays } : {}),
+        p_iidx_id: iidxIdNorm,
+        p_dj_name: profile.djName ?? null,
+        p_star: null,
+        p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
+        // SP/DP 단위 — v0.0.108 부터 게임 메모리에서 직접 읽어 업로드 (프로필 struct 의 정수 index).
+        //   못 읽음/미취득이면 null → RPC COALESCE 가 기존 값 유지 (eagate 배치값을 null 로 덮지 않음).
+        p_sp_rank: spRankVal,
+        p_dp_rank: dpRankVal,
+      }),
+    });
+    if (!userRes.ok) {
+      const errText = await userRes.text().catch(() => '');
+      return { ok: false, error: `users HTTP ${userRes.status} ${errText}` };
+    }
+    console.log(`[supabase] users upsert OK ${iidxIdNorm} — SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'}`);
+  } catch (e) {
+    return { ok: false, error: `users error: ${(e as Error).message}` };
+  }
+
+  // 1-B. user_radars upsert — 메모리에서 읽은 SP(0) / DP(1) 노트레이더.
+  //   실패해도 scores 업로드는 계속한다 (레이더는 부가 정보 — 점수 유실이 더 치명적).
+  await uploadRadars(iidxIdNorm, profile);
 
   const SCORE_UPSERT_CHUNK_SIZE = 1000;
   const total = Math.ceil(scoreRows.length / SCORE_UPSERT_CHUNK_SIZE);
@@ -828,6 +835,9 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     } catch (e) {
       return { ok: false, error: `scores chunk ${i + 1}/${total} error: ${(e as Error).message}` };
     }
+  }
+  if (sentIncoming.length > 0) {
+    successfulUploadHist.set(iidxIdNorm, mergeScoreHistory(successfulUploadHist.get(iidxIdNorm) ?? [], sentIncoming));
   }
   if (FAST_DUMP_ENQUEUE_INF && successfulScoreCount > 0) {
     const startedAt = Date.now();

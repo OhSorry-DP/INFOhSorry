@@ -201,9 +201,10 @@ async function testUploadProfileRealCall() {
   let out = await run({ histReply: { ok: true, status: 200, json: async () => [[100,3,5,2200,0,'2026-10-23T01:02:03.123000Z','2026-10-23',1,null,1500]] } });
   assert.equal(out.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, 0);
   const profileCall = out.calls.find(c => new URL(c.url).pathname === '/rest/v1/rpc/upsert_user_upload_profile');
-  assert.ok(profileCall);
-  assert.deepEqual(Object.keys(JSON.parse(profileCall.opts.body)).sort(), ['p_dj_name', 'p_dp_rank', 'p_ereter_star', 'p_iidx_id', 'p_sp_rank', 'p_star'].sort());
+  assert.equal(profileCall, undefined);
   out = await run({ histReply: { ok: true, status: 200, json: async () => [] } });
+  const changedProfileCall = out.calls.find(c => c.url.includes('/rpc/upsert_user_upload_profile'));
+  assert.deepEqual(Object.keys(JSON.parse(changedProfileCall.opts.body)).sort(), ['p_dj_name', 'p_dp_rank', 'p_ereter_star', 'p_iidx_id', 'p_sp_rank', 'p_star'].sort());
   assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
   out = await run({ histReply: { ok: false, status: 404 } });
   assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
@@ -233,6 +234,114 @@ async function testUploadProfileRealCall() {
   assert.equal(bulkResult.ok, false);
   assert.match(bulkResult.error, /scores chunk 1\/1 HTTP 500/);
 }
+
+function uploadScenario({ remote = [], failure = null, completion = 'rejected' } = {}) {
+  const calls = [], diagnostics = [];
+  const state = { remote, failure, completion, date: '2026-10-23T01:02:03Z' };
+  class FixedDate extends Date { constructor(...args) { super(...(args.length ? args : [state.date])); } }
+  const api = load(async (url, opts = {}) => {
+    const body = opts.body ? JSON.parse(opts.body) : null;
+    calls.push({ url, body });
+    if (url.includes('/hist/')) return typeof state.remote === 'number'
+      ? { ok: false, status: state.remote }
+      : { ok: true, status: 200, json: async () => state.remote };
+    if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => pagedSongs(url) };
+    if (url.includes('/rpc/')) {
+      const fail = state.failure?.(url, body);
+      return { ok: !fail, status: fail ? 500 : 200, text: async () => 'fixture failure' };
+    }
+    if (url.endsWith('/auth/issue')) return { ok: true, json: async () => ({ url: 'https://iidx.in/?ticket=test' }) };
+    if (url.endsWith('/auth/exchange')) return { ok: true, json: async () => ({ token: 'test' }) };
+    if (url.endsWith('/auth/session')) return { ok: true, json: async () => ({ logged_in: true, iidx_id: currentId.replace(/-/g, '') }) };
+    if (url.includes('dump-trigger')) {
+      if (state.completion === 'network') throw Error('offline');
+      return { ok: true, status: 200, json: async () => ({ accepted: state.completion !== 'rejected' }) };
+    }
+    throw Error(url);
+  }, FixedDate, { addDiagLine: line => diagnostics.push(line) });
+  let currentId = 'C123';
+  const chart = (index = 0, extra = {}) => ({ title: `song${index}`, slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC', ...extra });
+  const run = (extra = {}) => {
+    currentId = extra.profile?.iidxId ?? 'C123';
+    return api.uploadProfile({ appVersion: 'test', profile: { iidxId: currentId, spRadar: { notes: 1 }, dpRadar: { notes: 2 } },
+      starResult: null, charts: [chart()], allTsvCharts: [], spCharts: [], dpAllCharts: [], ...extra });
+  };
+  const writes = () => calls.filter(c => c.url.includes('/rpc/') || c.url.includes('/auth/') || c.url.includes('dump-trigger'));
+  return { state, calls, diagnostics, chart, run, writes };
+}
+
+test('무변경과 날짜·프로필·plays 변경은 모든 쓰기와 인증을 생략', async () => {
+  for (const ex of [120, 130]) {
+    const f = uploadScenario({ remote: [[1,3,5,ex,0,'2026-10-22T01:00:00Z','2026-10-22',1,0,100]] });
+    assert.equal((await f.run({ plays: [], profile: { iidxId: 'C123', djName: 'changed' } })).ok, true);
+    assert.deepEqual(f.writes(), []);
+  }
+});
+
+test('stale·빈·404·500·손상 R2에서도 동일 입력 세 번은 한 번만 전송', async () => {
+  for (const remote of [[], [[1,3,4,100,0,'2026-10-22T01:00:00Z','2026-10-22',1,null,null]], 404, 500,
+    [[1,3]], [[1,3,5,120,0,'bad','2026-10-22',1,null,null]]]) {
+    const f = uploadScenario({ remote });
+    for (let i = 0; i < 3; i++) assert.equal((await f.run()).ok, true);
+    assert.equal(f.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, 1);
+    f.state.remote = [[1,3]];
+    await f.run();
+    assert.equal(f.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, 1);
+  }
+});
+
+test('성공 직후 EX·lamp·채보·SP·DP·계정 변경은 시간 진행 없이 전송', async () => {
+  const f = uploadScenario();
+  const inputs = [{}, { charts: [f.chart(0, { exScore: 121 })] },
+    { charts: [f.chart(0, { exScore: 121, lamp: 'EX' })] },
+    { charts: [f.chart(1)] }, { charts: [], spCharts: [f.chart(0, { slot: 'ANOTHER', level: 12 })] },
+    { charts: [f.chart(2)] }, { profile: { iidxId: 'B' } }];
+  for (const input of inputs) {
+    const before = f.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length;
+    assert.equal((await f.run(input)).ok, true);
+    assert.equal(f.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, before + 1);
+  }
+});
+
+test('프로필과 첫·후속 1001행 청크 실패는 성공 이력을 확정하지 않음', async () => {
+  for (const stage of ['profile', 'first', 'second']) {
+    let chunks = 0;
+    const f = uploadScenario({ failure: url => stage === 'profile' ? url.includes('upsert_user_upload_profile')
+      : url.includes('upsert_scores') && ++chunks === (stage === 'first' ? 1 : 2) });
+    const input = { charts: Array.from({ length: 1001 }, (_, i) => f.chart(i)) };
+    assert.equal((await f.run(input)).ok, false);
+    f.state.failure = null;
+    const start = f.calls.length;
+    assert.equal((await f.run(input)).ok, true);
+    assert.deepEqual(f.calls.slice(start).filter(c => c.url.includes('upsert_scores')).map(c => c.body.p_rows.length), [1000, 1]);
+    const end = f.writes().length;
+    await f.run(input);
+    assert.equal(f.writes().length, end);
+  }
+});
+
+test('미상 bp·note_count 보충은 한 번, 알려진 값과 날짜 변경은 무전송', async () => {
+  const f = uploadScenario();
+  await f.run();
+  await f.run({ charts: [f.chart(0, { missCount: 10, noteCount: 100 })] });
+  f.state.date = '2026-10-24T01:02:03Z';
+  await f.run({ charts: [f.chart(0, { missCount: 5, noteCount: 200 })] });
+  assert.equal(f.calls.filter(c => c.url.includes('upsert_scores')).length, 2);
+});
+
+test('profile→radar→전체 scores→완료 순서와 best-effort 실패 후 재통지 방지', async () => {
+  for (const completion of ['rejected', 'network']) {
+    const f = uploadScenario({ completion });
+    assert.equal((await f.run({ charts: Array.from({ length: 1001 }, (_, i) => f.chart(i)) })).ok, true);
+    const endpoints = f.writes().map(c => c.url.split('/').at(-1));
+    assert.deepEqual(endpoints.slice(0, 5), ['upsert_user_upload_profile', 'upsert_user_radar', 'upsert_user_radar', 'upsert_scores', 'upsert_scores']);
+    assert.equal(endpoints.at(-1).includes('dump-trigger'), true);
+    if (completion === 'rejected') assert.ok(f.diagnostics.some(line => line.includes('accepted=false')));
+    const before = f.writes().length;
+    await f.run({ charts: Array.from({ length: 1001 }, (_, i) => f.chart(i)) });
+    assert.equal(f.writes().length, before);
+  }
+});
 
 test('score history 날짜 파싱 캐시는 성공 결과와 실패 예외를 일관되게 반환', () => {
   const api = load(async () => { throw Error('unused'); });
