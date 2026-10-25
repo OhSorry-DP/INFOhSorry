@@ -2,6 +2,14 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 0.0.154 — 2026-10-25 0.0.153 되돌림 · 점수 무변경 업로드 차단 · 최근 플레이 R2 직접 쓰기
+
+- 0.0.153(3분 최소 간격 복원)을 되돌렸다(98f8f58). 0.0.152 의 「기록 변경마다 즉시 판정」은 의도된 동작이다. 0.0.153 에서는 기록이 서버에 반영되지 않았다.
+- 고친 것은 「점수가 안 바뀌었는데도 업로드가 나가던 것」 하나: 프로필 저장을 점수 0행 판정 뒤로 옮기고, 계정별로 직전에 성공 전송한 점수를 기억해 R2 반영 전에 같은 점수를 다시 보내지 않는다(`supabaseSync.ts`). 점수가 바뀐 업로드는 그대로 즉시 나간다.
+- 최근 100판은 프로필 RPC 의 `p_plays` 대신, 결과 화면을 감지할 때마다 `PUT https://iidx.in/api/me/plays` 로 R2 `plays/{id}.json` 에 바로 쓴다(DBR·배치와 같은 Bearer 인증, 게임 인식·계정 일치 재확인, 계정별 직렬, 재시도 큐 없음). 점수 변화 없는 판(FAIL·미갱신)도 바로 반영된다. Web 의 같은 날 변경(`/api/me/plays`·getPlays 새 키 우선)이 먼저 배포돼야 한다.
+- 서버 쪽 원인(같은 날 Admin `sql/39`): fast_dump 테이블 RLS 정책이 없어 완료 통지 enqueue 가 항상 거부돼, 0.0.152 부터 INF 업로드 뒤 덤프가 예약되지 않았다.
+- 테스트: supabase-buffer·scoreSync·uploadDue·initialAutoUpload·play-upload·play-upload-refresh 68/68, typecheck 통과. 변이(프로필 순서 원복·성공 이력 무시·p_plays 복원) 검출. 렌더러 전체 236 중 기존 실패 9건(dbr-recent·analysis-engine 등, 0.0.152 에서도 동일)은 무관. 실기 확인은 하지 않았다.
+
 ### 0.0.152 — 2026-10-25 업로드 완료 통지가 실제로 나가게 · 기록 변경마다 업로드
 
 - **완료 통지·DBR 자동 저장이 막혀 있던 원인** — 렌더러 CSP `connect-src` 에 `https://iidx.in` 이 없어, 점수 업로드 뒤 `iidx.in/auth/*`·`/api/dump-trigger?upload_complete=1`·`/api/me/dbr-scores` 요청이 브라우저 단에서 차단됐다(서버 로그 0건, 실패는 콘솔에만). `src/renderer/index.html` 허용 목록에 추가.
