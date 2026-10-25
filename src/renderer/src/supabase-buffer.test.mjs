@@ -18,7 +18,8 @@ function load(fetchImpl, dateImpl = Date, options = {}) {
     if (name === '../../shared/match') return { norm: x => String(x).toLowerCase(), slotToDiff: x => x };
     if (name === '../../shared/uploadSnapshot') return { PLAY_CSV_KEYS: [], PLAY_CSV_LEGACY_KEYS: [], buildPlayErrorRow() {}, isPlayErrorRow() { return false; } };
     return {};
-  }, fetch: fetchImpl, Date: dateImpl, URL, crypto: options.crypto ?? { randomUUID: () => '00000000-0000-4000-8000-000000000001' }, AbortController, setTimeout, clearTimeout,
+  }, fetch: fetchImpl, Date: dateImpl, URL, crypto: options.crypto ?? { randomUUID: () => '00000000-0000-4000-8000-000000000001' }, AbortController,
+    setTimeout: options.setTimeout ?? setTimeout, clearTimeout: options.clearTimeout ?? clearTimeout,
     localStorage: options.localStorage ?? { getItem: () => null, setItem() {}, removeItem() {} },
     window: { infohsorry: { serviceStatus: { get: async () => ({ uploadEnabled: true }) } } }, console: options.console ?? { warn() {}, log() {} }, Map, Set, BigInt, JSON, Math, Number, String, Object, Array, Promise, Error, TypeError });
   return exports;
@@ -44,6 +45,79 @@ const pagedSongs = url => {
     return { song_id: songId, title: `song${songId - 1}`, ac: 2, legen: 0 };
   });
 };
+
+function fakeClock() {
+  let now = 0, nextId = 1;
+  const timers = new Map();
+  class ClockDate extends Date { static now() { return now; } }
+  return {
+    Date: ClockDate,
+    setTimeout(callback, delay) { const id = nextId++; timers.set(id, { at: now + delay, callback }); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    advanceToNext() {
+      if (!timers.size) return false;
+      const [id, timer] = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+      timers.delete(id); now = timer.at; timer.callback(); return true;
+    },
+    advanceBy(milliseconds) { now += milliseconds; },
+    get now() { return now; },
+  };
+}
+async function runTimedDump({ authHang, storedToken = null, sessionReplies = [], relay = 'accepted', addDiagLine = () => {}, noUuid = false, authLatency = 0 } = {}) {
+  const clock = fakeClock(), calls = [], signals = [], storage = new Map(storedToken ? [['ohsorry:remoteAuthToken', storedToken]] : []);
+  const fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    const hang = async stage => new Promise((_resolve, reject) => {
+      signals.push(options.signal);
+      const abort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+      if (options.signal.aborted) abort(); else options.signal.addEventListener('abort', abort, { once: true });
+    });
+    if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
+    if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => [{ song_id: 1, title: 'song0', ac: 2, legen: 0 }] };
+    if (url.includes('/rpc/upsert_user_upload_profile') || url.includes('/rpc/upsert_user_radar') || url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
+    const endpoint = ['/auth/issue', '/auth/exchange', '/auth/session'].find(path => url.endsWith(path));
+    if (endpoint) {
+      if (authLatency) await new Promise(resolve => clock.setTimeout(resolve, authLatency));
+      const stage = endpoint === authHang?.endpoint ? authHang.stage : null;
+      if (stage === 'fetch') await hang(stage);
+      if (endpoint === '/auth/issue') return { ok: true, status: 200, json: async () => {
+        if (stage === 'body') return hang(stage);
+        return { url: 'https://iidx.in/?ticket=fixture-ticket-secret' };
+      } };
+      if (endpoint === '/auth/exchange') return { ok: true, status: 200, json: async () => {
+        if (stage === 'body') return hang(stage);
+        return { token: 'fixture-new-token-secret' };
+      } };
+      const reply = sessionReplies.shift() ?? { logged_in: true, iidx_id: 'K123' };
+      const status = reply.status ?? 200;
+      return { ok: status < 400, status, json: async () => {
+        if (stage === 'body') return hang(stage);
+        return reply.data ?? { logged_in: true, iidx_id: 'K123' };
+      } };
+    }
+    if (url.includes('dump-trigger')) {
+      if (relay === 'body-hang') return { ok: true, status: 200, json: () => hang('body') };
+      if (relay === 'hang') return hang('fetch');
+      if (relay === '4xx') return { ok: false, status: 429 };
+      if (relay === 'rejected') return { ok: true, status: 200, json: async () => ({ accepted: false }) };
+      return { ok: true, status: 200, json: async () => ({ accepted: true }) };
+    }
+    throw Error(`unexpected URL ${url}`);
+  };
+  const api = load(fetch, clock.Date, {
+    fastDump: true, setTimeout: clock.setTimeout, clearTimeout: clock.clearTimeout, addDiagLine,
+    crypto: noUuid ? {} : undefined,
+    localStorage: { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) },
+  });
+  const promise = api.uploadProfile({ appVersion: 'test', profile: { iidxId: 'K123' }, starResult: null,
+    charts: [{ title: 'song0', slot: 'DPA', diff: 'ANOTHER', exScore: 120, lamp: 'HC' }], allTsvCharts: [], spCharts: [], dpAllCharts: [] });
+  for (let i = 0; i < 100; i++) {
+    for (let turn = 0; turn < 12; turn++) await Promise.resolve();
+    if ((signals.length > 0 || authLatency > 0) && !clock.advanceToNext()) continue;
+  }
+  const result = await promise;
+  return { result, calls, signals, storage, clock };
+}
 
 test('user dp는 song 메타와 결합되고 sp 동명행은 제외', async () => {
   const api = load(fixture(async (_url, kind) => ({ ok: true, status: 200, json: async () => kind === 'user' ? { ...user, dp: user.dp, sp: [{ ...user.dp[0], ex_score: 999 }] } : hist })));
@@ -316,4 +390,94 @@ test('완료 중계는 5xx·손상 JSON만 동일 UUID로 재시도하고 4xx는
     assert.equal(relay.length, scenario === '4xx' ? 1 : 2);
     if (relay.length === 2) assert.equal(JSON.parse(relay[0].opts.body).request_id, JSON.parse(relay[1].opts.body).request_id);
   }
+});
+
+test('B1 인증 fetch 미완료는 세 endpoint 모두 abort하고 uploadProfile을 성공 반환한다', async () => {
+  for (const endpoint of ['/auth/issue', '/auth/exchange', '/auth/session']) {
+    const diagnostics = [];
+    const out = await runTimedDump({ authHang: { endpoint, stage: 'fetch' }, addDiagLine: line => diagnostics.push(line) });
+    assert.deepEqual(plain(out.result), { ok: true });
+    assert.ok(out.signals.length > 0 && out.signals.every(signal => signal.aborted), endpoint);
+    assert.equal(out.clock.now, 5000, endpoint);
+    assert.match(diagnostics[0], /reason=auth_fetch_timeout/);
+  }
+});
+
+test('B2 인증 본문 미완료는 세 endpoint 모두 5초 제한과 abort를 적용한다', async () => {
+  for (const endpoint of ['/auth/issue', '/auth/exchange', '/auth/session']) {
+    const diagnostics = [];
+    const out = await runTimedDump({ authHang: { endpoint, stage: 'body' }, addDiagLine: line => diagnostics.push(line) });
+    assert.deepEqual(plain(out.result), { ok: true });
+    assert.ok(out.signals.length > 0 && out.signals.every(signal => signal.aborted), endpoint);
+    assert.equal(out.clock.now, 5000, endpoint);
+    assert.match(diagnostics[0], /reason=auth_body_timeout/);
+  }
+});
+
+test('B3 완료 본문 timeout은 abort되고 두 번 재시도해 30초 이내 반환한다', async () => {
+  const diagnostics = [];
+  const out = await runTimedDump({ relay: 'body-hang', addDiagLine: line => diagnostics.push(line) });
+  assert.deepEqual(plain(out.result), { ok: true });
+  assert.equal(out.calls.filter(call => call.url.includes('dump-trigger')).length, 2);
+  assert.ok(out.signals.every(signal => signal.aborted));
+  assert.ok(out.clock.now <= 30_000);
+  assert.match(diagnostics[0], /reason=complete_body_timeout attempts=2 elapsed_ms=\d+/);
+});
+
+test('B4 저장 토큰 401·로그아웃·계정 불일치는 한 번만 재발급하고 새 세션을 검증한다', async () => {
+  for (const invalid of [
+    { status: 401 },
+    { data: { logged_in: false, iidx_id: 'K123' } },
+    { data: { logged_in: true, iidx_id: 'OTHER' } },
+  ]) {
+    for (const freshValid of [true, false]) {
+      const diagnostics = [];
+      const replies = [invalid, freshValid ? { data: { logged_in: true, iidx_id: 'K123' } } : { data: { logged_in: false, iidx_id: 'K123' } }];
+      const out = await runTimedDump({ storedToken: 'fixture-old-token-secret', sessionReplies: replies, addDiagLine: line => diagnostics.push(line) });
+      assert.deepEqual(plain(out.result), { ok: true });
+      assert.equal(out.calls.filter(call => call.url.endsWith('/auth/issue')).length, 1);
+      assert.equal(out.calls.filter(call => call.url.endsWith('/auth/exchange')).length, 1);
+      assert.equal(out.calls.filter(call => call.url.endsWith('/auth/session')).length, 2);
+      assert.equal(out.calls.filter(call => call.url.includes('dump-trigger')).length, freshValid ? 1 : 0);
+      if (!freshValid) assert.equal(out.storage.has('ohsorry:remoteAuthToken'), false);
+      assert.doesNotMatch(diagnostics.join('\n'), /fixture-(?:old-token|new-token|ticket)-secret/);
+    }
+  }
+});
+
+test('B5 진단은 성공·거부·HTTP 실패·생략 사유와 시간을 기록하고 비밀값을 제외한다', async () => {
+  for (const [relay, expected] of [['accepted', /result=success accepted=true http=200 reason=none/],
+    ['rejected', /result=rejected accepted=false http=200 reason=accepted_false/],
+    ['4xx', /result=http_failure accepted=unknown http=429 reason=http_4xx/]]) {
+    const diagnostics = [];
+    const out = await runTimedDump({ relay, addDiagLine: line => diagnostics.push(line) });
+    assert.deepEqual(plain(out.result), { ok: true });
+    assert.equal(diagnostics.length, 1);
+    assert.match(diagnostics[0], /^\[inf-dump\] stage=complete /);
+    assert.match(diagnostics[0], expected);
+    assert.match(diagnostics[0], /elapsed_ms=\d+$/);
+    assert.doesNotMatch(diagnostics.join('\n'), /fixture-(?:old-token|new-token|ticket)-secret/);
+  }
+  const diagnostics = [];
+  await runTimedDump({ noUuid: true, addDiagLine: line => diagnostics.push(line) });
+  assert.equal(diagnostics.length, 1);
+  assert.match(diagnostics[0], /reason=uuid_missing/);
+});
+
+test('B6 전체 30초 deadline 이후 완료 요청을 더 시작하지 않는다', async () => {
+  const diagnostics = [];
+  const out = await runTimedDump({ storedToken: 'fixture-old-token-secret', sessionReplies: [
+    { status: 401 }, { data: { logged_in: true, iidx_id: 'K123' } },
+  ], relay: 'hang', authLatency: 4999, addDiagLine: line => diagnostics.push(line) });
+  assert.deepEqual(plain(out.result), { ok: true });
+  const authCalls = out.calls.filter(call => /\/auth\/(?:session|issue|exchange)$/.test(call.url));
+  const relayCalls = out.calls.filter(call => call.url.includes('dump-trigger'));
+  assert.equal(authCalls.length, 4);
+  assert.equal(relayCalls.length, 2);
+  assert.ok(out.clock.now >= 29_990 && out.clock.now <= 30_000);
+  const callsAtDeadline = out.calls.length;
+  out.clock.advanceBy(30_000 - out.clock.now);
+  assert.equal(out.clock.now, 30_000);
+  assert.equal(out.calls.length, callsAtDeadline);
+  assert.match(diagnostics[0], /elapsed_ms=\d+$/);
 });
