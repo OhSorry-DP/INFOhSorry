@@ -785,12 +785,10 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
   try {
     console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
-    const plays = playsForGame(input.plays, input.gameRecognized ? await input.gameRecognized() : true);
     const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_upload_profile`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify({
-        ...(plays !== undefined ? { p_plays: plays } : {}),
         p_iidx_id: iidxIdNorm,
         p_dj_name: profile.djName ?? null,
         p_star: null,
@@ -1460,6 +1458,28 @@ async function existingRemoteBearer(iidxId: string, deadline = Date.now() + 30_0
   if (!checked.valid) return null;
   localStorage.setItem(key, token);
   return token;
+}
+
+export async function uploadAutomaticPlays(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
+  bearer: (id: string) => Promise<string | null> = existingRemoteBearer, send: typeof fetch = fetch): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+  try {
+    if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
+    const token = await bearer(iidxId);
+    if (!token) return { ok: true, skipped: 'unauthenticated' };
+    if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await send(`${REMOTE_API_ORIGIN}/api/me/plays`, { method: 'PUT', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ plays }), signal: controller.signal });
+      if (!response.ok) throw new Error(`plays HTTP ${response.status}`);
+      return { ok: true };
+    } finally { clearTimeout(timeout); }
+  } catch (error) {
+    const message = (error as Error).message;
+    console.warn(`[upload] automatic plays failed id=${iidxId}: ${message}`);
+    return { ok: false, error: message };
+  }
 }
 
 // 한 INF 클라이언트의 DBR POST는 전송 중에만 직렬화한다. 재시도 큐는 없다.

@@ -41,7 +41,7 @@ import { ProfileCard } from './ProfileCard';
 import AccountSelector from './AccountSelector';
 import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
-import { parseRecentPlays, parsePlayHistoryDetailed, evaluateAutomaticArrange, uploadAutomaticArrange, playsForGame, buildUploadPlays, uploadAutomaticDbr, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
+import { parseRecentPlays, parsePlayHistoryDetailed, evaluateAutomaticArrange, uploadAutomaticArrange, playsForGame, buildUploadPlays, uploadAutomaticDbr, uploadAutomaticPlays, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
@@ -1625,6 +1625,28 @@ export default function App() {
     (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue = runIfDue;
     const arrangeKeysByAccount = new Map<string, Set<string>>();
     const arrangeChainByAccount = new Map<string, Promise<void>>();
+    const playsChainByAccount = new Map<string, Promise<void>>();
+    const handlePlaysAppend = ({ iidxId }: { iidxId: string }): void => {
+      const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+      if (!readPlayCsv) return;
+      const previous = playsChainByAccount.get(iidxId) ?? Promise.resolve();
+      const next = previous.catch(() => {}).then(async () => {
+        let result;
+        try { result = await readPlayCsv(iidxId); } catch { result = { ok: false as const }; }
+        const plays = buildUploadPlays(result.ok
+          ? { ...result, appVersion: result.appVersion ?? APP_VERSION, gameVersion: result.gameVersion ?? '' }
+          : { ok: false, appVersion: APP_VERSION, gameVersion: '' });
+        const gameRecognized = async (): Promise<boolean> => {
+          if ((await window.infohsorry.session.getState()).pid == null) return false;
+          const fresh = await readIidxIdFresh();
+          const normalize = (id: string) => id.trim().replace(/-/g, '').toUpperCase();
+          return !fresh.processMissing && normalize(fresh.iidxId ?? '') === normalize(iidxId);
+        };
+        await uploadAutomaticPlays(plays, iidxId, gameRecognized);
+      }).catch((error: unknown) => { console.warn(`[upload] automatic plays append failed id=${iidxId}:`, error); });
+      playsChainByAccount.set(iidxId, next);
+      void next.finally(() => { if (playsChainByAccount.get(iidxId) === next) playsChainByAccount.delete(iidxId); }).catch(() => {});
+    };
     const handlePlayAppend = ({ iidxId }: { iidxId: string }): void => {
       const readPlayCsv = window.infohsorry.upload.readPlayCsv;
       if (!readPlayCsv) return;
@@ -1657,12 +1679,13 @@ export default function App() {
     };
     const offPlayAppend = window.infohsorry.upload.onPlayAppend?.(({ iidxId }) => runIfDue(iidxId));
     const offArrangeAppend = window.infohsorry.upload.onPlayAppend?.(handlePlayAppend);
+    const offPlaysAppend = window.infohsorry.upload.onPlayAppend?.(handlePlaysAppend);
     const offFinal = window.infohsorry.upload.onFinalRequest(() => void (async () => {
       const outcome = await tryUpload('final');
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
       window.infohsorry.upload.finalDone(outcome);
     })());
-    return () => { cancelInitialTimer(); offPlayAppend?.(); offArrangeAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
+    return () => { cancelInitialTimer(); offPlayAppend?.(); offArrangeAppend?.(); offPlaysAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
   }, []);
 
   // 마지막 스냅샷 이후에도 준비 상태가 바뀔 수 있으므로 타이머를 직접 설정하거나 재확인한다.
