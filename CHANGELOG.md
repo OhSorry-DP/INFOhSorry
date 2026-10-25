@@ -2,6 +2,15 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 0.0.152 — 2026-10-25 업로드 완료 통지가 실제로 나가게 · 기록 변경마다 업로드
+
+- **완료 통지·DBR 자동 저장이 막혀 있던 원인** — 렌더러 CSP `connect-src` 에 `https://iidx.in` 이 없어, 점수 업로드 뒤 `iidx.in/auth/*`·`/api/dump-trigger?upload_complete=1`·`/api/me/dbr-scores` 요청이 브라우저 단에서 차단됐다(서버 로그 0건, 실패는 콘솔에만). `src/renderer/index.html` 허용 목록에 추가.
+- 완료 통지 인증(`/auth/issue`·`/auth/exchange`·`/auth/session`)과 완료 POST 를 응답 본문까지 요청당 5초, 완료 단계 전체 30초로 제한(abort). 저장된 원격 토큰이 401·로그아웃·계정 불일치면 지우고 1회 재발급. 결과를 진단 로그에 `[inf-dump] stage=complete result=… reason=… elapsed_ms=…` 한 줄로 남긴다(토큰·티켓 미기록).
+- 프로필 저장을 `upsert_user_upload_profile`(Admin `sql/37`)로 바꿔, 점수 변화 없이 프로필만 저장될 때 dump-user 가 3분마다 돌던 것을 없앴다. 점수가 바뀐 업로드는 완료 통지로 덤프·빠른 게시가 이어진다.
+- 자동 업로드 3분 최소 간격 제거 — 기록이 바뀔 때마다 올린다(업로드 중이면 겹치지 않고 다음 변경에서). 수동 업로드 5분 쿨다운은 그대로.
+- 프로필 카드 밑 「잠정 · 덤프 후 반영」과 갱신 시각 옆 별값 「계산 중/실패」 문구를 진단 로그로 옮겼다(DP★·r★·SP★ 상태가 바뀔 때 한 줄, 완료는 값 포함). 실패하면 갱신 옆에 「다시 계산」 버튼만 남는다.
+- 테스트: supabase-buffer·uploadDue·play-upload·buffer-presentation 58/58, typecheck 통과. 변이(인증 타임아웃 무력화·무효 토큰 삭제 제거·프로필 RPC 원복·업로드 간격 상수) 검출 확인.
+
 ### 0.0.151 — 2026-10-25 점수 업로드 완료 통지 켬
 
 - `supabaseSync.ts`: `FAST_DUMP_ENQUEUE_INF = true`. 모든 점수 청크가 성공하면 `https://iidx.in/api/dump-trigger?upload_complete=1` 로 완료를 알려, 서버가 세대를 발급하고 빠른 경로(Edge)가 그리드·Recent 를 먼저 게시한다. 실패해도 업로드 결과는 그대로이고 기존 느린 덤프가 폴백이다.
