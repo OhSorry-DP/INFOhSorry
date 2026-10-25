@@ -17,6 +17,7 @@ import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, buildPlayErrorRow, isPlayErrorRow,
 //
 // fire-and-forget — 실패해도 사용자 경험에 영향 X.
 import type { ProfileInfo } from './useProfile';
+import { addDiagLine } from './diagLog';
 import type { StarResult, SongChart } from '../../shared/types';
 import type { RecInputChart } from '../../shared/recommend';
 import { norm, slotToDiff } from '../../shared/match';
@@ -518,7 +519,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   try {
     console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
     const plays = playsForGame(input.plays, input.gameRecognized ? await input.gameRecognized() : true);
-    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user`, {
+    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_upload_profile`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify({
@@ -829,52 +830,70 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
     }
   }
   if (FAST_DUMP_ENQUEUE_INF && successfulScoreCount > 0) {
+    const startedAt = Date.now();
+    const deadline = startedAt + 30_000;
+    let diagResult = 'skipped', diagReason = 'none', diagHttp: number | null = null;
+    let diagAccepted: boolean | null = null, diagAttempts = 0;
+    const diag = () => { try { addDiagLine(`[inf-dump] stage=complete result=${diagResult} accepted=${diagAccepted === null ? 'unknown' : diagAccepted} http=${diagHttp === null ? 'none' : diagHttp} reason=${diagReason} attempts=${diagAttempts} elapsed_ms=${Math.max(0, Date.now() - startedAt)}`); } catch {} };
     try {
       const bearer = await existingRemoteBearer(iidxIdNorm);
       if (!bearer) {
+        diagReason = 'auth_failed';
         console.warn('[supabaseSync] INF dump 완료 중계 생략: remote Bearer 없음');
       } else {
         const requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
           ? crypto.randomUUID() : null;
         if (!requestId) {
+          diagReason = 'uuid_missing';
           console.warn('[supabaseSync] INF dump 완료 중계 생략: UUID 생성 불가');
         } else {
           const body = JSON.stringify({ source: 'inf', iidx_id: iidxIdNorm, request_id: requestId });
           let result: Response | null = null;
           for (let attempt = 0; attempt < 2; attempt++) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) { diagReason = 'deadline'; break; }
+            diagAttempts++;
             const controller = new AbortController();
-            const timeout = setTimeout(() => controller.abort(), 5000);
+            let timedOut = false;
+            const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, Math.min(5000, remaining));
             try {
               result = await fetch('https://iidx.in/api/dump-trigger?upload_complete=1', {
                 method: 'POST', credentials: 'omit', signal: controller.signal,
                 headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` }, body,
               });
-              clearTimeout(timeout);
+              diagHttp = result.status;
               if (!result.ok) {
+                diagResult = 'http_failure'; diagReason = result.status >= 500 ? 'http_5xx' : 'http_4xx';
                 console.warn(`[supabaseSync] INF dump 완료 중계 HTTP ${result.status}`);
-                if (result.status >= 500 && attempt === 0) continue;
+                if (result.status >= 500 && attempt === 0 && Date.now() < deadline) continue;
                 break;
               }
               try {
                 const response = await result.json();
                 if (typeof response?.accepted !== 'boolean') throw new Error('invalid accepted response');
+                diagAccepted = response.accepted;
+                diagResult = response.accepted ? 'success' : 'rejected'; diagReason = response.accepted ? 'none' : 'accepted_false';
                 if (response.accepted === false) console.warn('[supabaseSync] INF dump 완료 중계 accepted:false');
               } catch (e) {
+                diagResult = 'failure'; diagReason = timedOut ? 'complete_body_timeout' : 'broken_json';
                 console.warn('[supabaseSync] INF dump 완료 중계 응답 손상:', (e as Error).message);
                 if (attempt === 0) continue;
               }
               break;
             } catch (e) {
-              clearTimeout(timeout);
+              diagResult = 'failure'; diagReason = timedOut ? 'complete_fetch_timeout' : 'network';
               console.warn(`[supabaseSync] INF dump 완료 중계 결과 불명 (시도 ${attempt + 1}/2):`, (e as Error).message);
               if (attempt === 1) break;
+            } finally {
+              clearTimeout(timeout);
             }
           }
         }
       }
     } catch (e) {
+      diagResult = 'failure'; diagReason = 'auth_failed';
       console.warn('[supabaseSync] INF dump 완료 중계 실패:', (e as Error).message);
-    }
+    } finally { diag(); }
   }
   return { ok: true };
 }
@@ -1395,23 +1414,38 @@ const REMOTE_API_ORIGIN = 'https://iidx.in';
 async function existingRemoteBearer(iidxId: string): Promise<string | null> {
   const key = 'ohsorry:remoteAuthToken';
   let token = localStorage.getItem(key);
-  if (!token) {
-    const issued = await fetch(`${REMOTE_API_ORIGIN}/auth/issue`, { method: 'POST', credentials: 'omit',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ iidx_id: iidxId, source: 'inf' }) });
-    if (!issued.ok) return null;
-    const ticket = new URL((await issued.json()).url).searchParams.get('ticket');
-    if (!ticket) return null;
-    const exchanged = await fetch(`${REMOTE_API_ORIGIN}/auth/exchange`, { method: 'POST', credentials: 'omit',
-      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket, mode: 'token' }) });
-    if (!exchanged.ok) return null;
-    token = (await exchanged.json()).token;
-    if (!token) return null;
-    localStorage.setItem(key, token);
+  const authJson = async (url: string, init: RequestInit = {}) => {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5000);
+    try { const response = await fetch(url, { ...init, signal: controller.signal }); return { response, data: response.ok ? await response.json() : null }; }
+    finally { clearTimeout(timeout); }
+  };
+  const validSession = async (value: string) => {
+    const { response: session, data } = await authJson(`${REMOTE_API_ORIGIN}/auth/session`, { credentials: 'omit', headers: { Authorization: `Bearer ${value}` } });
+    if (!session.ok) return { valid: false, invalid: session.status === 401 };
+    return { valid: !!data.logged_in && data.iidx_id === iidxId, invalid: !data.logged_in || data.iidx_id !== iidxId };
+  };
+  if (token) {
+    const checked = await validSession(token);
+    if (checked.valid) return token;
+    if (!checked.invalid) return null;
+    localStorage.removeItem(key);
+    token = null;
   }
-  const session = await fetch(`${REMOTE_API_ORIGIN}/auth/session`, { credentials: 'omit', headers: { Authorization: `Bearer ${token}` } });
-  if (!session.ok) return null;
-  const data = await session.json();
-  return data.logged_in && data.iidx_id === iidxId ? token : null;
+  const { response: issued, data: issueData } = await authJson(`${REMOTE_API_ORIGIN}/auth/issue`, { method: 'POST', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ iidx_id: iidxId, source: 'inf' }) });
+  if (!issued.ok) return null;
+  const ticket = new URL(issueData.url).searchParams.get('ticket');
+  if (!ticket) return null;
+  const { response: exchanged, data: exchangeData } = await authJson(`${REMOTE_API_ORIGIN}/auth/exchange`, { method: 'POST', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket, mode: 'token' }) });
+  if (!exchanged.ok) return null;
+  token = exchangeData.token;
+  if (!token) return null;
+  const checked = await validSession(token);
+  if (!checked.valid) return null;
+  localStorage.setItem(key, token);
+  return token;
 }
 
 // 한 INF 클라이언트의 DBR POST는 전송 중에만 직렬화한다. 재시도 큐는 없다.

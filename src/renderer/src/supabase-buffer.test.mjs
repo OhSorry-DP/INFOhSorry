@@ -13,12 +13,13 @@ function load(fetchImpl, dateImpl = Date, options = {}) {
   const exports = {};
   vm.runInNewContext(options.fastDump === false ? slowDumpCode : fastDumpCode, { exports, require: name => {
     if (name === './dbr-history') return {};
+    if (name === './diagLog') return { addDiagLine: options.addDiagLine ?? (() => {}) };
     if (name === '../../shared/dataSource') return { DATA_BASE: 'https://fixture.invalid/data' };
     if (name === '../../shared/match') return { norm: x => String(x).toLowerCase(), slotToDiff: x => x };
     if (name === '../../shared/uploadSnapshot') return { PLAY_CSV_KEYS: [], PLAY_CSV_LEGACY_KEYS: [], buildPlayErrorRow() {}, isPlayErrorRow() { return false; } };
     return {};
   }, fetch: fetchImpl, Date: dateImpl, URL, crypto: options.crypto ?? { randomUUID: () => '00000000-0000-4000-8000-000000000001' }, AbortController, setTimeout, clearTimeout,
-    localStorage: options.localStorage ?? { getItem: () => null, setItem() {} },
+    localStorage: options.localStorage ?? { getItem: () => null, setItem() {}, removeItem() {} },
     window: { infohsorry: { serviceStatus: { get: async () => ({ uploadEnabled: true }) } } }, console: options.console ?? { warn() {}, log() {} }, Map, Set, BigInt, JSON, Math, Number, String, Object, Array, Promise, Error, TypeError });
   return exports;
 }
@@ -87,7 +88,9 @@ test('계정별 캐시 격리 및 TTL 만료 후 재조회', async () => {
 
 test('업로드 users payload 공식값 제외와 1001행 실패 전파, INF 0 유지', async () => {
   assert.match(source, /p_star:\s*null/);
-  assert.doesNotMatch(source.slice(source.indexOf('body: JSON.stringify({', source.indexOf('upsert_user`')), source.indexOf('}),\n    });', source.indexOf('upsert_user`'))), /p_(?:sp_cpi|sp_star|r_star):/);
+  const profileRpc = source.indexOf('/rpc/upsert_user_upload_profile');
+  assert.ok(profileRpc >= 0);
+  assert.doesNotMatch(source.slice(source.indexOf('body: JSON.stringify({', profileRpc), source.indexOf('}),\n    });', profileRpc)), /p_(?:sp_cpi|sp_star|r_star):/);
   assert.match(source, /played_version:\s*PLAYED_VERSION_INF/);
   assert.match(source, /SCORE_UPSERT_CHUNK_SIZE = 1000/);
   assert.match(source, /SCORE_UPSERT_CHUNK_SIZE = 1000[\s\S]*?scoreRows\.slice\(i \* SCORE_UPSERT_CHUNK_SIZE, \(i \+ 1\) \* SCORE_UPSERT_CHUNK_SIZE\)/);
@@ -107,7 +110,7 @@ async function testUploadProfileRealCall() {
     const fetch = async (url, opts = {}) => {
       calls.push({ url, opts });
       if (url.includes('/hist/')) return histReply ?? { ok: true, status: 200, json: async () => hist };
-      if (url.includes('/rpc/upsert_user')) return { ok: true, status: 200, json: async () => null };
+      if (new URL(url).pathname === '/rest/v1/rpc/upsert_user_upload_profile') return { ok: true, status: 200, json: async () => null };
       if (url.includes('/rpc/upsert_user_radar')) return { ok: true, status: 200, json: async () => null };
       if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => songs };
       if (url.includes('/rpc/upsert_scores')) return { ok: scoreStatus === 200, status: scoreStatus, text: async () => 'fail' };
@@ -123,7 +126,7 @@ async function testUploadProfileRealCall() {
   };
   let out = await run({ histReply: { ok: true, status: 200, json: async () => [[100,3,5,2200,0,'2026-10-23T01:02:03.123000Z','2026-10-23',1,null,1500]] } });
   assert.equal(out.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, 0);
-  assert.equal(out.calls.filter(c => c.url.includes('/rpc/upsert_user')).length, 1);
+  assert.equal(out.calls.filter(c => new URL(c.url).pathname === '/rest/v1/rpc/upsert_user_upload_profile').length, 1);
   out = await run({ histReply: { ok: true, status: 200, json: async () => [] } });
   assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
   out = await run({ histReply: { ok: false, status: 404 } });
