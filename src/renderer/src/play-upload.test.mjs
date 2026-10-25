@@ -442,7 +442,7 @@ test('saveOnce 실제 저장 경계: A→B 경로, 미취득 생략, append 성�
 });
 test('기존 예약·초기 2초·재시작 pending·종료 흐름과 IPC 연결 유지', () => {
   const app = read('./App.tsx'); const main = read('../../main/index.ts'); const preload = read('../../preload/index.ts');
-  assert.match(app, /AUTO_UPLOAD_MIN_GAP_MS = 0/);
+  assert.match(app, /AUTO_UPLOAD_MIN_GAP_MS = 3 \* 60 \* 1000/);
   assert.equal(load(read('./initialAutoUpload.ts')).INITIAL_AUTO_UPLOAD_STABLE_MS, 2000);
   assert.match(app, /INITIAL_AUTO_UPLOAD_DELAY_MS = INITIAL_AUTO_UPLOAD_STABLE_MS/);
   assert.match(app, /onPlayAppend\?\.\(\(\{ iidxId \}\) => runIfDue\(iidxId\)\)/);
@@ -455,20 +455,20 @@ test('기존 예약·초기 2초·재시작 pending·종료 흐름과 IPC 연결
   assert.equal(main.match(/startPlayLogger\(\{/g).length, 1);
 });
 
-test('CSV 증가 알림은 마지막 업로드 직후 다음 스냅샷에서 바로 due, 초기 안정 대기 2초 유지', async () => {
+test('CSV 증가 알림은 기존 runIfDue 예약을 깨운다: 3분 간격과 초기 안정 대기 2초 유지', async () => {
   const app = read('./App.tsx');
   const scheduling = app.slice(app.indexOf('    let initialTimer: number | null = null;'), app.indexOf('    const runManual ='));
   const id = 'C123456789012'; const scope = { iidxId: id, epoch: 1 };
   const state = { bundleReady: true, scope, rowsRevision: 1, expectedBundle: {} };
   const initialAutoUploadSucceededRef = { current: true }; const autoUploadBusyRef = { current: false };
-  const scheduled = []; const uploads = []; let now = 100_000; let last = 100_000;
+  const scheduled = []; const uploads = []; let now = 200_000; let last = 100_000;
   const api = load(`export function setup() { ${scheduling} return runIfDue; }`, {}, {
     uploadStateRef: { current: state }, sessionRef: { current: { pid: 123, generation: 1 } },
     lastSnapshotRef: { current: { iidxId: id, generation: 1 } }, accountScopeRef: { current: scope },
     selectedViewerIdRef: { current: id }, initialAutoUploadSucceededRef, autoUploadBusyRef,
     rowsRef: { current: [1] }, isFloorSeedCurrent: (a, b) => a.epoch === b.epoch,
     readLastUploadAt: () => last, isUploadDue: (at, time, gap) => time - at >= gap,
-    Date: class extends Date { static now() { return now; } }, AUTO_UPLOAD_MIN_GAP_MS: 0, INITIAL_AUTO_UPLOAD_DELAY_MS: 2000,
+    Date: class extends Date { static now() { return now; } }, AUTO_UPLOAD_MIN_GAP_MS: 180_000, INITIAL_AUTO_UPLOAD_DELAY_MS: 2000,
     uploadIdentityOk: () => ({ ok: true, id }),
     tryUpload: async trigger => { uploads.push(trigger); return { kind: 'success' }; },
     window: { setTimeout: (callback, delay) => { scheduled.push({ callback, delay }); return scheduled.length; }, clearTimeout() {} },
@@ -477,11 +477,10 @@ test('CSV 증가 알림은 마지막 업로드 직후 다음 스냅샷에서 바
   const runIfDue = api.setup();
   const onAppend = ({ iidxId }) => runIfDue(iidxId);
   onAppend({ iidxId: 'C999999999999' }); assert.equal(uploads.length, 0);
+  onAppend({ iidxId: id }); assert.equal(uploads.length, 0);
+  now = last + 180_000;
   onAppend({ iidxId: id }); await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(uploads, ['auto']); assert.equal(scheduled.length, 0);
-  autoUploadBusyRef.current = true;
-  onAppend({ iidxId: id }); await new Promise(resolve => setImmediate(resolve));
-  assert.deepEqual(uploads, ['auto']);
   initialAutoUploadSucceededRef.current = false; autoUploadBusyRef.current = false; uploads.length = 0;
   onAppend({ iidxId: id }); assert.equal(scheduled.length, 1);
   assert.equal(scheduled[0].delay, 2000); assert.equal(uploads.length, 0);

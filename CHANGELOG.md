@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 0.0.153 — 2026-10-25 자동 업로드 2초 반복 긴급 수정
+
+- 0.0.152 에서 자동 업로드 최소 간격을 0 으로 바꾼 뒤, 기록 변화가 없어도 업로드가 끝나면 곧바로 다음 업로드가 판정돼 약 2초마다 업로드·프로필 저장·완료 통지가 반복됐다(운영 Pages 로그에서 0.0.152 사용자 4명 확인). 3분 최소 간격을 되돌려 0.0.151 과 같은 주기로 묶는다(10b8285 revert). 반복 판정 자체의 원인은 별도로 고친다.
+- 테스트: play-upload·uploadDue·supabase-buffer·buffer-presentation·initialAutoUpload·play-upload-refresh 64/64, typecheck 통과.
+
 ### 0.0.152 — 2026-10-25 업로드 완료 통지가 실제로 나가게 · 기록 변경마다 업로드
 
 - **완료 통지·DBR 자동 저장이 막혀 있던 원인** — 렌더러 CSP `connect-src` 에 `https://iidx.in` 이 없어, 점수 업로드 뒤 `iidx.in/auth/*`·`/api/dump-trigger?upload_complete=1`·`/api/me/dbr-scores` 요청이 브라우저 단에서 차단됐다(서버 로그 0건, 실패는 콘솔에만). `src/renderer/index.html` 허용 목록에 추가.
