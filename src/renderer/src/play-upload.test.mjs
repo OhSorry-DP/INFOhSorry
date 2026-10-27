@@ -17,7 +17,7 @@ function load(source, dependencies = {}, globals = {}) {
   return exports;
 }
 const shared = load(read('../../shared/uploadSnapshot.ts'));
-const keys = Array.from(shared.PLAY_CSV_KEYS);
+const keys = Array.from(shared.PLAY_CSV_SPEED_KEYS);
 const source = read('./supabaseSync.ts');
 function sync(globals = {}) {
   return load(source, { '../../shared/uploadSnapshot': shared,
@@ -25,25 +25,26 @@ function sync(globals = {}) {
     './dbr-history': { getDbrRecentData: () => ({ complete: true, rows: [] }), getDbrRecentDates: () => ({ complete: true, dates: [] }), validateDbrHistory: () => true },
     './diagLog': { addDiagLine() {} } }, globals);
 }
-const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : '001']));
+const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : key === 'play_speed' ? '1.00' : '001']));
 const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`).join(',') + '\r\n';
 const csv = rows => keys.join(',') + '\n' + rows.map(csvLine).join('');
 const plain = x => JSON.parse(JSON.stringify(x));
 
-test('19/21 정확한 헤더만 허용하고 추가 열은 헤더 오류', () => {
+test('19/21/22 정확한 헤더만 허용하고 추가 열은 헤더 오류', () => {
   const api = sync();
-  const legacy = keys.slice(0, 19);
-  const current = keys;
+  const legacy = shared.PLAY_CSV_LEGACY_KEYS;
+  const current = shared.PLAY_CSV_KEYS;
   assert.equal(api.parsePlayHistoryDetailed(legacy.join(',') + '\n').errorCode, undefined);
   assert.equal(api.parsePlayHistoryDetailed(current.join(',') + '\n').errorCode, undefined);
-  const extra = [...current, 'unexpected'];
+  assert.equal(api.parsePlayHistoryDetailed(keys.join(',') + '\n').errorCode, undefined);
+  const extra = [...keys, 'unexpected'];
   assert.equal(api.parsePlayHistoryDetailed(extra.join(',') + '\n').errorCode, -9);
 });
 test('두 헤더와 두 행 길이를 섞어 읽고 실제 버전은 보존', () => {
   const api = sync();
   const base = row(1); base.title = 'plain'; base.app_version = 'app-real'; base.game_version = 'game-real';
-  const legacyValues = keys.slice(0, 19).map(key => base[key]);
-  const currentValues = keys.map(key => base[key]);
+  const legacyValues = shared.PLAY_CSV_LEGACY_KEYS.map(key => base[key]);
+  const currentValues = shared.PLAY_CSV_KEYS.map(key => base[key]);
   const legacyHeader = shared.PLAY_CSV_LEGACY_KEYS;
   const legacyCsv = `${legacyHeader.join(',')}\n${legacyValues.join(',')}\n${currentValues.join(',')}\n`;
   const legacyParsed = api.parsePlayHistory(legacyCsv);
@@ -53,17 +54,22 @@ test('두 헤더와 두 행 길이를 섞어 읽고 실제 버전은 보존', ()
   const currentHeaderInput = `${shared.PLAY_CSV_KEYS.join(',')}\n${legacyValues.join(',')}\n${currentValues.join(',')}\n`;
   const currentHeaderRows = api.parsePlayHistory(currentHeaderInput);
   assert.equal(currentHeaderRows[0].app_version, ''); assert.equal(currentHeaderRows[1].game_version, 'game-real');
+  const speedValues = keys.map(key => base[key]);
+  const speedHeaderRows = api.parsePlayHistory(`${keys.join(',')}\n${speedValues.join(',')}\n`);
+  assert.equal(speedHeaderRows[0].play_speed, '1.00');
 });
-test('20/22열 행은 거부하고 quote, CRLF/LF, 잘린 마지막 레코드 의미 유지', () => {
+test('20/23열 행은 거부하고 quote, CRLF/LF, 잘린 마지막 레코드 의미 유지', () => {
   const api = sync(); const source = row(1);
   source.title = '한글, "인용"\\줄\n개행';
-  const line19 = keys.slice(0,19).map(key => `"${source[key].replaceAll('"','""')}"`).join(',');
-  const line21 = keys.map(key => `"${source[key].replaceAll('"','""')}"`).join(',');
-  const bad20 = line19 + ',extra'; const bad22 = line21 + ',x';
-  const input = `${keys.slice(0,19).join(',')}\r\n${line19}\r\n${bad20}\n${line21}\n${bad22}\n"broken`;
+  const line19 = shared.PLAY_CSV_LEGACY_KEYS.map(key => `"${source[key].replaceAll('"','""')}"`).join(',');
+  const line21 = shared.PLAY_CSV_KEYS.map(key => `"${source[key].replaceAll('"','""')}"`).join(',');
+  const line22 = keys.map(key => `"${source[key].replaceAll('"','""')}"`).join(',');
+  const bad20 = line19 + ',extra'; const bad23 = line22 + ',x';
+  const input = `${shared.PLAY_CSV_LEGACY_KEYS.join(',')}\r\n${line19}\r\n${bad20}\n${line21}\n${line22}\n${bad23}\n"broken`;
   const detail = api.parsePlayHistoryDetailed(input);
-  assert.equal(detail.rows.length, 2); assert.equal(detail.rows[0].title, source.title);
-  assert.deepEqual(plain(detail.lastCompleteError), { columns: 22 });
+  assert.equal(detail.rows.length, 3); assert.equal(detail.rows[0].title, source.title);
+  assert.deepEqual(plain(detail.lastCompleteError), { columns: 23 });
+  assert.equal(detail.rows[2].play_speed, source.play_speed);
 });
 test('업로드 결과 오류 코드, 버전 보존, 오류 생성 시 요청 시각 사용', () => {
   const fixed = '2026-10-17T00:00:00.000Z';
@@ -95,12 +101,26 @@ test('오류 행은 DBR/완주/자동 배열에서 제외하고 정상 lamp -1�
   assert.equal(api.evaluateAutomaticArrange([normal,error]).reason,'current_not_completed');
 });
 
+test('속도 적격 배치만 현재·이전 비교에 사용하고 속도 판인 마지막 행은 제외', () => {
+  const api = sync();
+  const make = (lamp, bp, ex, timestamp, speed = '1.00') => ({ ...row(timestamp), timestamp:String(timestamp), song_id:'80123', difficulty:'DPA', notes:'1', judge_16:'1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', source:'playdata', battle_flag:'0', settings_p1_11:'1 2 0 0 5 4 0 0 0 0 0', clear_lamp:String(lamp), miss_count:String(bp), ex_score:String(ex), play_speed:speed });
+  const result = api.evaluateAutomaticArrange([make(5,40,1500,1), make(7,10,2200,2,'0.70'), make(5,35,1600,3)]);
+  assert.equal(result.previous.lamp, 5); assert.equal(result.previous.bp, 40); assert.equal(result.previous.ex, 1500);
+  assert.equal(result.count, 2);
+  assert.equal(api.evaluateAutomaticArrange([make(5,35,1600,3,'0.70')]).reason, 'speed_not_normal');
+});
+test('속도 값은 엄격한 1 표기만 적격이며 plays 최근 100행에는 속도·결측 행을 보존', () => {
+  const api = sync(); const values = ['1','1.00',' 1.0 ','0.70','', ' ', 'NaN','Infinity','1e0','0x1',1,null];
+  assert.deepEqual(values.map(value => api.isNormalSpeedPlay({ ...row(1), play_speed:value })), [true,true,true,false,false,false,false,false,false,false,false,false]);
+  const rows = [row(1), { ...row(2), play_speed:'0.70' }, { ...row(3), play_speed:'' }];
+  assert.deepEqual(plain(api.parseRecentPlays(csv(rows))), rows);
+});
 test('101??? ??? 100?: ?? SP/DP/??, ?? source ???? ?? ?? ??', () => {
   const rows = Array.from({ length: 101 }, (_, i) => row(i));
   const parsed = plain(sync().parseRecentPlays(csv(rows)));
   assert.deepEqual(parsed, rows.slice(1));
-  assert.equal(keys.length, 21);
-  assert.equal(keys.at(-1), 'game_version');
+  assert.equal(keys.length, 22);
+  assert.equal(keys.at(-1), 'play_speed');
   assert.deepEqual(parsed.map(play => play.source), rows.slice(1).map(play => play.source));
   assert.equal(parsed.some(play => play.source === 'playdata'), true);
   assert.equal(parsed.some(play => play.source === 'currentsong'), true);
@@ -196,18 +216,19 @@ test('전송 순간 재확인: serviceStatus 대기 중 게임이 종료되어�
     plays: [row(0)], gameRecognized: async () => recognized })).ok, true);
   assert.equal(body, undefined);
 });
-const actualCsv = `timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source
-2026-10-14T14:48:45.825Z,80121,"Bang Pad(Werk Mix)",SPA,1662,1637,656,325,126,-1,49.25,C,"271 161 219 38 53 385 164 138 7 28 68 32 64 66 316 236","1 1 1 0 5 1 0 0 0 0 1","0 2 0 0 5 0 0 0 0 0 0",1,0,8,currentsong
-2026-10-14T14:51:17.972Z,80126,"The 88's Instigation",SPH,1672,1788,719,350,114,-1,53.47,C,"304 161 225 33 57 415 189 132 7 17 66 20 105 127 281 194","1 1 1 0 5 0 0 0 0 0 1","1 1 1 0 5 1 0 0 0 0 1",1,0,90,currentsong
-2026-10-14T11:14:50.321Z,80118,"NEPHILIM DELTA",DPA,1631,1825,674,477,154,1,55.95,B,"292 224 232 39 79 382 253 150 5 31 77 21 179 189 277 214","0 2 0 0 5 0 0 0 0 0 0","0 2 0 0 5 0 0 0 0 0 0",0,0,24,playdata`
+const actualCsv = `timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version,play_speed
+2026-10-14T14:48:45.825Z,80121,"Bang Pad(Werk Mix)",SPA,1662,1637,656,325,126,-1,49.25,C,"271 161 219 38 53 385 164 138 7 28 68 32 64 66 316 236","1 1 1 0 5 1 0 0 0 0 1","0 2 0 0 5 0 0 0 0 0 0",1,0,8,currentsong,,,1.00
+2026-10-14T14:51:17.972Z,80126,"The 88's Instigation",SPH,1672,1788,719,350,114,-1,53.47,C,"304 161 225 33 57 415 189 132 7 17 66 20 105 127 281 194","1 1 1 0 5 0 0 0 0 0 1","1 1 1 0 5 1 0 0 0 0 1",1,0,90,currentsong,,,0.70
+2026-10-14T11:14:50.321Z,80118,"NEPHILIM DELTA",DPA,1631,1825,674,477,154,1,55.95,B,"292 224 232 39 79 382 253 150 5 31 77 21 179 189 277 214","0 2 0 0 5 0 0 0 0 0 0","0 2 0 0 5 0 0 0 0 0 0",0,0,24,playdata,,,1.00`
 const actualCsvWithFinalLf = actualCsv.slice(0, -1) + String.fromCharCode(10);
 const actualRows = () => sync().parseRecentPlays(actualCsvWithFinalLf.replaceAll(String.fromCharCode(10), String.fromCharCode(13, 10)));
 const p1With = (r, index, value) => { const words = r.settings_p1_11.split(' '); words[index] = String(value); return { ...r, settings_p1_11: words.join(' ') }; };
 test('실제 19열 3줄: Bang Pad DBR 램프 변환, 부적격 두 줄도 plays 유지', async () => {
   const api = sync(); const rows = api.parseRecentPlays(actualCsvWithFinalLf.replaceAll(String.fromCharCode(10), String.fromCharCode(13, 10)));
-  assert.equal(keys.length, 21); assert.equal(rows.length, 3);
+  assert.equal(keys.length, 22); assert.equal(rows.length, 3);
   assert.deepEqual(plain(api.decodeBattleRandomPlay(rows[0])), { diff: 3, lamp: 1, ex_score: 1637 });
   assert.equal(api.decodeBattleRandomPlay(rows[1]), null); assert.equal(api.decodeBattleRandomPlay(rows[2]), null);
+  assert.equal(api.decodeBattleRandomPlay({ ...rows[0], play_speed: '' }), null);
   assert.deepEqual(plain(api.playsForGame(rows, true)), plain(rows));
   const calls = [];
   const songs = async () => new Map([[OhsorryNorm.norm('Bang Pad(Werk Mix)'), [{ song_id: 9001, title: 'Bang Pad(Werk Mix)', ac: 2, legen: 0 }]]]);

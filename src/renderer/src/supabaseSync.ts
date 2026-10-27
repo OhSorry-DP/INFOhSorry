@@ -1,4 +1,4 @@
-import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
+import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, PLAY_CSV_SPEED_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
 // Supabase 새 디비 (users + scores) upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
 // ohSorry / INFOhSorry 가 같은 DB 공유 (iidx_id text PK 라 namespace 호환).
 //
@@ -1298,12 +1298,13 @@ export function parsePlayHistoryDetailed(csv: string): PlayHistoryParse {
   const header = records.shift();
   const legacyHeader = !!header && header.length === PLAY_CSV_LEGACY_KEYS.length && PLAY_CSV_LEGACY_KEYS.every((key, i) => header[i] === key);
   const currentHeader = !!header && header.length === PLAY_CSV_KEYS.length && PLAY_CSV_KEYS.every((key, i) => header[i] === key);
-  if (!legacyHeader && !currentHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
+  const speedHeader = !!header && header.length === PLAY_CSV_SPEED_KEYS.length && PLAY_CSV_SPEED_KEYS.every((key, i) => header[i] === key);
+  if (!legacyHeader && !currentHeader && !speedHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
   const valid: PlayCsvRow[] = [];
   let lastCompleteError: { columns: number } | null = null;
   for (const row of records) {
-    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
-    const mapped = Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i] ?? ''])) as PlayCsvRow;
+    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length && row.length !== PLAY_CSV_SPEED_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
+    const mapped = Object.fromEntries(PLAY_CSV_SPEED_KEYS.map((key, i) => [key, row[i] ?? ''])) as PlayCsvRow;
     valid.push(mapped);
     lastCompleteError = null;
   }
@@ -1331,6 +1332,13 @@ export function isCompletedPlay(row: PlayCsvRow): boolean {
   return j.length === 16 && j.every(Number.isFinite) && j.every(Number.isInteger) && Number.isFinite(notes) && notes > 0
     && (j[0] + j[1] + j[2]) + (j[5] + j[6] + j[7]) + j[10] + j[11] === notes;
 }
+
+export function isNormalSpeedPlay(row: PlayCsvRow): boolean {
+  const value: unknown = row.play_speed;
+  if (typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  return /^\d+(?:\.\d+)?$/.test(trimmed) && Number(trimmed) === 1;
+}
 const strictNumber = (value: string): number | null => {
   if (!value.trim()) return null;
   const n = Number(value);
@@ -1354,13 +1362,14 @@ export function evaluateAutomaticArrange(history: PlayCsvRow[] | PlayHistoryPars
   const rows = parsed.rows;
   const last = rows[rows.length - 1];
   if (!last || isPlayErrorRow(last) || !isCompletedPlay(last)) return { excluded: true as const, reason: 'current_not_completed' };
+  if (!isNormalSpeedPlay(last)) return { excluded: true as const, reason: 'speed_not_normal' };
   const currentRow = last;
   if (!['DPB', 'DPN', 'DPH', 'DPA', 'DPL'].includes(currentRow.difficulty)) return { excluded: true as const, reason: 'not_dp' };
   const currentSettings = currentRow.settings_p1_11.trim().split(/\s+/).map(Number);
   const validSettings = (p: number[]) => p.length === 11 && p.every(Number.isInteger) && p[3] >= 0 && p[3] <= 1
     && [p[0],p[5]].every(v => v >= 0 && v <= 4) && p[2] === 0 && p[9] === 0 && p[10] === 0;
   const decode = (row: PlayCsvRow, p: number[]) => {
-    if (row.source !== 'playdata' || row.battle_flag !== '0' || !validSettings(p)) return null;
+    if (!isNormalSpeedPlay(row) || row.source !== 'playdata' || row.battle_flag !== '0' || !validSettings(p)) return null;
     return decodeArrangeScore(row);
   };
   const current = decode(currentRow, currentSettings);
@@ -1388,7 +1397,7 @@ export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecogni
 export const GAUGE_COLUMN = 'gauge_p2_w78';
 export interface BattleRandomScore { diff: number; lamp: number; ex_score: number }
 export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
-  if (isPlayErrorRow(row)) return null;
+  if (isPlayErrorRow(row) || !isNormalSpeedPlay(row)) return null;
   const p1 = row.settings_p1_11.split(' ').map(Number);
   if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
     || row.battle_flag !== '1' || p1[0] !== 1 || p1[5] !== 1 || p1[2] !== 1) return null;

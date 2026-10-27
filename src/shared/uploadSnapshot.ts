@@ -61,7 +61,8 @@ export type UploadOutcome =
 
 export const PLAY_CSV_LEGACY_KEYS = ["timestamp", "song_id", "title", "difficulty", "notes", "ex_score", "pgreat", "great", "miss_count", "clear_lamp", "dj_rate_pct", "dj_rank", "judge_16", "settings_p1_11", "settings_p2_11", "battle_flag", "gauge_p1_w77", "gauge_p2_w78", "source"] as const;
 export const PLAY_CSV_KEYS = [...PLAY_CSV_LEGACY_KEYS, "app_version", "game_version"] as const;
-export type PlayCsvRow = Record<(typeof PLAY_CSV_KEYS)[number], string>;
+export const PLAY_CSV_SPEED_KEYS = [...PLAY_CSV_KEYS, 'play_speed'] as const;
+export type PlayCsvRow = Record<(typeof PLAY_CSV_KEYS)[number], string> & { play_speed?: string };
 
 export const PLAY_ERROR_CODES = {
   id: -1, skipped: -2, memory: -3, write: -4, marker: -5, offsets: -6,

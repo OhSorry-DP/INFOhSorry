@@ -95,13 +95,13 @@ Reflux `Utils.FetchGameState` 와 같은 규칙입니다.
 
 ## 6. CSV 열
 
-한 줄 = 결과 화면 한 번. 신규 CSV 헤더는 21개 열입니다. 기존 19개 헤더는 그대로 유지하며, 업로드 파서는 19/21열 혼합 행을 모두 허용합니다.
+한 줄 = 결과 화면 한 번. 신규 CSV 헤더는 22개 열입니다. 기존 19·21열 헤더도 유지하며 업로드 파서는 19/21/22열 혼합 행을 모두 허용합니다.
 
 ```csv
-timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version
+timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version,play_speed
 ```
 
-기존 19개 열 뒤에 `app_version`, `game_version`이 추가됩니다. 19열 레거시 행의 두 버전 값은 빈 문자열로 정규화합니다. 버전 확보에 실패해도 오류 코드나 offsets fallback 버전을 넣지 않고 빈 문자열을 사용합니다.
+기존 19개 열 뒤에 `app_version`, `game_version`, `play_speed`가 추가됩니다. 19열 레거시 행은 세 값을, 21열 행은 `play_speed`를 빈 문자열로 정규화합니다. 버전 확보에 실패해도 오류 코드나 offsets fallback 버전을 넣지 않고 빈 문자열을 사용합니다. 속도 값은 문자열로 보존합니다.
 
 기록·업로드 오류 행도 21개 문자열 필드입니다. `timestamp`는 오류 발생 시각 또는 업로드 시각의 실제 ISO 시각이고, `song_id`부터 `source`까지 18개 칸은 같은 음수 정수 문자열입니다. 마지막 두 버전 칸은 확보한 실제 버전이며 확보하지 못하면 빈 문자열입니다. 오류 판별은 timestamp와 버전을 제외한 18개 값이 같은 음수 정수 문자열인지로 합니다. `clear_lamp=-1` 하나만으로 오류로 판정하지 않습니다. INF 배틀 기록에는 `clear_lamp=-1`인 정상 행이 있습니다.
 
@@ -305,15 +305,14 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 | `src/main/playLog.ts` | `playSpeedFromSettings = 0x17a0`, `playSpeedFromSettingValue()`, `formatPlaySpeed()`, `PLAY_LOG_HEADER_V2`(21열)·`PLAY_LOG_HEADER`(22열), `PlaySnapshot.playSpeed`, `resolvePlay` 의 `speedChanged`/`chartNotes` 분기 |
 | `src/main/playLogger.ts` | 속도 단계 읽기, `speedChanged` 일 때 SP/DP 노트 수 조회 후 `resolvePlay` 호출, 계정 CSV 첫 줄이 21열 헤더면 22열로 교체(`upgradeHeader`) |
 | `src/main/playLog.test.mjs`, `playLogger.test.mjs` | 22열·`play_speed` 값, 변환표, 속도 ≠ 1.00 경로 테스트 추가 |
-| `src/shared/uploadSnapshot.ts` | **변경 없음** (공용 `PLAY_CSV_KEYS` 는 21열 그대로) |
+| `src/shared/uploadSnapshot.ts` | 기존 19열·21열 키는 유지하고, 선택적 `play_speed` 를 포함한 22열 키를 추가 |
 
-### 11.5 서버·업로더 작업 목록 (이 변경으로 깨지거나 해야 할 것)
+### 11.5 업로드·점수 정책
 
-1. **업로더가 새 CSV 를 거부합니다.** `src/renderer/src/supabaseSync.ts` 의 `parsePlayHistoryDetailed` 는 헤더가 19열 또는 21열 키와 정확히 일치해야 하며, 22열 헤더면 `-9`(헤더 불일치) 오류 행만 업로드합니다. 행 길이도 19/21 이 아니면 버립니다. 서버 연동을 되살리려면 `PLAY_CSV_KEYS` 에 `play_speed` 를 넣고 헤더·행 검사에 22열(과 기존 19/21열)을 허용해야 합니다.
-2. **서버 스키마**: 최근 플레이 R2 JSON(`PUT /api/me/plays`)과 Supabase 쪽에 `play_speed`(문자열 `"0.70"` 또는 빈 값 → `numeric(4,2) NULL`) 필드를 받도록 추가.
-3. **옛 줄**은 19/21칸 그대로 남아 있고 `play_speed` 는 NULL 입니다. **1.00 으로 간주하지 마세요**. 그 시절 속도는 알 수 없습니다.
-4. **점수 비교 정책**: 같은 곡·난이도라도 속도가 다르면 점수를 비교할 수 없습니다(느리면 쉬움). 랭킹·추천·레이더·DBR 에 섞기 전에 `play_speed IS NULL OR play_speed = 1.00` 만 쓸지 정해야 합니다. 속도 ≠ 1.00 판은 `clear_lamp = -1` 이고 게임 자체도 기록으로 저장하지 않는 플레이입니다.
-5. `isCompletedPlay` 등 완주 판정은 `judge_16` 합과 `notes` 를 쓰므로 속도 ≠ 1.00 판도 통과합니다. 제외하려면 `play_speed` 를 확인하세요.
+1. 업로드 파서는 19·21·22열의 정확한 헤더와 각 길이의 행을 지원합니다. 22열은 끝의 `play_speed` 를 보존하고, 옛 19·21열은 빈 문자열로 정규화합니다. 다른 길이의 완성 행은 기존처럼 제외하며 마지막 행 오류 처리를 유지합니다.
+2. 현재 INFOhSorry의 직접 R2 경로(`PUT /api/me/plays`)는 CSV의 `play_speed` 를 저장하는 별도 서버 스키마 변경이 필요하지 않습니다. 앱은 최근 plays에 속도 판과 속도 결측 행도 모두 포함합니다.
+3. 옛 19/21열 행은 파싱 시 빈 문자열이 되며, 이를 1.00으로 간주하지 않습니다. 기록 당시 속도는 알 수 없습니다.
+4. 자동 배치 저장과 DBR 자동 저장은 `play_speed` 가 숫자 문자열 형식으로 확인되고 값이 정확히 1인 행만 사용합니다. 과거 비교에서도 속도가 1로 확인되지 않은 행은 제외합니다. 일반 점수 후보·전송은 앱에서 차단하지 않으며, 게임이 1.00 외 속도 판을 베스트에 저장하지 않는 동작에 맡깁니다(사용자 결정 2026-10-28; 베스트 불변은 실기 확인 대기).
 
 ### 11.6 검증 상태 (2026-10-28)
 
