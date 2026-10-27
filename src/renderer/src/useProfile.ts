@@ -178,6 +178,8 @@ interface ReadFieldResult {
   error?: string;
 }
 
+const lastPlayAccountPublishError = { current: '' };
+
 async function readField(key: FieldKey, remote: RemoteProfile): Promise<ReadFieldResult> {
   const slot = effective(key, remote);
   if (!slot) return { value: null, processMissing: false, error: '프로필 offset 없음' };
@@ -201,7 +203,26 @@ async function readField(key: FieldKey, remote: RemoteProfile): Promise<ReadFiel
   } else {
     t = t.replace(/\x00/g, '').trim();
   }
-  return { value: t || null, processMissing: false };
+  const value = t || null;
+  if (key === 'iidxId' && value && /^[A-Z]\d{12}$/.test(value)) {
+    try {
+      const before = await window.infohsorry.session.getState();
+      if (typeof before.pid === 'number' && Number.isSafeInteger(before.pid) && before.pid > 0) {
+        const after = await window.infohsorry.session.getState();
+        if (after.pid === before.pid) {
+          await window.infohsorry.memory.setPlayAccount({ pid: before.pid, iidxId: value });
+          lastPlayAccountPublishError.current = '';
+        }
+      }
+    } catch (e) {
+      const message = `플레이 계정 ID 전달 실패: ${(e as Error)?.message ?? String(e)}`;
+      if (lastPlayAccountPublishError.current !== message) {
+        lastPlayAccountPublishError.current = message;
+        addDiagLine(message);
+      }
+    }
+  }
+  return { value, processMissing: false };
 }
 
 // 업로드 직전 재검증용 — React state 를 거치지 않고 그 순간의 메모리에서 IIDX ID 를 직접 읽는다.

@@ -265,6 +265,7 @@ export function startHttpServer(
   getRemoteUser?: () => unknown,
   osrCacheDir?: string,
   recommendQuery?: (kind: string, params: Record<string, unknown>) => Promise<unknown>,
+  isGameRecognized?: () => boolean,
 ): { server: http.Server; notifyMeUpdate: () => void; connectInfo: () => Promise<ConnectInfo>; stop: () => void } {
   const sse = setupSseBroadcast(refluxManager);
 
@@ -320,7 +321,7 @@ export function startHttpServer(
           'access-control-allow-origin': '*',
           'cache-control': 'no-cache',
         });
-        res.end(JSON.stringify(user ?? { error: 'no remote user yet' }));
+        res.end(JSON.stringify({ ...(user && typeof user === 'object' ? user : user ? {} : { error: 'no remote user yet' }), game_recognized: isGameRecognized ? isGameRecognized() : false }));
         return;
       }
 
@@ -361,7 +362,7 @@ export function startHttpServer(
       }
 
       // INF 자체 renderer(LAN 원격제어 화면) — /index.html(exact) 와 /assets/* 만 로컬 빌드(out/renderer)에서 서빙.
-      //   오소리웹은 /assets/ 를 안 쓰고 index 는 '/' 로 받으므로, 이 둘만 INF 전용으로 떼어내면 루트 마운트와 충돌 없음.
+      //   🔴 루트 승격된 오소리웹 v3 도 /assets/app-*.js 를 쓴다 — renderer 에 없는 /assets/* 는 오소리웹(serveOsr)으로 넘긴다.
       if (urlPath === '/index.html' || urlPath === '/assets' || urlPath.startsWith('/assets/')) {
         const filePath = join(rendererDir, urlPath);
         try {
@@ -372,6 +373,7 @@ export function startHttpServer(
           });
           res.end(buf);
         } catch {
+          if (osrCacheDir && urlPath.startsWith('/assets/')) { await serveOsr(urlPath, OSR_ORIGIN, osrCacheDir, res); return; }
           res.writeHead(404);
           res.end('Not Found');
         }

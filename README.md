@@ -18,8 +18,8 @@ IIDX INFINITAS DP Play Data Viewer — 일렉트론 데스크탑 앱입니다. I
 
 | 파일 | 설명 |
 |---|---|
-| `ohSorryScoreINF.Setup.0.0.142.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
-| `ohSorryScoreINF-0.0.142-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
+| `ohSorryScoreINF.Setup.0.0.155.exe` | NSIS 설치 마법사 — 시작 메뉴 / 바로가기 자동 생성 |
+| `ohSorryScoreINF-0.0.155-portable.exe` | 포터블 — 설치 X, 더블 클릭만으로 실행 |
 
 > **방화벽** — 첫 실행 시 Windows 방화벽이 묻습니다. LAN 원격 제어 사용하려면 사적 네트워크 허용.
 
@@ -74,6 +74,8 @@ PC1 (호스트, 게임 실행 PC)에서 앱 실행 → PC2 브라우저에서 `h
 폴더 열기는 앱의 "폴더 열기" 버튼으로 한 번에.
 
 ## 변경 이력
+
+- SP 대표★ 계산을 곡★ 자산 계약으로 연결하고 CPI와 독립적으로 전달하도록 정리.
 
 전체 변경 이력은 [CHANGELOG.md](CHANGELOG.md) 를 참고하세요.
 

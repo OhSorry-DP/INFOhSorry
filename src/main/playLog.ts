@@ -13,7 +13,7 @@ export const PLAY_LOG_LAYOUT = {
   battleFlagDelta: 0x28,      // 배틀 플래그 (PlaySettings 기준). Reflux 소스의 0x20 은 이 빌드에서 안 맞음
   gaugeWordP1: 77,            // judgeData 기준 int32 인덱스 (Reflux PlayData.cs)
   gaugeWordP2: 78,
-  playSpeedFromJudge: 0x68c,  // judgeData + 0x68c = 곡 재생 속도 배율 (float32, 0.70 = 0.7배). 0x89c 에 같은 값 사본
+  playSpeedFromSettings: 0x17a0, // playSettings + 0x17a0 = 옵션창 「곡 재생 속도」 단계 (int32). 속도 = 1.5 - 0.05 x 값 (값 10 = 1.00)
   playDataWords: 8,          // [곡 ID, 난이도, EX, 미스, PGREAT, GREAT, 클리어 램프, ...]
   currentSongWords: 5,        // [곡 ID, 난이도(스타일 안 인덱스), ?, ?, 노트 수]. 배틀에서도 채워진다
   songStride: 0x730,          // 곡 엔트리 크기
@@ -26,13 +26,18 @@ export const PLAY_LOG_LAYOUT = {
 
 export const DIFF_NAMES = ['SPB', 'SPN', 'SPH', 'SPA', 'SPL', 'DPB', 'DPN', 'DPH', 'DPA', 'DPL'];
 
-// 예전(19열) 헤더. play_speed 열 추가 전에 만든 plays.csv 의 첫 줄을 새 헤더로 올릴 때 비교용
-export const PLAY_LOG_HEADER_V1 = [
+// play_speed 열 추가 전(21열) 헤더. 그 전에 만든 plays.csv 의 첫 줄을 새 헤더로 올릴 때 비교용
+export const PLAY_LOG_HEADER_V2 = [
   'timestamp', 'song_id', 'title', 'difficulty', 'notes', 'ex_score', 'pgreat', 'great', 'miss_count',
   'clear_lamp', 'dj_rate_pct', 'dj_rank', 'judge_16', 'settings_p1_11', 'settings_p2_11', 'battle_flag',
-  'gauge_p1_w77', 'gauge_p2_w78', 'source',
+  'gauge_p1_w77', 'gauge_p2_w78', 'source', 'app_version', 'game_version',
 ].join(',');
-export const PLAY_LOG_HEADER = PLAY_LOG_HEADER_V1 + ',play_speed';
+export const PLAY_LOG_HEADER = PLAY_LOG_HEADER_V2 + ',play_speed';
+
+// 옵션창 속도 단계(int32) -> 배율. 0.80/0.85/0.90/1.00/1.05 에서 14/13/12/10/9 로 확인. 범위 밖이면 null
+export function playSpeedFromSettingValue(v: number): number | null {
+  return Number.isInteger(v) && v >= 0 && v <= 30 ? Math.round((1.5 - 0.05 * v) * 100) / 100 : null;
+}
 
 // 속도 배율 float 를 CSV 값으로: 정상 범위(0.1~10)면 소수 둘째 자리, 아니면 빈 값
 export function formatPlaySpeed(v: number | null | undefined): string {
@@ -115,13 +120,21 @@ export interface ResolvedPlay {
 // - 배틀(플래그 ON)은 게임이 기록을 저장하지 않아 PlayData 가 비거나 이전 플레이 값이 남을 수 있다.
 //   그래서 배틀이면 항상 CurrentSong 에서 곡 ID·난이도·노트 수를 읽고, EX·미스·PGREAT·GREAT 는
 //   판정 블록(양쪽 합)으로 계산한다. 난이도는 SP 인덱스(SPB=0..SPL=4)다.
-// - 배틀이 아니면 PlayData 를 그대로 쓴다.
+// - 곡 재생 속도가 1.00 이 아니면(speedChanged) 게임이 PlayData 를 저장하지 않으므로(옵션창 안내문 그대로 비어 있음 확인)
+//   배틀과 같은 방식(CurrentSong + 판정 블록)으로 만든다. 다만 DP 일 수 있어 난이도는 노트 수로 SP/DP 를 가린다:
+//   CurrentSong 노트 수가 곡 목록의 DP 차트 노트 수와 같고 SP 와 다르면 DP(난이도 = 인덱스 + 5), 아니면 SP.
+//   둘 다 같거나 못 찾으면 P2 판정 합이 0 보다 크면 DP 로 본다.
+// - 그 외 배틀이 아니면 PlayData 를 그대로 쓴다.
 // - 어느 쪽도 쓸 수 없으면 저장할 플레이가 아니므로 null.
 export function resolvePlay(input: {
   playData: number[];
   currentSong: number[];
   judge16: number[];
   battle: boolean;
+  /** 곡 재생 속도가 1.00 이 아님 (PlayData 가 저장되지 않는 플레이) */
+  speedChanged?: boolean;
+  /** CurrentSong 곡의 SP/DP 같은 난이도 차트 노트 수 (곡 목록에서 조회). speedChanged 일 때 SP/DP 판별용 */
+  chartNotes?: { sp: number; dp: number };
 }): ResolvedPlay | null {
   const pd = input.playData;
   const cs = input.currentSong;
@@ -138,6 +151,25 @@ export function resolvePlay(input: {
       great,
       miss: j[3] + j[4] + j[8] + j[9], // BAD + POOR (양쪽)
       lamp: -1, // 배틀은 클리어 램프가 저장되지 않는다
+      source: 'currentsong',
+      currentNotes: cs[4],
+    };
+  }
+  if (input.speedChanged) {
+    if (cs[0] === 0 || j.length < 10) return null;
+    const n = input.chartNotes;
+    const p2 = j[5] + j[6] + j[7] + j[8] + j[9];
+    const isDp = n && n.dp !== n.sp && (cs[4] === n.dp || cs[4] === n.sp) ? cs[4] === n.dp : p2 > 0;
+    const pgreat = j[0] + j[5];
+    const great = j[1] + j[6];
+    return {
+      songId: cs[0],
+      diff: isDp ? cs[1] + 5 : cs[1],
+      exScore: 2 * pgreat + great,
+      pgreat,
+      great,
+      miss: j[3] + j[4] + j[8] + j[9],
+      lamp: -1, // 저장되지 않은 플레이라 클리어 램프를 알 수 없다
       source: 'currentsong',
       currentNotes: cs[4],
     };
@@ -166,6 +198,8 @@ export interface PlaySnapshot {
   p2Settings: number[];
   gauge: [number, number];
   source: PlaySource;
+  appVersion: string;
+  gameVersion: string;
   /** 곡 재생 속도 배율 (0.7 = 0.7배). 읽지 못했으면 null/생략 */
   playSpeed?: number | null;
 }
@@ -193,6 +227,8 @@ export function buildPlayRow(s: PlaySnapshot): string {
     s.gauge[0],
     s.gauge[1],
     s.source,
+    csvField(s.appVersion),
+    csvField(s.gameVersion),
     formatPlaySpeed(s.playSpeed),
   ].join(',');
 }

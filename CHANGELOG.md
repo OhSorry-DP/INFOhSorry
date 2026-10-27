@@ -1,6 +1,101 @@
-﻿# INFOhSorry 변경 이력
+# INFOhSorry 변경 이력
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
+
+### 0.0.155 — 2026-10-27 원격모드(`?remote`) 화면이 동작하지 않던 문제
+
+- 오소리웹 v3 루트 승격 뒤 index 가 본체 번들을 `./assets/app-*.js` 로 불러오는데, 로컬 서버가 `/assets/*` 를 INF 자체 화면(`out/renderer`) 전용으로 떼어 404 를 돌려줘 `http://ohsorry.local/?remote` 가 HTML 만 뜨고 아무 동작도 하지 않았다.
+- `out/renderer` 에 없는 `/assets/*` 는 오소리웹(serveOsr)으로 넘긴다(`http-server.ts`). INF 자체 자산은 기존대로 로컬에서 서빙.
+- typecheck 통과. 실기 확인은 하지 않았다.
+
+### 0.0.154 — 2026-10-25 0.0.153 되돌림 · 점수 무변경 업로드 차단 · 최근 플레이 R2 직접 쓰기
+
+- 0.0.153(3분 최소 간격 복원)을 되돌렸다(98f8f58). 0.0.152 의 「기록 변경마다 즉시 판정」은 의도된 동작이다. 0.0.153 에서는 기록이 서버에 반영되지 않았다.
+- 고친 것은 「점수가 안 바뀌었는데도 업로드가 나가던 것」 하나: 프로필 저장을 점수 0행 판정 뒤로 옮기고, 계정별로 직전에 성공 전송한 점수를 기억해 R2 반영 전에 같은 점수를 다시 보내지 않는다(`supabaseSync.ts`). 점수가 바뀐 업로드는 그대로 즉시 나간다.
+- 최근 100판은 프로필 RPC 의 `p_plays` 대신, 결과 화면을 감지할 때마다 `PUT https://iidx.in/api/me/plays` 로 R2 `plays/{id}.json` 에 바로 쓴다(DBR·배치와 같은 Bearer 인증, 게임 인식·계정 일치 재확인, 계정별 직렬, 재시도 큐 없음). 점수 변화 없는 판(FAIL·미갱신)도 바로 반영된다. Web 의 같은 날 변경(`/api/me/plays`·getPlays 새 키 우선)이 먼저 배포돼야 한다.
+- 서버 쪽 원인(같은 날 Admin `sql/39`): fast_dump 테이블 RLS 정책이 없어 완료 통지 enqueue 가 항상 거부돼, 0.0.152 부터 INF 업로드 뒤 덤프가 예약되지 않았다.
+- 테스트: supabase-buffer·scoreSync·uploadDue·initialAutoUpload·play-upload·play-upload-refresh 68/68, typecheck 통과. 변이(프로필 순서 원복·성공 이력 무시·p_plays 복원) 검출. 렌더러 전체 236 중 기존 실패 9건(dbr-recent·analysis-engine 등, 0.0.152 에서도 동일)은 무관. 실기 확인은 하지 않았다.
+
+### 0.0.152 — 2026-10-25 업로드 완료 통지가 실제로 나가게 · 기록 변경마다 업로드
+
+- **완료 통지·DBR 자동 저장이 막혀 있던 원인** — 렌더러 CSP `connect-src` 에 `https://iidx.in` 이 없어, 점수 업로드 뒤 `iidx.in/auth/*`·`/api/dump-trigger?upload_complete=1`·`/api/me/dbr-scores` 요청이 브라우저 단에서 차단됐다(서버 로그 0건, 실패는 콘솔에만). `src/renderer/index.html` 허용 목록에 추가.
+- 완료 통지 인증(`/auth/issue`·`/auth/exchange`·`/auth/session`)과 완료 POST 를 응답 본문까지 요청당 5초, 완료 단계 전체 30초로 제한(abort). 저장된 원격 토큰이 401·로그아웃·계정 불일치면 지우고 1회 재발급. 결과를 진단 로그에 `[inf-dump] stage=complete result=… reason=… elapsed_ms=…` 한 줄로 남긴다(토큰·티켓 미기록).
+- 프로필 저장을 `upsert_user_upload_profile`(Admin `sql/37`)로 바꿔, 점수 변화 없이 프로필만 저장될 때 dump-user 가 3분마다 돌던 것을 없앴다. 점수가 바뀐 업로드는 완료 통지로 덤프·빠른 게시가 이어진다.
+- 자동 업로드 3분 최소 간격 제거 — 기록이 바뀔 때마다 올린다(업로드 중이면 겹치지 않고 다음 변경에서). 수동 업로드 5분 쿨다운은 그대로.
+- 프로필 카드 밑 「잠정 · 덤프 후 반영」과 갱신 시각 옆 별값 「계산 중/실패」 문구를 진단 로그로 옮겼다(DP★·r★·SP★ 상태가 바뀔 때 한 줄, 완료는 값 포함). 실패하면 갱신 옆에 「다시 계산」 버튼만 남는다.
+- 테스트: supabase-buffer·uploadDue·play-upload·buffer-presentation 58/58, typecheck 통과. 변이(인증 타임아웃 무력화·무효 토큰 삭제 제거·프로필 RPC 원복·업로드 간격 상수) 검출 확인.
+
+### 0.0.151 — 2026-10-25 점수 업로드 완료 통지 켬
+
+- `supabaseSync.ts`: `FAST_DUMP_ENQUEUE_INF = true`. 모든 점수 청크가 성공하면 `https://iidx.in/api/dump-trigger?upload_complete=1` 로 완료를 알려, 서버가 세대를 발급하고 빠른 경로(Edge)가 그리드·Recent 를 먼저 게시한다. 실패해도 업로드 결과는 그대로이고 기존 느린 덤프가 폴백이다.
+- 테스트: supabase-buffer 12/12(기본 ON·OFF 치환 둘 다 검사)·typecheck 통과. 상수를 false 로 되돌리면 4건 실패로 검출.
+
+### 0.0.150 — 2026-10-24 점수 업로드 완료 통지 (기본 OFF)
+
+- `supabaseSync.ts` `uploadProfile`: `FAST_DUMP_ENQUEUE_INF`(false) 를 켜면 모든 점수 청크가 성공한 뒤 기존 원격 Bearer(`existingRemoteBearer`)로 `https://iidx.in/api/dump-trigger?upload_complete=1` 에 완료를 알린다(`credentials:'omit'`). 5초 timeout, fetch 예외·timeout·5xx·손상 응답은 같은 UUID 로 1회 재전송, 4xx·`accepted:false` 는 재시도 없음. 실패·Bearer 없음은 로그만이고 업로드 결과는 바뀌지 않는다. 버전 bump 없음 — 다음 릴리즈에 포함, 켜는 것은 별도 릴리즈.
+- 테스트: supabase-buffer 12/12·typecheck 통과. 전체 src 의 기존 실패 3건(`compute/analysis-engine`·`compute/accepted-bundle` fixture)은 이번 변경과 무관.
+
+### 0.0.150 — 2026-10-24 업로드 필터 날짜 파싱 메모
+
+- `supabaseSync.ts` 동기화 블록(정본 `ohsorry-data/.github/scripts/score-history.mjs`)의 `scoreHistoryDay`·`scoreHistoryInstant` 가 성공한 파싱 결과만 `Map` 에 메모한다(각 상한 32,768개, 넘으면 비움). 실패 입력은 저장하지 않아 예외는 그대로다. 업로드 동작은 변경 없음. 버전 bump 없음 — 다음 릴리즈에 포함.
+
+### 0.0.149 — 2026-10-23 Supabase scores 버퍼화 4단계: R2 hist 기준 업로드 필터
+
+- INF 업로드에 정본 `score-history.mjs` `filterScoreHistoryRows` 의 동기 사본을 반영했다. NULL 보충·당일 교체·버전 비교·33 늦은 업로드 유지. 빈 hist·404·조회 실패 시 전체 전송하고 업로더 별칭 미적용, 0행이어도 프로필 등 후처리 유지. 릴리즈 게시와 구버전 전환 완료를 구분한다.
+- 🔴 기존 3단계 배포 안내 대신 [data-serving.md](../docs/data-serving.md)의 「4단계 결과」를 따른다. 빈 별칭표 선게시 → data(누적 OFF) → gist → Web → Admin → INF → 구 업로더 비중 확인·SQL 03 → 01 → 누적 ON·운영 읽기 전용 대조 → 다음 daily snapshot 직후 89388691 시범 삭제 순이다. compact cron 중단으로 DB 가 증가한다. 운영 배포·삭제는 대기.
+- 랭킹·1위 R2 집계(R01~R10)·전 유저 삭제 확대·필터 O(n²) 최적화(3천 행 1.9초)·삭제 후 재유입 행 수 측정은 후속이다. 버전 bump 없음.
+
+### 0.0.149 — 2026-10-22 Supabase scores 버퍼화 3단계: 일반 Recent·grid R2 전환·업로드 직후 공식값 쓰기 제거
+
+- `supabaseSync.ts`: 일반 Recent(날짜·차트·PREV)를 R2 `hist/{ID}.json`, grid 를 R2 `user/{ID}.json` 의 `dp` 로 계산(계정별 60초 캐시). `make_recent_dates`·`make_recent_data`·`make_grid_data` RPC 읽기 제거. users 업로드는 `p_star` null·r★/SP CPI/★ 생략(공식값은 덤프가 반영), ereter★·단위·plays·원본 레이더는 유지. scores 업로드·1000행 청크 그대로.
+- `App.tsx`: 계산 카드의 로컬 ★ 들에 「잠정 · 덤프 후 반영」, 업로드 진단 문구 변경. 기록기 루프·업로드 경계 불변.
+- `scoreSync.ts`: 정비 계획을 R2 hist 비교 후보로(Supabase scores 조회·DELETE SQL 생성 제거, 실행기 없음).
+- 검증: 테스트 80/80, typecheck·build 통과, 변이 3종 검출. 실기 미검증.
+
+### v0.0.148 — 2026-10-22 DBR Recent 를 R2 로 전환
+
+- DBR 모드 Recent 의 날짜·차트를 Supabase RPC(`make_recent_dates`/`make_recent_data` DBR 모드) 대신 R2 `dbr/{ID}.json` 의 `history` 로 계산한다. 계산기 `src/renderer/src/dbr-history.ts` 는 웹 `shared/dbr-history.js` 이식(11열 계약·KST·bigint ID·직전 기록).
+- 곡 정보 없는 행은 SQL INNER JOIN 처럼 제외. 이력 미완료·HTTP 실패는 빈 목록이 아니라 오류로 표시, 계정 전환 중 늦은 응답은 버린다. 일반 Recent 결과에서 -10 행 제외.
+- 검증: dbr-history 6/6, dbr-recent·play-upload 41/41, `npm run typecheck` 통과. 실기 미검증.
+- 🔴 Supabase DBR 행 삭제 전에 이 버전이 배포돼야 한다(구버전은 DBR Recent 를 잃는다).
+
+### v0.0.147 — 2026-10-17 SP 대표★: 곡★(β)+onlyOSR 커널 연결
+
+- SP 대표★를 새 공용 커널(곡★ `est*` + onlyOSR nativeV3)로 계산한다. CPI 가 없는 유저·곡도 ★ 가 나오며, CPI(`cpi`/`cpiInt`)와 ★ 는 독립 필드로 전달된다.
+- SP 자원 로드 순서 normTitle→onlyOSR→cpiStar→spSkillCpi→cpi.json. offline fixture SHA(onlyOSR·spSkillCpi·cpi.json) 갱신.
+- 검증: compute-kernels 신규 SP 테스트 통과(남은 실패는 기존 fixture SHA drift), `npm run typecheck`·`npm run release` 통과. 실게임 미검증.
+
+### v0.0.146 — 2026-10-17 플레이 기록 진단: 오류 행·버전 열
+
+- 운영에서 성적은 올라오는데 plays 가 빈 배열(`[]`)인 계정이 있었다. 유저 PC 자료 없이 원인을 보려고 기록기 탈락 이유를 plays 에 남긴다.
+- CSV 21열: 기존 19열 뒤에 `app_version`(INF 버전)·`game_version`(게임 빌드 datecode, 못 읽으면 빈 값). 새 파일만 21열 헤더로 만들고 기존 19열 파일은 그대로 이어 쓴다. 업로드 파서는 19/21열 헤더와 19/21열 행을 둘 다 받는다.
+- 오류 행: `timestamp` 는 실제 시각, 버전 2칸은 실제 값, 나머지 18칸은 같은 음수 코드. 기록기(CSV) -1 ID 못 읽음 · -2 저장할 판 없음 · -3 메모리 읽기 실패 · -4 CSV 쓰기 실패 · -5 붙은 뒤 30초 마커 미발견 · -6 offsets 읽기 실패 · -7 offsets 필수 키 누락. 업로드(payload 만) -8 CSV 없음 · -9 헤더 불일치 · -10 유효 행 0 · -11 읽기 실패. 같은 오류는 게임 프로세스당 1회. ID 를 모르면(-1·-4 포함) diag 로그에만 남긴다.
+- 업로드: `[]` 대신 오류 행 1개를 보낸다. pending 재전송도 매번 CSV 를 다시 읽는다. 게임 미인식이면 기존처럼 plays 생략.
+- 기록기 ID: 자체 메모리 읽기가 실패하면 renderer 가 정상 읽은 ID 를 같은 pid 일 때만 쓴다(사용자 스캔 offset 사용자 대응).
+- 기록기: 붙어 있는 동안 `offsets.txt` 의 mtime·크기가 바뀌면 떼고 다시 붙는다. 기존 500ms tick·결과 전환·1.5초 대기·detach 조건은 그대로 — 실기 재검증 필요.
+- DBR·배치 자동 저장은 오류 행을 건너뛴다. 서버(SQL·덤프) 무변경, 웹 getPlays·Knowledge 는 21열·오류 행 해석 반영(ohSorryWeb).
+- 검증: 전체 테스트 230개 중 실패 3건(기존 fixture SHA 3건, 작업 전과 동일)·신규 실패 0, `npm run typecheck`·`npm run build` 통과. 실게임 미검증.
+
+### v0.0.145 — 2026-10-16 DBR 자동 저장 곡 ID 수정
+
+- DBR 자동 저장이 게임 곡 ID(CSV `song_id`, 예 80123)를 웹 `songs.song_id`(내부 identity) 자리에 그대로 보내던 버그 — 없는 곡이면 저장 실패, 번호가 겹치면 다른 곡에 저장될 수 있었다. 배치 자동 저장과 같은 제목 매칭(정규화 제목 + INF 비트, SPL 은 legen, 후보가 정확히 1곡일 때만)으로 내부 ID 를 찾아 보내고, 못 찾거나 애매하면 그 판만 건너뛴다. 서버 무변경. 이미 잘못 저장된 기존 행 정리는 별도.
+- 검증: `playLog`·`play-upload` 테스트 36/36, tsc web/node 통과.
+
+### v0.0.144 — 2026-10-15 INF DP 배치 자동 저장
+
+- 플레이 기록기 append 알림을 받으면 App의 별도 `onPlayAppend` 구독에서 `readPlayCsv`로 CSV 전체 이력을 읽는다. 마지막 행을 이번 판으로 판정하고, 같은 곡·난이도의 이전 완주 일반 DP 기록과 램프·BP·EX를 비교한다. 확정 완주식은 `notes > 0 && (j[0]+j[1]+j[2]) + (j[5]+j[6]+j[7]) + j[10] + j[11] === notes`이며, `judge_16`이 정확히 16개의 유한 정수가 아니면 완주가 아니다. 양손의 PGREAT+GREAT+GOOD와 양쪽 콤보 브레이크를 합쳐 notes와 비교한다. 콤보 브레이크는 BAD+놓친 POOR라 공POOR는 완주 합계에서 제외하고, BP(`miss_count`)는 공POOR를 포함한 게임 BP 값을 그대로 쓴다.
+- 완주한 일반 DP에서 램프 증가·BP 감소·EX 증가 중 2개 이상 개선되면 `/api/me/chart-arrange` PUT 자동 저장 후보가 된다. 첫 기록이나 동점은 개선으로 세지 않는다. 기본 정배는 -2이며, 자동 저장은 웹에서 손으로 입력한 배치도 덮어쓴다.
+- 중복 키 Set과 계정별 단순 Promise 체인, 기존 DBR 수준 인증을 재사용한다. 기록기·main·preload는 바꾸지 않았다. 빠른 연속 판의 개별 저장은 보장하지 않는다. 웹 원격 토큰(Bearer, 쿠키 없음) 비밀번호 검사 예외는 ohSorryWeb `437725d`에서 구현됐다. 운영 반영에는 웹 배포와 ohSorryAdmin `sql/32_chart_arrange_regular.sql` 운영 적용이 필요하다.
+- 검증: `node --test src/main/playLog.test.mjs src/renderer/src/play-upload.test.mjs` 34/34 통과, `npm run typecheck`의 node/web tsc 통과. 기존 `spSkillCpi` fixture SHA 3건은 별도 기존 항목이며, 이번 대상 테스트의 신규 실패는 0건이다. 실기·운영 배포는 미확인이다.
+
+### v0.0.143 — 2026-10-15 플레이 기록기·최근 100판 업로드·DBR 자동 저장
+
+- 플레이 기록기: 결과 화면마다 메모리 값을 CSV 한 줄(19열)로 저장한다. 배틀은 CurrentSong + 판정 블록 양쪽 합으로 곡·점수를 정하고 `source` 열(playdata/currentsong)로 구분한다. 정의는 `docs/play-logger.md`.
+- 저장 위치는 실제 게임 계정 폴더 `userData/users/{IIDX ID}/plays.csv` — 계정을 못 읽으면 저장하지 않는다. 예전 공용 `play-log/plays.csv` 는 그대로 둔다(이관 없음).
+- 저장 직후 기존 자동 업로드 예약을 깨워 최근 100판(원본 19열 문자열)을 `upsert_user` 의 `p_plays` 로 함께 올린다. 3분 최소 간격·2초 안정 대기는 그대로.
+- 게임 인식 게이트는 새 plays 전송·DBR 전송에만 건다 — 기존 수동·밀린·종료 업로드는 게임 없이도 그대로 실행되고 plays 만 빠진다.
+- DBR 자동 저장: 배틀 ON + 양쪽 RANDOM + AUTO SCRATCH 판만 기존 `/api/me/dbr-scores` 에 `improvements_only` 로 보낸다. 램프는 게이지 종류·끝 게이지(`gauge_p2_w78`, 화면 대조 대기)로 정한다 — EASY·ASSIST 80↑ EASY / 60↑ ASSIST, NORMAL 80↑, HARD·EX HARD 0 초과.
+- 원격 모드: `/api/me` 에 `game_recognized` 필드 추가(웹이 신규 원격 로그인 발급 전에 확인).
 
 ### v0.0.142 — 2026-10-05 PlayData 「약점 계산 중」 깜빡임 제거
 

@@ -41,7 +41,7 @@ import { ProfileCard } from './ProfileCard';
 import AccountSelector from './AccountSelector';
 import { readIidxIdFresh, useProfile, type ProfileInfo } from './useProfile';
 import type { RadarValues } from './NotesRadar';
-import { uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
+import { parseRecentPlays, parsePlayHistoryDetailed, evaluateAutomaticArrange, uploadAutomaticArrange, playsForGame, buildUploadPlays, uploadAutomaticDbr, uploadAutomaticPlays, uploadProfile, fetchUserPublic, getSongsCache, getTextageByTitle, type UserPublicInfo } from './supabaseSync';
 import { planScoreSync } from './scoreSync';
 import { buildRemoteUser } from './remoteUser';
 import { IS_BROWSER_REMOTE } from './api';
@@ -65,16 +65,16 @@ function radarSig(r: RadarValues | null | undefined): string {
 
 declare const __APP_VERSION__: string;
 const APP_VERSION = __APP_VERSION__;
-// 실력값 추정 + Supabase 업로드 주기 — 타이머를 쓰지 않는다.
+// 실력값 추정 + Supabase 업로드 — 첫 업로드는 안정 대기 후, 이후 기록 변경 때마다 바로 판정한다.
 //   계정별 마지막 업로드 성공 시각(시스템 시간)을 localStorage 에 찍어 두고, TSV 스냅샷을 얻을 때마다
-//   「지금 − 마지막 업로드 ≥ AUTO_UPLOAD_MIN_GAP_MS(3분)」면 올린다(isUploadDue). 기록이 없으면 바로 올린다.
-//   기록이 바뀔 때마다 판정하므로 10분 주기를 기다리지 않는다(v0.0.125 변경 업로드와 같은 3분 간격).
+//   「지금 − 마지막 업로드 ≥ AUTO_UPLOAD_MIN_GAP_MS(0)」면 올린다(isUploadDue).
+//   기록이 바뀔 때마다 바로 올리며, 업로드 중이면 겹치지 않고 끝난 뒤 다음 변경에서 올린다.
 //   종래 「3분 뒤 첫 업로드 + 10분 setInterval」은 스냅샷이 ref 로만 들어와 무장 effect 가 다시 안 돌면
 //   타이머가 영영 안 걸려 자동 업로드가 통째로 멈췄다.
 //   추가로 앱 종료 / INFINITAS 종료 감지 시 main 이 마지막 업로드를 1회 요청(upload.onFinalRequest).
 //   ※ 리모트 실시간 푸시(me:update SSE) / TSV reload 는 이 주기와 무관(별도 effect).
 // 즉시 올리고 싶으면 콘솔에서 window.updateSupabase() 수동 호출.
-const AUTO_UPLOAD_MIN_GAP_MS = 3 * 60 * 1000; // 기록 변경 업로드 최소 간격 — 3분(dump-user 20~26초라 겹치지 않는다)
+const AUTO_UPLOAD_MIN_GAP_MS = 0; // 기록 변경 업로드 최소 간격 없음 — 기록이 바뀔 때마다 올린다(업로드 중 중복은 autoUploadBusyRef 가 막는다)
 const INITIAL_AUTO_UPLOAD_DELAY_MS = INITIAL_AUTO_UPLOAD_STABLE_MS;
 const MANUAL_UPLOAD_COOLDOWN_MS = 5 * 60 * 1000;
 const LAST_UPLOAD_KEY_PREFIX = 'infohsorry.lastUploadAt.';
@@ -343,12 +343,13 @@ export default function App() {
         const plan = await planScoreSync(id, tsv.rows, opts);
         console.table(plan.counts);
         console.table(plan.deletions.map((d) => ({
-          scoreId: d.scoreId,
+          histIndex: 'histIndex' in d ? d.histIndex : null,
+          songId: 'songId' in d ? d.songId : null,
           title: d.title,
           slot: d.slot,
           dateKst: d.dateKst,
-          dbExScore: d.db.exScore,
-          dbLamp: d.db.lamp,
+          dbExScore: d.db?.exScore ?? null,
+          dbLamp: d.db?.lamp ?? null,
           tsvExScore: d.tsv?.exScore ?? null,
           tsvLamp: d.tsv?.lamp ?? null,
           category: d.category,
@@ -356,23 +357,11 @@ export default function App() {
         if (plan.ambiguousSamples.length > 0) console.table(plan.ambiguousSamples);
         console.log(`tsv: 차트 ${plan.tsvStats.charts} / 플레이 ${plan.tsvStats.played} / 곡 매칭 실패 ${plan.tsvStats.unmatched}`);
         if (plan.blockedByRatio) {
-          console.warn('[syncScores] 삭제 대상이 INF 기록의 30% 를 넘어 SQL 을 만들지 않았다 — tsv 가 오염됐거나 부분 파일일 수 있다. 확인 후에도 진행하려면 syncScores(id, { force: true })');
+          console.warn('[syncScores] R2 비교가 비율 기준으로 차단됐다. 후보를 실행하지 않았다.');
           return plan;
         }
-        if (!plan.sql) {
-          console.log('[syncScores] 삭제할 행이 없다.');
-          return plan;
-        }
-        console.log(plan.sql);
-        if (plan.sql) {
-          try {
-            await navigator.clipboard.writeText(plan.sql);
-            console.log('생성된 SQL을 클립보드에 복사했습니다.');
-          } catch (e) {
-            console.log('SQL 클립보드 복사 실패:', e);
-          }
-        }
-        console.log('Supabase SQL Editor에 붙여넣어 실행한 뒤, 게임을 끈 상태에서 수동 업로드로 정상 기록을 다시 올려라.');
+        if (plan.deletions.length > 0) console.warn('[syncScores] R2 비교 후보이며 실행되지 않았음.');
+        else console.log('[syncScores] R2 비교 후보 없음.');
         return plan;
       } catch (e) {
         console.error('[syncScores] 실패:', e);
@@ -1101,6 +1090,21 @@ export default function App() {
     rResources, !!ratingData, workerCurrent, value => raiseFloor('rStarFloor', value));
   const spTask = useComputeTask<SpSkillResult>('sp-star', workerInput, {},
     spResources, true, workerCurrent);
+  const starTaskStatusRef = useRef<{ dp?: string; r?: string; sp?: string }>({});
+  useEffect(() => {
+    const observed = [
+      ['dp', 'DP★', dpTask.task.status, dpTask.task.value?.star],
+      ['r', 'r★', rTask.task.status, rTask.task.value],
+      ['sp', 'SP★', spTask.task.status, spTask.task.value?.star],
+    ] as const;
+    for (const [key, label, status, value] of observed) {
+      if (starTaskStatusRef.current[key] === status) continue;
+      starTaskStatusRef.current[key] = status;
+      if (status === 'pending') addDiagLine(`${label} 계산 중`);
+      else if (status === 'ready') addDiagLine(`${label} 계산 완료 ${typeof value === 'number' ? value.toFixed(2) : '-'}`);
+      else if (status === 'error') addDiagLine(`${label} 계산 실패: 알 수 없는 오류`);
+    }
+  }, [dpTask.task.status, dpTask.task.value, rTask.task.status, rTask.task.value, spTask.task.status, spTask.task.value]);
   const dp12StarResult = dpTask.value;
   const userRStar = rTask.value;
   const spStarResult = spTask.value;
@@ -1367,11 +1371,29 @@ export default function App() {
   const uploadSnapshot = useCallback(async (snapshot: UploadSnapshot, trigger: string): Promise<UploadOutcome> => {
     if (IS_BROWSER_REMOTE) return { kind: 'skip-no-snapshot', reason: 'browser-remote' };
     const startedAt = Date.now();
+    const gameRecognized = async (): Promise<boolean> => (await window.infohsorry.session.getState()).pid != null
+      && !(await readIidxIdFresh()).processMissing;
+    if (await gameRecognized()) {
+      try {
+        const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+        const csv = typeof readPlayCsv === 'function'
+          ? await readPlayCsv(snapshot.iidxId)
+          : { ok: false, error: 'play CSV read unavailable' };
+        snapshot = { ...snapshot, appVersion: APP_VERSION, plays: buildUploadPlays({ ...csv, appVersion: csv.appVersion ?? APP_VERSION, gameVersion: csv.gameVersion ?? '' }) };
+      } catch (error) {
+        console.warn('[upload] play CSV refresh failed:', error);
+        snapshot = { ...snapshot, appVersion: APP_VERSION, plays: buildUploadPlays({ ok: false, appVersion: APP_VERSION, gameVersion: '' }) };
+      }
+    } else {
+      snapshot = { ...snapshot, plays: undefined };
+    }
     const savePending = window.infohsorry.upload.savePending;
     const saved = typeof savePending === 'function' ? await savePending(snapshot) : { ok: false, error: 'pending save unavailable' };
     if (!saved.ok) console.warn(`[upload] pending save failure trigger=${trigger}: ${saved.error ?? 'unknown'}`);
     try {
       const result = await uploadProfile({
+        gameRecognized,
+        plays: playsForGame(snapshot.plays, await gameRecognized()),
         appVersion: snapshot.appVersion,
         profile: snapshot.profile as ProfileInfo,
         starResult: snapshot.starResult,
@@ -1390,6 +1412,10 @@ export default function App() {
         addDiagLine(`업로드 실패: 서버 전송 오류(${result.error ?? '알 수 없는 오류'}) — 다음 시도에서 재전송`);
         return { kind: 'http-failure', error: result.error ?? 'upload failed', durationMs };
       }
+      if ((trigger === 'auto' || trigger === 'initial') && snapshot.plays) {
+        try { await uploadAutomaticDbr(snapshot.plays, snapshot.iidxId, gameRecognized); }
+        catch (e) { console.warn('[upload] automatic DBR failed:', e); }
+      }
       const clearPending = window.infohsorry.upload.clearPending;
       const cleared = typeof clearPending === 'function'
         ? await clearPending(snapshot.iidxId)
@@ -1401,6 +1427,7 @@ export default function App() {
       }
       if (trigger !== 'pending') writeLastUploadAt(snapshot.iidxId, Date.now());
       console.log(`[upload] success duration=${durationMs}ms -> pending cleared`);
+      addDiagLine('점수 업로드 완료 · 공식값은 덤프 후 반영');
       return { kind: 'success', durationMs };
     } catch (e) {
       const durationMs = Date.now() - startedAt;
@@ -1596,12 +1623,69 @@ export default function App() {
     (window as unknown as { updateSupabase: () => void }).updateSupabase = runManual;
     (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual = runManual;
     (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue = runIfDue;
+    const arrangeKeysByAccount = new Map<string, Set<string>>();
+    const arrangeChainByAccount = new Map<string, Promise<void>>();
+    const playsChainByAccount = new Map<string, Promise<void>>();
+    const handlePlaysAppend = ({ iidxId }: { iidxId: string }): void => {
+      const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+      if (!readPlayCsv) return;
+      const previous = playsChainByAccount.get(iidxId) ?? Promise.resolve();
+      const next = previous.catch(() => {}).then(async () => {
+        let result;
+        try { result = await readPlayCsv(iidxId); } catch { result = { ok: false as const }; }
+        const plays = buildUploadPlays(result.ok
+          ? { ...result, appVersion: result.appVersion ?? APP_VERSION, gameVersion: result.gameVersion ?? '' }
+          : { ok: false, appVersion: APP_VERSION, gameVersion: '' });
+        const gameRecognized = async (): Promise<boolean> => {
+          if ((await window.infohsorry.session.getState()).pid == null) return false;
+          const fresh = await readIidxIdFresh();
+          const normalize = (id: string) => id.trim().replace(/-/g, '').toUpperCase();
+          return !fresh.processMissing && normalize(fresh.iidxId ?? '') === normalize(iidxId);
+        };
+        await uploadAutomaticPlays(plays, iidxId, gameRecognized);
+      }).catch((error: unknown) => { console.warn(`[upload] automatic plays append failed id=${iidxId}:`, error); });
+      playsChainByAccount.set(iidxId, next);
+      void next.finally(() => { if (playsChainByAccount.get(iidxId) === next) playsChainByAccount.delete(iidxId); }).catch(() => {});
+    };
+    const handlePlayAppend = ({ iidxId }: { iidxId: string }): void => {
+      const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+      if (!readPlayCsv) return;
+      const previous = arrangeChainByAccount.get(iidxId) ?? Promise.resolve();
+      const next = previous.then(async () => {
+        const result = await readPlayCsv(iidxId);
+        if (!result.ok) throw new Error(result.error ?? 'play CSV read failed');
+        const parsed = parsePlayHistoryDetailed(result.csv ?? '');
+        const evaluation = evaluateAutomaticArrange(parsed);
+        if (evaluation.excluded) return;
+        const current = evaluation.current;
+        if (!current) return;
+        let keys = arrangeKeysByAccount.get(iidxId);
+        if (!keys) {
+          keys = new Set<string>();
+          arrangeKeysByAccount.set(iidxId, keys);
+        }
+        const key = JSON.stringify([current.timestamp, current.song_id, current.difficulty]);
+        if (keys.has(key)) return;
+        keys.add(key);
+        if (evaluation.count >= 2) {
+          const gameRecognized = async (): Promise<boolean> => (await window.infohsorry.session.getState()).pid != null
+            && !(await readIidxIdFresh()).processMissing;
+          await uploadAutomaticArrange(evaluation, iidxId, gameRecognized);
+        }
+      }).catch((error: unknown) => {
+        console.warn(`[upload] automatic arrange failed id=${iidxId}:`, error);
+      });
+      arrangeChainByAccount.set(iidxId, next);
+    };
+    const offPlayAppend = window.infohsorry.upload.onPlayAppend?.(({ iidxId }) => runIfDue(iidxId));
+    const offArrangeAppend = window.infohsorry.upload.onPlayAppend?.(handlePlayAppend);
+    const offPlaysAppend = window.infohsorry.upload.onPlayAppend?.(handlePlaysAppend);
     const offFinal = window.infohsorry.upload.onFinalRequest(() => void (async () => {
       const outcome = await tryUpload('final');
       setTimeout(() => setVecRecomputeKey((k) => k + 1), 200);
       window.infohsorry.upload.finalDone(outcome);
     })());
-    return () => { cancelInitialTimer(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
+    return () => { cancelInitialTimer(); offPlayAppend?.(); offArrangeAppend?.(); offPlaysAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
   }, []);
 
   // 마지막 스냅샷 이후에도 준비 상태가 바뀔 수 있으므로 타이머를 직접 설정하거나 재확인한다.
@@ -2159,21 +2243,9 @@ export default function App() {
                   · 갱신 {formatRelativeTime(tsvMtime)}
                 </span>
               )}
-              {/* 별값 계산 상태 — 계산 중·실패인 항목만 갱신 표시 옆에 띄우고, 전부 끝나면 숨긴다 */}
               {(() => {
-                const starTasks = [['DP★', dpTask], ['r★', rTask], ['SP★', spTask]] as const;
-                const active = starTasks.filter(([, t]) => t.task.status === 'pending' || t.task.status === 'error');
-                if (active.length === 0) return null;
-                return (
-                  <span role="status" aria-live="polite" className="updated-at">
-                    {active.map(([label, t]) => ` · ${label} ${t.task.status === 'error' ? '계산 실패' : '계산 중'}`).join('')}
-                    {active.some(([, t]) => t.task.status === 'error') && (
-                      <button onClick={() => {
-                        for (const [, t] of active) if (t.task.status === 'error') t.retry();
-                      }}>다시 계산</button>
-                    )}
-                  </span>
-                );
+                const failed = [dpTask, rTask, spTask].filter(t => t.task.status === 'error');
+                return failed.length > 0 ? <button type="button" onClick={() => failed.forEach(t => t.retry())}>다시 계산</button> : null;
               })()}
               {!IS_BROWSER_REMOTE && (() => {
                 const remainingMs = Math.max(0, lastUploadAt + MANUAL_UPLOAD_COOLDOWN_MS - manualUploadNow);

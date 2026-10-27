@@ -8,3 +8,6 @@ npm-debug.log*
 .vscode/
 .idea/
 *.tsbuildinfo
+
+# 세션 작업 메모·로그 — 로컬 전용
+scratchpad/

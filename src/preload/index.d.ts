@@ -18,6 +18,7 @@ import type {
 import type { RemoteProfileMap } from '../shared/profileOffsets';
 import type { InfinitasSessionState } from '../shared/session';
 import type { AccountMeta, TsvChangedEvent, AccountSnapshotRequest, AccountSnapshotResult } from '../shared/account';
+import type { PlayCsvReadResult } from '../shared/uploadSnapshot';
 
 declare global {
   interface Window {
@@ -159,6 +160,7 @@ declare global {
           maxBytes?: number,
           valueOffset?: string,
         ) => Promise<{ ok: boolean; text?: string; error?: string; processMissing?: boolean }>;
+        setPlayAccount: (account: { pid: number; iidxId: string }) => Promise<{ ok: boolean }>;
       };
       shell: {
         showInFolder: (path: string) => Promise<{ ok: boolean }>;
@@ -180,6 +182,8 @@ declare global {
         respond: (payload: { reqId: string; ok: boolean; result?: unknown; error?: string }) => void;
       };
       upload: {
+        readPlayCsv?: (iidxId: string) => Promise<PlayCsvReadResult>;
+        onPlayAppend?: (cb: (event: { iidxId: string }) => void) => () => void;
         onFinalRequest: (cb: () => void) => () => void;
         finalDone: (outcome: import('../shared/uploadSnapshot').UploadOutcome) => void;
         savePending?: (snapshot: import('../shared/uploadSnapshot').UploadSnapshot) => Promise<{ ok: boolean; error?: string; path?: string; bytes?: number }>;

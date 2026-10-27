@@ -1,3 +1,4 @@
+import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
 // Supabase 새 디비 (users + scores) upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
 // ohSorry / INFOhSorry 가 같은 DB 공유 (iidx_id text PK 라 namespace 호환).
 //
@@ -16,10 +17,149 @@
 //
 // fire-and-forget — 실패해도 사용자 경험에 영향 X.
 import type { ProfileInfo } from './useProfile';
+import { addDiagLine } from './diagLog';
 import type { StarResult, SongChart } from '../../shared/types';
 import type { RecInputChart } from '../../shared/recommend';
 import { norm, slotToDiff } from '../../shared/match';
 import { DATA_BASE } from '../../shared/dataSource';
+import { getDbrRecentData, getDbrRecentDates, validateDbrHistory, type DbrHistory } from './dbr-history';
+
+// BEGIN SCORE_HISTORY_UPLOAD_FILTER_SYNC
+// Canonical source: D:/work/ohSorry-data/.github/scripts/score-history.mjs
+// Pure score history merge helpers. Date parsing follows dbr-history.mjs day()/instant().
+
+const SCORE_HISTORY_COLS = 10;
+const scoreHistoryFail: (message: string) => never = (message) => { throw new TypeError(message); };
+const DATE_PARSE_MEMO_LIMIT = 32768;
+const dayMemo = new Map<string, string>();
+const instantMemo = new Map<string, bigint>();
+
+function scoreHistoryDay(value: unknown): string {
+  if (typeof value === 'string' && dayMemo.has(value)) return value;
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)
+    || !Number.isFinite(Date.parse(`${value}T00:00:00Z`))
+    || new Date(`${value}T00:00:00Z`).toISOString().slice(0, 10) !== value) scoreHistoryFail('invalid date_kst');
+  if (dayMemo.size >= DATE_PARSE_MEMO_LIMIT) dayMemo.clear();
+  dayMemo.set(value, value);
+  return value;
+}
+
+function scoreHistoryInstant(value: unknown): bigint {
+  const cached = typeof value === 'string' ? instantMemo.get(value) : undefined;
+  if (cached !== undefined) return cached;
+  const m = typeof value === 'string' && value.match(
+    /^(\d{4}-\d{2}-\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?(Z|[+-]\d{2}(?::?\d{2})?)$/,
+  );
+  if (!m) scoreHistoryFail('date requires a timestamp with timezone (up to 6 fractional digits)');
+  scoreHistoryDay(m[1]);
+  if (+m[2] > 23 || +m[3] > 59 || +m[4] > 59) scoreHistoryFail('invalid timestamp time');
+  const zone = m[6] === 'Z' ? 'Z' : m[6].length === 3 ? `${m[6]}:00`
+    : m[6].includes(':') ? m[6] : `${m[6].slice(0, 3)}:${m[6].slice(3)}`;
+  const ms = Date.parse(`${m[1]}T${m[2]}:${m[3]}:${m[4]}${zone}`);
+  if (!Number.isFinite(ms)) scoreHistoryFail('invalid timestamp timezone');
+  const result = BigInt(ms) * 1000n + BigInt((m[5] || '').padEnd(6, '0'));
+  if (instantMemo.size >= DATE_PARSE_MEMO_LIMIT) instantMemo.clear();
+  instantMemo.set(value, result);
+  return result;
+}
+
+function scoreHistoryInteger(value: unknown, label: string, nullable = false): void {
+  if (nullable && value === null) return;
+  if (typeof value !== 'number' || !Number.isFinite(value) || !Number.isInteger(value)) {
+    scoreHistoryFail(`${label} must be a finite integer${nullable ? ' or null' : ''}`);
+  }
+}
+
+function normalizeScoreHistoryRow(row: unknown, kind: 'hist' | 'incoming', index: number): { row: unknown[]; time: bigint } {
+  if (!Array.isArray(row) || (row.length !== 8 && row.length !== SCORE_HISTORY_COLS)) {
+    scoreHistoryFail(`${kind} row at index ${index} must have 8 or 10 columns`);
+  }
+  const r: unknown[] = row.length === 8 ? [...row, null, null] : [...row];
+  for (const i of [0, 1, 4, 7]) scoreHistoryInteger(r[i], `column ${i}`);
+  if (r[4] === -10 && kind === 'incoming') scoreHistoryFail(`incoming row at index ${index} cannot be DBR (-10)`);
+  if (r[7] !== 0 && r[7] !== 1) scoreHistoryFail(`column 7 at ${kind} row ${index} must be 0 or 1`);
+  for (const i of [2, 3, 8, 9]) scoreHistoryInteger(r[i], `column ${i}`, true);
+  const time = scoreHistoryInstant(r[5]);
+  scoreHistoryDay(r[6]);
+  const kst = new Date(Number(time / 1000n) + 9 * 3600000).toISOString().slice(0, 10);
+  if (kst !== r[6]) scoreHistoryFail(`${kind} row at index ${index}: date_kst does not match date in KST`);
+  return { row: r, time };
+}
+
+const scoreHistoryChartKey = (r: unknown[]) => JSON.stringify([r[0], r[1], r[4], r[7]]);
+const scoreHistoryNaturalKey = (r: unknown[]) => JSON.stringify([r[0], r[1], r[4], r[7], r[6]]);
+const scoreHistoryEx = (r: unknown[]) => (r[3] as number | null) ?? -1;
+const scoreHistoryLamp = (r: unknown[]) => (r[2] as number | null) ?? 0;
+
+/** Merge one SQL-request batch into score history without mutating input arrays. */
+function mergeScoreHistory(histRows: unknown[][], incomingRows: unknown[][]): unknown[][] {
+  if (!Array.isArray(histRows) || !Array.isArray(incomingRows)) scoreHistoryFail('histRows and incomingRows must be arrays');
+  const hist = histRows.map((r, i) => normalizeScoreHistoryRow(r, 'hist', i));
+  const incoming = incomingRows.map((r, i) => normalizeScoreHistoryRow(r, 'incoming', i));
+  const keys = new Set<string>();
+  for (let i = 0; i < hist.length; i += 1) {
+    const r = hist[i].row;
+    if (r[4] === -10) continue;
+    const key = scoreHistoryNaturalKey(r);
+    if (keys.has(key)) scoreHistoryFail(`duplicate natural key in hist at row ${i}: ${key}`);
+    keys.add(key);
+  }
+  const incomingKeys = new Set<string>();
+  for (let i = 0; i < incoming.length; i += 1) {
+    const key = scoreHistoryChartKey(incoming[i].row);
+    if (incomingKeys.has(key)) scoreHistoryFail(`duplicate incoming chart key at row ${i}: ${key}`);
+    incomingKeys.add(key);
+  }
+  const result = hist.map(({ row }) => [...row]);
+  for (const item of incoming) {
+    const row = item.row;
+    if (row[4] === -10) continue;
+    const ck = scoreHistoryChartKey(row);
+    const matches = result.map((r, i) => ({ r, i })).filter(({ r }) => r[4] !== -10 && scoreHistoryChartKey(r) === ck);
+    if (!matches.some(({ r }) => scoreHistoryEx(r) > scoreHistoryEx(row) || (scoreHistoryEx(r) === scoreHistoryEx(row) && scoreHistoryLamp(r) >= scoreHistoryLamp(row)))) {
+      const nk = scoreHistoryNaturalKey(row);
+      const slot = result.findIndex((r) => r[4] !== -10 && scoreHistoryNaturalKey(r) === nk);
+      if (slot < 0) result.push([...row]);
+      else {
+        const old = result[slot];
+        const replacement = [...row];
+        replacement[8] = row[8] ?? (row[3] !== null && row[3] === old[3] ? old[8] : null);
+        replacement[9] = row[9] ?? old[9];
+        result[slot] = replacement;
+      }
+    }
+    for (const old of result) {
+      if (old[4] === -10 || scoreHistoryChartKey(old) !== ck) continue;
+      if (old[9] === null && row[9] !== null) old[9] = row[9];
+      if (old[8] === null && row[8] !== null && row[3] !== null && old[3] === row[3]) old[8] = row[8];
+    }
+  }
+  return result;
+}
+
+/** Return original incoming rows whose canonical merge changes history. */
+function filterScoreHistoryRows(histRows: unknown[][], incomingRows: unknown[][]): unknown[][] {
+  if (!Array.isArray(histRows) || !Array.isArray(incomingRows)) scoreHistoryFail('histRows and incomingRows must be arrays');
+  const baseline = mergeScoreHistory(histRows, []);
+  const normalizedIncoming = incomingRows.map((r, i) => normalizeScoreHistoryRow(r, 'incoming', i));
+  mergeScoreHistory([], incomingRows);
+  const byChart = new Map<string, unknown[][]>();
+  for (const row of baseline) {
+    if (row[4] === -10) continue;
+    const key = scoreHistoryChartKey(row);
+    const group = byChart.get(key) ?? [];
+    group.push(row);
+    byChart.set(key, group);
+  }
+  const changed: unknown[][] = [];
+  for (let i = 0; i < normalizedIncoming.length; i += 1) {
+    const item = normalizedIncoming[i];
+    const group = byChart.get(scoreHistoryChartKey(item.row)) ?? [];
+    if (JSON.stringify(mergeScoreHistory(group, [incomingRows[i]])) !== JSON.stringify(group)) changed.push(incomingRows[i]);
+  }
+  return changed;
+}
+// END SCORE_HISTORY_UPLOAD_FILTER_SYNC
 
 export const SUPABASE_URL = 'https://cvxpeecxiawddmrzbdvn.supabase.co';
 // Legacy JWT anon key (publishable key 는 RLS 호환성 문제로 사용 X) — ohSorry 와 동일
@@ -30,6 +170,8 @@ export const HEADERS = {
   apikey: SUPABASE_KEY,
   Authorization: `Bearer ${SUPABASE_KEY}`,
 };
+const FAST_DUMP_ENQUEUE_INF = true;
+const successfulUploadHist = new Map<string, unknown[][]>();
 
 // 새 디비 변환 매핑 (dbConn.js 와 동일)
 export const DIFF_MAP: Record<string, number> = { BEGINNER: 0, NORMAL: 1, HYPER: 2, ANOTHER: 3, LEGGENDARIA: 4 };
@@ -254,6 +396,8 @@ export async function fetchUserPublic(iidxId: string): Promise<UserPublicInfo> {
 }
 
 export interface UploadInput {
+  plays?: PlayCsvRow[] | null;
+  gameRecognized?: () => Promise<boolean>;
   appVersion: string; // package.json version, e.g. '0.0.9'
   profile: ProfileInfo;
   starResult: StarResult | null; // null = ★ 미산출 (SP 전용·DP 저레벨 전용 유저) → users.star = null
@@ -356,46 +500,14 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   const rawId = profile.iidxId;
   if (!rawId) return { ok: false, error: 'iidx_id 없음' };
   const iidxIdNorm = rawId.replace(/-/g, '');
-
-  // 1. users upsert (RPC upsert_user) — INF 는 sp_rank/dp_rank 없음, ereter_star 만 옵션
-  //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
-  const spCpiVal = (typeof spCpi === 'number' && isFinite(spCpi)) ? Math.round(spCpi) : null;
-  const spStarVal = (typeof spStar === 'number' && isFinite(spStar)) ? Number(spStar.toFixed(1)) : null;
-  // SP/DP 단위 — 게임 메모리에서 읽은 값 (supabase 스케일 int). 못 읽었거나 미취득이면 null →
-  //   RPC COALESCE 가 기존 DB값 유지 (eagate 배치가 넣어둔 값을 지우지 않음).
-  const spRankVal = typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
-  const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
-  try {
-    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
-    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user`, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({
-        p_iidx_id: iidxIdNorm,
-        p_dj_name: profile.djName ?? null,
-        p_star: starResult ? Number(starResult.star.toFixed(4)) : null,
-        p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
-        // SP/DP 단위 — v0.0.108 부터 게임 메모리에서 직접 읽어 업로드 (프로필 struct 의 정수 index).
-        //   못 읽음/미취득이면 null → RPC COALESCE 가 기존 값 유지 (eagate 배치값을 null 로 덮지 않음).
-        p_sp_rank: spRankVal,
-        p_dp_rank: dpRankVal,
-        p_sp_cpi: spCpiVal,    // SP 대표 실력값(CPI). null → COALESCE 보존
-        p_sp_star: spStarVal,  // 発狂★相当. null → COALESCE 보존
-        p_r_star: typeof rStar === 'number' && Number.isFinite(rStar) ? Number(rStar.toFixed(2)) : null,
-      }),
-    });
-    if (!userRes.ok) {
-      const errText = await userRes.text().catch(() => '');
-      return { ok: false, error: `users HTTP ${userRes.status} ${errText}` };
-    }
-    console.log(`[supabase] users upsert OK ${iidxIdNorm} — SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'}`);
-  } catch (e) {
-    return { ok: false, error: `users error: ${(e as Error).message}` };
-  }
-
-  // 1-B. user_radars upsert — 메모리에서 읽은 SP(0) / DP(1) 노트레이더.
-  //   실패해도 scores 업로드는 계속한다 (레이더는 부가 정보 — 점수 유실이 더 치명적).
-  await uploadRadars(iidxIdNorm, profile);
+  const uploadHistCache = new Map<string, Promise<UploadHistResult>>();
+  const getUploadHist = (id: string): Promise<UploadHistResult> => {
+    const cached = uploadHistCache.get(id);
+    if (cached) return cached;
+    const pending = fetchUploadHist(id);
+    uploadHistCache.set(id, pending);
+    return pending;
+  };
 
   // 2. scores upsert — chart row 변환 + songs 매칭 + ac flag dedup
   const allChartsForScores = [...charts, ...(unclassifiedCharts ?? [])];
@@ -468,6 +580,7 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
 
   // dedup map — key: `${song_id}|${iidx_id}|${diff}|${played_version}` → row
   const dedup = new Map<string, ScoreRow>();
+  const ensuredSongBits = new Set<string>();
   let unmatched = 0;
   let invalidDiff = 0;
   const unmatchedSamples: string[] = [];
@@ -518,6 +631,28 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         unmatched++;
         if (unmatchedSamples.length < 10) unmatchedSamples.push(c.title + ' (' + (e as Error).message + ')');
         continue;
+      }
+    }
+    // TSV 전곡 패스 밖에 있는 입력도 점수 필터링 전에 INF 비트를 보충한다.
+    const isLegForBits = c.diff === 'LEGGENDARIA';
+    const songCandidates = songMap.get(norm(c.title));
+    const songEntry = songCandidates?.find((entry) => entry.song_id === songId);
+    const requiredBitMissing = !songEntry || (isLegForBits
+      ? ((songEntry.legen ?? 0) & 2) === 0
+      : ((songEntry.ac ?? 0) & 2) === 0);
+    const ensuredSongBitsKey = `${songId}|${isLegForBits ? 'legen' : 'ac'}`;
+    if (requiredBitMissing && !ensuredSongBits.has(ensuredSongBitsKey)) {
+      const txMap = await getTextageByTitle();
+      const newId = await callEnsureSong(c.title, txMap.get(norm(c.title)) || null,
+        isLegForBits ? null : 2, isLegForBits ? 2 : null);
+      if (newId === songId) {
+        if (songEntry) {
+          if (isLegForBits) songEntry.legen = (songEntry.legen ?? 0) | 2;
+          else songEntry.ac = (songEntry.ac ?? 0) | 2;
+        }
+        ensuredSongBits.add(ensuredSongBitsKey);
+      } else {
+        console.warn(`[supabaseSync] ensure_song INF bit 보충 실패 또는 ID 불일치: ${c.title} (expected ${songId}, got ${newId ?? 'null'})`);
       }
     }
     const lampInt = c.lamp != null && LAMP_MAP[c.lamp] != null ? LAMP_MAP[c.lamp] : null;
@@ -605,19 +740,82 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   if (dpAllUnmatched > 0) console.warn(`[supabaseSync] DP(전레벨) song 매칭 실패 ${dpAllUnmatched}건 (skip, songs 미등록)`);
   if (dpAllCount > 0) console.log(`[supabaseSync] DP 전레벨 scores: +${dpAllCount}건 신규 (play_style:1, lv11/12 제외 보강분)`);
 
-  const scoreRows = [...dedup.values()];
+  const originalScoreCount = allChartsForScores.length;
+  const dedupScoreRows = [...dedup.values()];
+  let scoreRows = [...dedupScoreRows];
+  const incomingRows = scoreRows.map((row) => [row.song_id, row.diff, row.lamp, row.ex_score, row.played_version,
+    row.date, new Date(new Date(row.date).getTime() + 9 * 3600000).toISOString().slice(0, 10), row.play_style, row.bp, row.note_count]);
+  let sentIncoming: unknown[][] = [];
+  if (scoreRows.length > 0) {
+    const localHist = successfulUploadHist.get(iidxIdNorm) ?? [];
+    const histResult = await getUploadHist(iidxIdNorm);
+    let baseline = localHist;
+    try {
+      if (histResult.status === 'ok') baseline = mergeScoreHistory(histResult.hist, localHist);
+      else if (histResult.status === 'error') console.warn(`[supabaseSync] upload hist unavailable; using local history: ${histResult.error}`);
+    } catch (e) {
+      console.warn(`[supabaseSync] upload hist invalid; using local history: ${(e as Error).message}`);
+    }
+    try {
+      const filtered = filterScoreHistoryRows(baseline, incomingRows);
+      const included = new Set(filtered);
+      scoreRows = scoreRows.filter((_row, index) => included.has(incomingRows[index]));
+      sentIncoming = filtered;
+    } catch (e) {
+      // Preserve full-send fallback without recording unvalidated incoming.
+      console.warn(`[supabaseSync] upload incoming comparison failed; sending all: ${(e as Error).message}`);
+    }
+  }
   if (autoEnsured > 0) console.log(`[supabaseSync] songs 마스터 자동 등록 (ensure_song) ${autoEnsured}건:`, autoEnsuredSamples);
   if (unmatched > 0) console.warn(`[supabaseSync] song 매칭 실패 ${unmatched}건 (skip). 샘플:`, unmatchedSamples);
   if (invalidDiff > 0) console.warn(`[supabaseSync] diff 변환 실패 ${invalidDiff}건 (skip)`);
-  console.log(`[supabaseSync] appVersion=${appVersion} scores upsert: ${scoreRows.length}건 (전체 ${allChartsForScores.length}건 중, dedup 후)`);
+  console.log(`[supabaseSync] appVersion=${appVersion} scores: 원본 ${originalScoreCount}건 / dedup ${dedupScoreRows.length}건 / 제외 ${dedupScoreRows.length - scoreRows.length}건 / 전송 ${scoreRows.length}건`);
 
   if (scoreRows.length === 0) {
     return { ok: true };
   }
 
+  // 1. users upsert (RPC upsert_user) — INF 는 sp_rank/dp_rank 없음, ereter_star 만 옵션
+  //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
+  const spCpiVal = (typeof spCpi === 'number' && isFinite(spCpi)) ? Math.round(spCpi) : null;
+  const spStarVal = (typeof spStar === 'number' && isFinite(spStar)) ? Number(spStar.toFixed(1)) : null;
+  // SP/DP 단위 — 게임 메모리에서 읽은 값 (supabase 스케일 int). 못 읽었거나 미취득이면 null →
+  //   RPC COALESCE 가 기존 DB값 유지 (eagate 배치가 넣어둔 값을 지우지 않음).
+  const spRankVal = typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
+  const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
+  try {
+    console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
+    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_upload_profile`, {
+      method: 'POST',
+      headers: HEADERS,
+      body: JSON.stringify({
+        p_iidx_id: iidxIdNorm,
+        p_dj_name: profile.djName ?? null,
+        p_star: null,
+        p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
+        // SP/DP 단위 — v0.0.108 부터 게임 메모리에서 직접 읽어 업로드 (프로필 struct 의 정수 index).
+        //   못 읽음/미취득이면 null → RPC COALESCE 가 기존 값 유지 (eagate 배치값을 null 로 덮지 않음).
+        p_sp_rank: spRankVal,
+        p_dp_rank: dpRankVal,
+      }),
+    });
+    if (!userRes.ok) {
+      const errText = await userRes.text().catch(() => '');
+      return { ok: false, error: `users HTTP ${userRes.status} ${errText}` };
+    }
+    console.log(`[supabase] users upsert OK ${iidxIdNorm} — SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'}`);
+  } catch (e) {
+    return { ok: false, error: `users error: ${(e as Error).message}` };
+  }
+
+  // 1-B. user_radars upsert — 메모리에서 읽은 SP(0) / DP(1) 노트레이더.
+  //   실패해도 scores 업로드는 계속한다 (레이더는 부가 정보 — 점수 유실이 더 치명적).
+  await uploadRadars(iidxIdNorm, profile);
+
   const SCORE_UPSERT_CHUNK_SIZE = 1000;
   const total = Math.ceil(scoreRows.length / SCORE_UPSERT_CHUNK_SIZE);
-  // 앞 청크가 이미 들어가도 upsert_scores는 멱등(historical best 미달 skip)이라 재전송 안전하다.
+  let successfulScoreCount = 0;
+  // 버퍼 계약에서 재전송 안전성을 소비자 측 best skip에 의존하지 않는다.
   for (let i = 0; i < total; i++) {
     const chunk = scoreRows.slice(i * SCORE_UPSERT_CHUNK_SIZE, (i + 1) * SCORE_UPSERT_CHUNK_SIZE);
     console.log(`[supabaseSync] scores 청크 ${i + 1}/${total} (${chunk.length}행)`);
@@ -631,22 +829,92 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         const errText = await chartRes.text().catch(() => '');
         return { ok: false, error: `scores chunk ${i + 1}/${total} HTTP ${chartRes.status} ${errText}` };
       }
+      successfulScoreCount += chunk.length;
     } catch (e) {
       return { ok: false, error: `scores chunk ${i + 1}/${total} error: ${(e as Error).message}` };
     }
   }
+  if (sentIncoming.length > 0) {
+    successfulUploadHist.set(iidxIdNorm, mergeScoreHistory(successfulUploadHist.get(iidxIdNorm) ?? [], sentIncoming));
+  }
+  if (FAST_DUMP_ENQUEUE_INF && successfulScoreCount > 0) {
+    const startedAt = Date.now();
+    const deadline = startedAt + 30_000;
+    let diagResult = 'skipped', diagReason = 'none', diagHttp: number | null = null;
+    let diagAccepted: boolean | null = null, diagAttempts = 0;
+    const diag = () => { try { addDiagLine(`[inf-dump] stage=complete result=${diagResult} accepted=${diagAccepted === null ? 'unknown' : diagAccepted} http=${diagHttp === null ? 'none' : diagHttp} reason=${diagReason} attempts=${diagAttempts} elapsed_ms=${Math.max(0, Date.now() - startedAt)}`); } catch {} };
+    try {
+      const bearer = await existingRemoteBearer(iidxIdNorm, deadline);
+      if (!bearer) {
+        diagReason = 'bearer_missing';
+        console.warn('[supabaseSync] INF dump 완료 중계 생략: remote Bearer 없음');
+      } else {
+        let requestId: string | null = null;
+        try { requestId = typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : null; } catch {}
+        if (!requestId) {
+          diagReason = 'uuid_missing';
+          console.warn('[supabaseSync] INF dump 완료 중계 생략: UUID 생성 불가');
+        } else {
+          const body = JSON.stringify({ source: 'inf', iidx_id: iidxIdNorm, request_id: requestId });
+          let result: Response | null = null;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) { diagReason = 'deadline'; break; }
+            diagAttempts++;
+            const controller = new AbortController();
+            let timedOut = false;
+            const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, Math.min(5000, remaining));
+            try {
+              result = await fetch('https://iidx.in/api/dump-trigger?upload_complete=1', {
+                method: 'POST', credentials: 'omit', signal: controller.signal,
+                headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${bearer}` }, body,
+              });
+              diagHttp = result.status;
+              if (!result.ok) {
+                diagResult = 'http_failure'; diagReason = result.status >= 500 ? 'http_5xx' : 'http_4xx';
+                console.warn(`[supabaseSync] INF dump 완료 중계 HTTP ${result.status}`);
+                if (result.status >= 500 && attempt === 0 && Date.now() < deadline) continue;
+                break;
+              }
+              try {
+                const response = await result.json();
+                if (typeof response?.accepted !== 'boolean') throw new Error('invalid accepted response');
+                diagAccepted = response.accepted;
+                diagResult = response.accepted ? 'success' : 'rejected'; diagReason = response.accepted ? 'none' : 'accepted_false';
+                if (response.accepted === false) console.warn('[supabaseSync] INF dump 완료 중계 accepted:false');
+              } catch (e) {
+                diagResult = 'failure'; diagReason = timedOut ? 'complete_body_timeout' : 'broken_json';
+                console.warn('[supabaseSync] INF dump 완료 중계 응답 손상:', (e as Error).message);
+                if (attempt === 0) continue;
+              }
+              break;
+            } catch (e) {
+              diagResult = 'failure'; diagReason = timedOut ? 'complete_fetch_timeout' : 'network';
+              console.warn(`[supabaseSync] INF dump 완료 중계 결과 불명 (시도 ${attempt + 1}/2):`, (e as Error).message);
+              if (attempt === 1) break;
+            } finally {
+              clearTimeout(timeout);
+            }
+          }
+        }
+      }
+    } catch (e) {
+      diagResult = 'failure'; diagReason = (e as { code?: string }).code ?? 'auth_failed';
+      console.warn('[supabaseSync] INF dump 완료 중계 실패:', (e as Error).message);
+    } finally { diag(); }
+  }
   return { ok: true };
 }
 
-// ─── Recent 탭 RPC (ohSorryWeb modules/api.js 의 호출 형식 그대로 옮김) ─────────────
+// ─── Recent 탭 R2 (일반 hist/user) ───────────────────────────────────────────
 //
-// 두 RPC + 한 가지 dedup-latest helper:
+// 두 R2 객체:
 //   1) fetchRecentDates(id)            → [{ date_kst, row_count }, ...] desc
 //   2) fetchRecentCharts(id, dateKst)  → 그날의 raw chart entry 들 (prev/now 포함)
-//   3) fetchUserLatestCharts(id)       → make_grid_data 의 dedup row → (norm(title)+'|'+diffStr) 인덱스
+//   3) fetchUserLatestCharts(id)       → user dp grid → (norm(title)+'|'+diffStr) 인덱스
 //      "당일" 박스에서 TSV row 와 비교할 supabase 마지막 row 들.
 //
-// make_recent_data 가 LATERAL prev row 까지 같이 반환 — UI 가 prev → now diff 표기에 그대로 사용.
+// 일반 hist는 원래 순회 순서로 PREV를 계산한다.
 
 const DIFF_INT_TO_STR: Record<number, string> = {
   0: 'BEGINNER', 1: 'NORMAL', 2: 'HYPER', 3: 'ANOTHER', 4: 'LEGGENDARIA',
@@ -788,17 +1056,90 @@ function viewRowToRecent(r: {
 }
 
 // p_dbr=false(기본): DP 일반 플레이 날짜, true: DBR(배틀, played_version=-10) 날짜.
+const recentCache = new Map<string, { expiresAt: number; promise: Promise<{ hist: unknown[]; user: unknown }> }>();
+const RECENT_CACHE_TTL_MS = 60_000;
+type UploadHistResult = { status: 'ok'; hist: unknown[][] } | { status: 'notfound' } | { status: 'error'; error: string };
+
+/** Fetch raw upload-comparison history without Recent's paired user read or TTL cache. */
+async function fetchUploadHist(id: string): Promise<UploadHistResult> {
+  try {
+    const response = await fetch(`${DATA_BASE}/hist/${encodeURIComponent(id)}.json`);
+    if (response.status === 404) return { status: 'notfound' };
+    if (!response.ok) return { status: 'error', error: `HTTP ${response.status}` };
+    let document: unknown;
+    try { document = await response.json(); } catch { return { status: 'error', error: 'invalid JSON' }; }
+    if (!Array.isArray(document)) return { status: 'error', error: 'invalid hist schema' };
+    return { status: 'ok', hist: document as unknown[][] };
+  } catch (e) {
+    return { status: 'error', error: (e as Error).message };
+  }
+}
+
+function normalizedRecentId(iidxId: string): string {
+  return String(iidxId || '').trim().replace(/-/g, '').toUpperCase();
+}
+async function fetchRecentObjects(id: string): Promise<{ hist: unknown[]; user: unknown }> {
+  const cached = recentCache.get(id);
+  if (cached && cached.expiresAt > Date.now()) return cached.promise;
+  const promise = (async () => {
+    const [histRes, userRes] = await Promise.all([
+      fetch(`${DATA_BASE}/hist/${encodeURIComponent(id)}.json`),
+      fetch(`${DATA_BASE}/user/${encodeURIComponent(id)}.json`),
+    ]);
+    const read = async (res: Response, kind: string) => {
+      if (res.status === 404) return null;
+      if (!res.ok) throw new Error(`${kind} HTTP ${res.status}`);
+      try { return await res.json(); } catch { throw new Error(`${kind}: invalid JSON`); }
+    };
+    const [histDoc, userDoc] = await Promise.all([read(histRes, 'Recent history'), read(userRes, 'Recent user')]);
+    if (histDoc === null && userDoc === null) return { hist: [], user: {} };
+    if (histDoc === null || userDoc === null) throw new Error('Recent R2 object missing');
+    if (!Array.isArray(histDoc)) throw new Error('Recent history: invalid format');
+    if (!userDoc || typeof userDoc !== 'object' || Array.isArray(userDoc)
+      || !Array.isArray((userDoc as { dp?: unknown }).dp)) throw new Error('Recent user: invalid format');
+    return { hist: histDoc, user: userDoc };
+  })();
+  recentCache.set(id, { expiresAt: Date.now() + RECENT_CACHE_TTL_MS, promise });
+  try { return await promise; } catch (e) { recentCache.delete(id); throw e; }
+}
+
 export async function fetchRecentDates(iidxId: string, dbrOnly = false): Promise<{ date_kst: string; row_count: number }[]> {
-  const id = String(iidxId || '').trim().replace(/-/g, '');
+  const id = normalizedRecentId(iidxId);
   if (!id) return [];
-  const res = await fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_dates`, {
-    method: 'POST',
-    headers: HEADERS,
-    body: JSON.stringify({ p_iidx_id: id, p_dbr: !!dbrOnly }),
-  });
-  if (!res.ok) throw new Error(`Recent 날짜 조회 실패 (HTTP ${res.status})`);
-  const rows = await res.json();
-  return Array.isArray(rows) ? rows : [];
+  if (dbrOnly) {
+    const history = await fetchDbrHistory(id);
+    if (history == null) return [];
+    const result = getDbrRecentDates(history) as unknown as { complete: boolean; dates: { date_kst: string; row_count: number }[] };
+    if (!result.complete) throw new Error('DBR history: complete=false');
+    return result.dates;
+  }
+  const { hist } = await fetchRecentObjects(id);
+  const counts = new Map<string, number>();
+  for (const raw of hist) {
+    if (!Array.isArray(raw)) throw new Error('Recent history: invalid row');
+    const pv = raw[4], ex = raw[3], date = raw[6], style = raw[7];
+    if (style !== 1 || !(typeof ex === 'number' && ex > 0) || pv === -10) continue;
+    if (typeof date !== 'string') throw new Error('Recent history: invalid date');
+    counts.set(date, (counts.get(date) || 0) + 1);
+  }
+  return Array.from(counts, ([date_kst, row_count]) => ({ date_kst, row_count }))
+    .sort((a, b) => b.date_kst.localeCompare(a.date_kst));
+}
+
+async function fetchDbrHistory(iidxId: string) {
+  const id = String(iidxId || '').trim().replace(/-/g, '').toUpperCase();
+  if (!/^[A-Z0-9]+$/.test(id)) throw new Error('DBR history: invalid IIDX ID');
+  const res = await fetch(`${DATA_BASE}/dbr/${encodeURIComponent(id)}.json?fresh=1`, { cache: 'no-store' });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`DBR history HTTP ${res.status}`);
+  let doc: unknown;
+  try { doc = await res.json(); } catch { throw new Error('DBR history: invalid JSON'); }
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) throw new Error('DBR history: invalid document');
+  const history = (doc as { history?: unknown }).history;
+  if (history == null) throw new Error('DBR history: complete=false');
+  validateDbrHistory(history);
+  if (!(history as { complete: boolean }).complete) throw new Error('DBR history: complete=false');
+  return history as DbrHistory;
 }
 
 // DBR 난이도 맵 — dbr-inf-recommend.json(gist) 에서 textageid|diff → dbrLevel 로드 (1회 캐시).
@@ -827,21 +1168,53 @@ export async function loadDbrMap(): Promise<Map<string, number>> {
   return m;
 }
 
-export async function fetchRecentCharts(iidxId: string, dateKst: string): Promise<RecentChartRow[]> {
-  const id = String(iidxId || '').trim().replace(/-/g, '');
+export async function fetchRecentCharts(iidxId: string, dateKst: string, dbrOnly = false): Promise<RecentChartRow[]> {
+  const id = normalizedRecentId(iidxId);
   if (!id || !dateKst) return [];
-  const [rowsRes, textageMeta] = await Promise.all([
-    fetch(`${SUPABASE_URL}/rest/v1/rpc/make_recent_data`, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({ p_iidx_id: id, p_date_kst: dateKst }),
-    }),
-    getTextageMeta().catch(() => null),
-  ]);
-  if (!rowsRes.ok) throw new Error(`Recent 데이터 조회 실패 (HTTP ${rowsRes.status})`);
-  const rows = await rowsRes.json();
-  if (!Array.isArray(rows)) return [];
-  return rows.map((r) => viewRowToRecent(r, textageMeta));
+  if (dbrOnly) {
+    const history = await fetchDbrHistory(id);
+    if (history == null) return [];
+    const result = getDbrRecentData(history, dateKst) as unknown as { complete: boolean; rows: Array<{
+      song_id: number; diff: number; lamp: number | null; ex_score: number | null; played_version: number;
+      prev_lamp: number | null; prev_ex_score: number | null; prev_played_version: number | null;
+      textage_song_id?: string; date: string;
+    }> };
+    if (!result.complete) throw new Error('DBR history: complete=false');
+    const [songs, textageMeta] = await Promise.all([getSongsById(), getTextageMeta()]);
+    return result.rows.flatMap((r) => {
+      const song = songs.get(r.song_id);
+      if (!song?.title) return [];
+      return [viewRowToRecent({
+        title: song.title, diff: r.diff, lamp: r.lamp ?? 0, ex_score: r.ex_score ?? 0,
+        prev_lamp: r.prev_lamp, prev_ex_score: r.prev_ex_score,
+        prev_played_version: r.prev_played_version, played_version: r.played_version,
+        textage_song_id: song.textage_song_id, date: r.date,
+      }, textageMeta)];
+    });
+  }
+  const [{ hist }, textageMeta, songs] = await Promise.all([fetchRecentObjects(id), getTextageMeta().catch(() => null), getSongsById()]);
+  const lastByKey = new Map<string, { lamp: number; ex_score: number; played_version: number; bp: number | null }>();
+  const rows: RecentChartRow[] = [];
+  for (const row of hist) {
+    if (!Array.isArray(row)) throw new Error('Recent history: invalid row');
+    const [songId, diff, lamp, ex, pv, date, dk, style, bp, noteCount] = row;
+    if (style !== 1 || !(typeof ex === 'number' && ex > 0) || pv === -10) continue;
+    const key = `${songId}|${diff}|${pv}`;
+    const prev = lastByKey.get(key) || (typeof pv === 'number' && pv >= 2 ? lastByKey.get(`${songId}|${diff}|${pv - 1}`) : null);
+    if (dk === dateKst) {
+      const song = songs.get(songId as number);
+      if (song?.title) rows.push(viewRowToRecent({ title: song.title, diff: diff as number, lamp: lamp as number,
+        ex_score: ex as number, prev_lamp: prev?.lamp ?? null, prev_ex_score: prev?.ex_score ?? null,
+        prev_played_version: prev?.played_version ?? null, played_version: pv as number,
+        textage_song_id: song.textage_song_id, date: typeof date === 'string' ? date : null,
+      }, textageMeta));
+    }
+    lastByKey.set(key, { lamp: lamp as number, ex_score: ex as number, played_version: pv as number,
+      bp: typeof bp === 'number' ? bp : null });
+    // noteCount is read to preserve the 8/10-column contract; textage metadata remains authoritative for UI.
+    void noteCount;
+  }
+  return rows;
 }
 
 // make_grid_data — 차트별 dedup latest row. "당일" 박스의 PREV (마지막 supabase upload 시점 값) source.
@@ -858,24 +1231,14 @@ export interface LatestChartEntry {
 async function fetchGridDataRows(id: string): Promise<Array<{
   title: string; diff: number; lamp: number; ex_score: number; played_version?: number; textage_song_id?: string | null;
 }>> {
-  const out: Array<{ title: string; diff: number; lamp: number; ex_score: number; played_version?: number; textage_song_id?: string | null }> = [];
-  const pageSize = 1000;
-  let offset = 0;
-  while (true) {
-    const url = `${SUPABASE_URL}/rest/v1/rpc/make_grid_data?limit=${pageSize}&offset=${offset}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: HEADERS,
-      body: JSON.stringify({ p_iidx_id: id }),
-    });
-    if (!res.ok) throw new Error(`grid data 조회 실패 (HTTP ${res.status})`);
-    const rows = await res.json();
-    if (!Array.isArray(rows)) break;
-    out.push(...rows);
-    if (rows.length < pageSize) break;
-    offset += pageSize;
-  }
-  return out;
+  const [{ user }, songs] = await Promise.all([fetchRecentObjects(id), getSongsById()]);
+  const doc = user as { dp: Array<Record<string, unknown>> };
+  return doc.dp.map((r) => {
+    const song = songs.get(Number(r.song_id));
+    return { title: song?.title ?? '', diff: Number(r.diff), lamp: Number(r.lamp), ex_score: Number(r.ex_score),
+      played_version: typeof r.played_version === 'number' ? r.played_version : undefined,
+      textage_song_id: song?.textage_song_id ?? null };
+  });
 }
 export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string, LatestChartEntry>> {
   const id = String(iidxId || '').trim().replace(/-/g, '');
@@ -911,4 +1274,262 @@ export async function fetchUserLatestCharts(iidxId: string): Promise<Map<string,
     });
   }
   return idx;
+}
+
+type PlayHistoryParse = { rows: PlayCsvRow[]; lastCompleteError: { columns: number } | null; errorCode?: number };
+function tokenizePlayHistory(csv: string): string[][] {
+  const records: string[][] = [];
+  let record: string[] = []; let field = ''; let quoted = false;
+  for (let i = 0; i < csv.length; i++) {
+    const c = csv[i];
+    if (c === '"') {
+      if (quoted && csv[i + 1] === '"') { field += '"'; i++; }
+      else quoted = !quoted;
+    } else if (c === ',' && !quoted) { record.push(field); field = ''; }
+    else if (c === '\n' && !quoted) {
+      record.push(field.endsWith('\r') ? field.slice(0, -1) : field);
+      records.push(record); record = []; field = '';
+    } else field += c;
+  }
+  return records;
+}
+export function parsePlayHistoryDetailed(csv: string): PlayHistoryParse {
+  const records = tokenizePlayHistory(csv);
+  const header = records.shift();
+  const legacyHeader = !!header && header.length === PLAY_CSV_LEGACY_KEYS.length && PLAY_CSV_LEGACY_KEYS.every((key, i) => header[i] === key);
+  const currentHeader = !!header && header.length === PLAY_CSV_KEYS.length && PLAY_CSV_KEYS.every((key, i) => header[i] === key);
+  if (!legacyHeader && !currentHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
+  const valid: PlayCsvRow[] = [];
+  let lastCompleteError: { columns: number } | null = null;
+  for (const row of records) {
+    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
+    const mapped = Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i] ?? ''])) as PlayCsvRow;
+    valid.push(mapped);
+    lastCompleteError = null;
+  }
+  return { rows: valid, lastCompleteError };
+}
+export function buildUploadPlays(result: PlayCsvReadResult): PlayCsvRow[] {
+  const versions = { appVersion: result.appVersion ?? '', gameVersion: result.gameVersion ?? '' };
+  const error = (code: number) => [buildPlayErrorRow(code, versions, new Date().toISOString())];
+  if (!result.ok) return error(-11);
+  if (result.found === false) return error(-8);
+  const parsed = parsePlayHistoryDetailed(result.csv ?? '');
+  if (parsed.errorCode === -9) return error(-9);
+  if (parsed.rows.length === 0) return error(-10);
+  return parsed.rows.slice(-100);
+}
+export function parsePlayHistory(csv: string): PlayCsvRow[] { return parsePlayHistoryDetailed(csv).rows; }
+// 기존 최근 100행 동작을 유지한다.
+export function parseRecentPlays(csv: string): PlayCsvRow[] { return parsePlayHistory(csv).slice(-100); }
+
+export function isCompletedPlay(row: PlayCsvRow): boolean {
+  if (isPlayErrorRow(row)) return false;
+  // INFOhSorry/docs/play-logger.md:168-170: 일반 DP 행에서 BAD와 놓친 POOR를 포함한 판정 합계가 notes와 같을 때 완주다. 콤보 브레이크는 BAD+놓친 POOR이며 공POOR는 끊지 않으므로 합계에서 제외한다. BP(miss_count)는 BAD+POOR(공POOR 포함)로 게임 BP와 같은 값이므로 그대로 쓴다.
+  const j = row.judge_16.trim().split(/\s+/).map(Number);
+  const notes = Number(row.notes);
+  return j.length === 16 && j.every(Number.isFinite) && j.every(Number.isInteger) && Number.isFinite(notes) && notes > 0
+    && (j[0] + j[1] + j[2]) + (j[5] + j[6] + j[7]) + j[10] + j[11] === notes;
+}
+const strictNumber = (value: string): number | null => {
+  if (!value.trim()) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && Number.isInteger(n) && n >= 0 && n !== 4294967295 ? n : null;
+};
+export function decodeArrangeScore(row: PlayCsvRow) {
+  const lamp = strictNumber(row.clear_lamp); const bp = strictNumber(row.miss_count); const ex = strictNumber(row.ex_score);
+  return { lamp: lamp != null && lamp >= 1 && lamp <= 8 ? lamp : null, bp, ex };
+}
+export function compareArrangeScores(previous: { lamp: number | null; bp: number | null; ex: number | null } | null,
+  current: { lamp: number | null; bp: number | null; ex: number | null }) {
+  const improved = { lamp: previous?.lamp != null && current.lamp != null && current.lamp > previous.lamp,
+    bp: previous?.bp != null && current.bp != null && current.bp < previous.bp,
+    ex: previous?.ex != null && current.ex != null && current.ex > previous.ex };
+  const count = Number(improved.lamp) + Number(improved.bp) + Number(improved.ex);
+  return { previous: previous ?? { lamp: null, bp: null, ex: null }, improved, count };
+}
+export function evaluateAutomaticArrange(history: PlayCsvRow[] | PlayHistoryParse) {
+  const parsed = Array.isArray(history) ? { rows: history, lastCompleteError: null } : history;
+  if (parsed.lastCompleteError != null) return { excluded: true as const, reason: 'last_row_invalid' };
+  const rows = parsed.rows;
+  const last = rows[rows.length - 1];
+  if (!last || isPlayErrorRow(last) || !isCompletedPlay(last)) return { excluded: true as const, reason: 'current_not_completed' };
+  const currentRow = last;
+  if (!['DPB', 'DPN', 'DPH', 'DPA', 'DPL'].includes(currentRow.difficulty)) return { excluded: true as const, reason: 'not_dp' };
+  const currentSettings = currentRow.settings_p1_11.trim().split(/\s+/).map(Number);
+  const validSettings = (p: number[]) => p.length === 11 && p.every(Number.isInteger) && p[3] >= 0 && p[3] <= 1
+    && [p[0],p[5]].every(v => v >= 0 && v <= 4) && p[2] === 0 && p[9] === 0 && p[10] === 0;
+  const decode = (row: PlayCsvRow, p: number[]) => {
+    if (row.source !== 'playdata' || row.battle_flag !== '0' || !validSettings(p)) return null;
+    return decodeArrangeScore(row);
+  };
+  const current = decode(currentRow, currentSettings);
+  const previousRows = rows.slice(0, -1).filter(row => row.song_id === currentRow.song_id && row.difficulty === currentRow.difficulty
+    && isCompletedPlay(row)).map(row => decode(row, row.settings_p1_11.trim().split(/\s+/).map(Number))).filter((v): v is NonNullable<typeof v> => v !== null);
+  if (!current) return { excluded: true as const, reason: 'invalid_current' };
+  const best = previousRows.reduce<{ lamp: number | null; bp: number | null; ex: number | null }>((acc, value) => ({
+    lamp: value.lamp == null ? acc.lamp : Math.max(acc.lamp ?? -Infinity, value.lamp),
+    bp: value.bp == null ? acc.bp : Math.min(acc.bp ?? Infinity, value.bp),
+    ex: value.ex == null ? acc.ex : Math.max(acc.ex ?? -Infinity, value.ex),
+  }), { lamp: null, bp: null, ex: null });
+  const compared = compareArrangeScores(previousRows.length ? best : null, current);
+  const diffs: Record<string, number> = { DPB: 0, DPN: 1, DPH: 2, DPA: 3, DPL: 4 };
+  const option = currentSettings;
+  const v = [0,8,24,16,2][option[0]] | [0,32,96,64,4][option[5]] | (option[3] ? 1 : 0);
+  return { current: currentRow, previous: compared.previous, improved: compared.improved, count: compared.count,
+    arrange: v === 0 ? -2 : v, diff: diffs[currentRow.difficulty], excluded: false as const };
+}
+
+export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecognized: boolean): PlayCsvRow[] | null | undefined {
+  return gameRecognized ? plays : undefined;
+}
+
+// DBR 후보 조건과 옵션 값은 사용자 지정 명세를 따른다.
+export const GAUGE_COLUMN = 'gauge_p2_w78';
+export interface BattleRandomScore { diff: number; lamp: number; ex_score: number }
+export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
+  if (isPlayErrorRow(row)) return null;
+  const p1 = row.settings_p1_11.split(' ').map(Number);
+  if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
+    || row.battle_flag !== '1' || p1[0] !== 1 || p1[5] !== 1 || p1[2] !== 1) return null;
+  const diffs: Record<string, number> = { SPB: 0, SPN: 1, SPH: 2, SPA: 3, SPL: 4 };
+  if (!row.song_id.trim() || !/^\d+(?:\.\d+)?$/.test(row.song_id) || !row.ex_score.trim()
+    || !row.notes.trim() || !row[GAUGE_COLUMN].trim()) return null;
+  const songId = Number(row.song_id); const diff = diffs[row.difficulty];
+  const exScore = Number(row.ex_score); const notes = Number(row.notes); const gauge = Number(row[GAUGE_COLUMN]);
+  if (!Number.isSafeInteger(songId) || songId < 0 || !Number.isInteger(diff)
+    || !Number.isFinite(exScore) || exScore < 0 || !Number.isFinite(notes) || notes <= 0
+    || !Number.isFinite(gauge) || gauge < 0) return null;
+  let lamp: number;
+  switch (p1[1]) {
+    case 1: case 2: lamp = gauge >= 80 ? 3 : gauge >= 60 ? 2 : 1; break;
+    case 0: lamp = gauge >= 80 ? 4 : 1; break;
+    case 3: lamp = gauge > 0 ? 5 : 1; break;
+    case 4: lamp = gauge > 0 ? 6 : 1; break;
+    default: return null;
+  }
+  return { diff, lamp, ex_score: exScore };
+}
+function matchAutomaticSong(songs: Map<string, SongEntry[]>, title: string, diff: number):
+  { songId: number } | { skipped: 'song_not_found' | 'ambiguous_song' } {
+  const candidates = songs.get(norm(title)) ?? [];
+  const matches = candidates.filter(song => (((diff === 4 ? song.legen : song.ac) ?? 0) & 2) !== 0);
+  if (matches.length === 1) return { songId: matches[0].song_id };
+  return { skipped: matches.length ? 'ambiguous_song' : 'song_not_found' };
+}
+const REMOTE_API_ORIGIN = 'https://iidx.in';
+// Web 원격 인증과 같은 issue/exchange와 Bearer 세션을 사용한다. 별도 토큰 저장소는 없다.
+async function existingRemoteBearer(iidxId: string, deadline = Date.now() + 30_000): Promise<string | null> {
+  const key = 'ohsorry:remoteAuthToken';
+  let token = localStorage.getItem(key);
+  const authJson = async (url: string, init: RequestInit = {}) => {
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw Object.assign(new Error('deadline'), { code: 'deadline' });
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), Math.min(5000, remaining));
+    let stage = 'fetch';
+    try { const response = await fetch(url, { ...init, signal: controller.signal }); stage = 'body'; return { response, data: response.ok ? await response.json() : null }; }
+    catch (error) { if (controller.signal.aborted) throw Object.assign(new Error('timeout'), { code: stage === 'fetch' ? 'auth_fetch_timeout' : 'auth_body_timeout' }); throw error; }
+    finally { clearTimeout(timeout); }
+  };
+  const validSession = async (value: string) => {
+    const { response: session, data } = await authJson(`${REMOTE_API_ORIGIN}/auth/session`, { credentials: 'omit', headers: { Authorization: `Bearer ${value}` } });
+    if (!session.ok) return { valid: false, invalid: session.status === 401 };
+    return { valid: !!data.logged_in && data.iidx_id === iidxId, invalid: !data.logged_in || data.iidx_id !== iidxId };
+  };
+  if (token) {
+    const checked = await validSession(token);
+    if (checked.valid) return token;
+    if (!checked.invalid) return null;
+    localStorage.removeItem(key);
+    token = null;
+  }
+  const { response: issued, data: issueData } = await authJson(`${REMOTE_API_ORIGIN}/auth/issue`, { method: 'POST', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ iidx_id: iidxId, source: 'inf' }) });
+  if (!issued.ok) return null;
+  const ticket = new URL(issueData.url).searchParams.get('ticket');
+  if (!ticket) return null;
+  const { response: exchanged, data: exchangeData } = await authJson(`${REMOTE_API_ORIGIN}/auth/exchange`, { method: 'POST', credentials: 'omit',
+    headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ticket, mode: 'token' }) });
+  if (!exchanged.ok) return null;
+  token = exchangeData.token;
+  if (!token) return null;
+  const checked = await validSession(token);
+  if (!checked.valid) return null;
+  localStorage.setItem(key, token);
+  return token;
+}
+
+export async function uploadAutomaticPlays(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
+  bearer: (id: string) => Promise<string | null> = existingRemoteBearer, send: typeof fetch = fetch): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+  try {
+    if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
+    const token = await bearer(iidxId);
+    if (!token) return { ok: true, skipped: 'unauthenticated' };
+    if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 10_000);
+    try {
+      const response = await send(`${REMOTE_API_ORIGIN}/api/me/plays`, { method: 'PUT', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ plays }), signal: controller.signal });
+      if (!response.ok) throw new Error(`plays HTTP ${response.status}`);
+      return { ok: true };
+    } finally { clearTimeout(timeout); }
+  } catch (error) {
+    const message = (error as Error).message;
+    console.warn(`[upload] automatic plays failed id=${iidxId}: ${message}`);
+    return { ok: false, error: message };
+  }
+}
+
+// 한 INF 클라이언트의 DBR POST는 전송 중에만 직렬화한다. 재시도 큐는 없다.
+let dbrSending: Promise<void> | null = null;
+export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
+  decode: (row: PlayCsvRow) => BattleRandomScore | null = decodeBattleRandomPlay,
+  bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
+  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache): Promise<void> {
+  while (dbrSending) await dbrSending;
+  let finish!: () => void;
+  dbrSending = new Promise<void>(resolve => { finish = resolve; });
+  try {
+    const candidates = plays.map(row => ({ row, score: decode(row) })).filter((item): item is { row: PlayCsvRow; score: BattleRandomScore } => item.score !== null);
+    if (!candidates.length || !await gameRecognized()) return;
+    const token = await bearer(iidxId);
+    if (!token) return;
+    const songMap = await songs();
+    for (const { row, score } of candidates) {
+      const match = matchAutomaticSong(songMap, row.title, score.diff);
+      if ('skipped' in match) continue;
+      if (!await gameRecognized()) return;
+      const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ song_id: match.songId, diff: score.diff, lamp: score.lamp, ex_score: score.ex_score, improvements_only: true }) });
+      if (!response.ok) throw new Error(`DBR HTTP ${response.status}`);
+    }
+  } finally { dbrSending = null; finish(); }
+}
+
+// 자동 배열은 현재 완주 행 하나만 원격 배열로 upsert한다. 애매한 곡명은 전송하지 않는다.
+export async function uploadAutomaticArrange(evaluation: ReturnType<typeof evaluateAutomaticArrange>, iidxId: string,
+  gameRecognized: () => Promise<boolean>, bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
+  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache): Promise<{ ok: boolean; skipped?: string; error?: string }> {
+  if (evaluation.excluded) return { ok: true, skipped: evaluation.reason };
+  if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
+  const token = await bearer(iidxId);
+  if (!token) return { ok: true, skipped: 'unauthenticated' };
+  try {
+    const match = matchAutomaticSong(await songs(), evaluation.current.title, evaluation.diff);
+    if ('skipped' in match) return { ok: true, skipped: match.skipped };
+    // DBR와 같이 전송 직전에 기존 게임 인식 검사를 한 번 더 한다.
+    if (!await gameRecognized()) return { ok: true, skipped: 'game_unrecognized' };
+    const response = await send(`${REMOTE_API_ORIGIN}/api/me/chart-arrange`, { method: 'PUT', credentials: 'omit',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({ song_id: match.songId, diff: evaluation.diff, play_style: 1, arrange: evaluation.arrange }) });
+    if (!response.ok) throw new Error(`Arrange HTTP ${response.status}`);
+    return { ok: true };
+  } catch (e) {
+    const error = (e as Error).message;
+    console.warn('[supabaseSync] 자동 배열 업로드 실패:', error);
+    return { ok: false, error };
+  }
 }

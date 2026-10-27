@@ -20,7 +20,7 @@ export const DEFAULT_RESOURCES: Record<S1Kind, ResourceSpec[]> = {
   'dp-star': [norm, moduleSpec('OSR13.5%2B.js', 'OSR135'), moduleSpec('onlyOSR.js', 'onlyOSR'),
     moduleSpec('onlyOSRtoEreter.js', 'onlyOSRtoEreter'), json('rating', 'ohSorryRating.json'), json('ereter', 'ereter-data.json')],
   'r-star': [norm, moduleSpec('userRateStar.js', 'userRateStar'), json('rating', 'ohSorryRating.json')],
-  'sp-star': [norm, moduleSpec('cpiStar.js', 'cpiStar'), moduleSpec('spSkillCpi.js', 'spSkillCpi'), json('cpi', 'cpi.json')],
+  'sp-star': [norm, moduleSpec('onlyOSR.js', 'onlyOSR'), moduleSpec('cpiStar.js', 'cpiStar'), moduleSpec('spSkillCpi.js', 'spSkillCpi'), json('cpi', 'cpi.json')],
   weakness: [norm, weak, json('patterns', 'patterns-dp-1112.json'), json('rateRef', 'rate-reference-slim.json'),
     json('rating', 'ohSorryRating.json'), json('zasa', 'zasa-data.json')],
   layout: [norm, weak, json('patterns', 'patterns-dp-1112.json'), json('rateRef', 'rate-reference-slim.json'),

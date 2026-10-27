@@ -18,8 +18,9 @@ import {
 } from './memory';
 import { RefluxManager, readRefluxOffsets } from './reflux';
 import { InfinitasSessionMonitor } from './infinitasSession';
-import { snapshotTsv, listAccounts, readAccountTsv, getLastSelected, setLastSelected } from './accountTsvStore';
+import { snapshotTsv, listAccounts, readAccountTsv, readAccountPlayCsv, getLastSelected, setLastSelected } from './accountTsvStore';
 import type { AccountSnapshotRequest } from '../shared/account';
+import { PROFILE_OFFSETS, isRemoteStringOffset, type RemoteProfileMap } from '../shared/profileOffsets';
 import { getRemoteProfileOffsets } from './offsetsRemote';
 import {
   getEreterData,
@@ -38,6 +39,7 @@ import { clearPending, loadAllPending, savePending } from './uploadPending';
 import type { UploadOutcome, UploadSnapshot } from '../shared/uploadSnapshot';
 import { appendDiagLine, appStartMarkerLine, diagLogPath } from './diagLogStore';
 import { startPlayLogger } from './playLogger';
+import { probeGameDatecode } from './gameBuild';
 import { recordGpuStatus, startMainHeartbeat } from './perfDiag';
 
 let stopMainHeartbeat: (() => void) | undefined;
@@ -57,10 +59,52 @@ const sessionMonitor = new InfinitasSessionMonitor();
 refluxManager.attachSession(() => sessionMonitor.getState());
 let sessionOpChain: Promise<void> = Promise.resolve();
 let abortFinalUpload: (() => void) | null = null;
+let playAccountSource: { pid: number; iidxId: string } | null = null;
+let probedGameVersion: { pid: number; generation: number; value: string } | null = null;
+
+function getPlayGameVersion(pid: number): string {
+  const session = sessionMonitor.getState();
+  if (session.pid !== pid) return '';
+  if (probedGameVersion?.pid === pid && probedGameVersion.generation === session.generation) return probedGameVersion.value;
+  let value = '';
+  try { value = probeGameDatecode() ?? ''; } catch { /* unavailable */ }
+  if (sessionMonitor.getState().pid !== pid || sessionMonitor.getState().generation !== session.generation) return '';
+  probedGameVersion = { pid, generation: session.generation, value };
+  return value;
+}
+
+function getPlayAccount(game: { pid: number; handle: unknown; modBaseAddr: bigint }): string | null {
+  const before = sessionMonitor.getState();
+  if (before.pid !== game.pid) return null;
+  let ownValue: string | null = null;
+  try {
+    const entry = playProfileOffsets?.iidxId;
+    if (entry !== null) {
+      const offset = isRemoteStringOffset(entry) ? entry : PROFILE_OFFSETS.iidxId;
+      const id = decodeString(readBytes(game.handle, game.modBaseAddr + BigInt(offset.offset), offset.maxBytes ?? 32), offset.encoding as StringEncoding).replace(/\x00.*$/s, '').trim();
+      if (/^[A-Z]\d{12}$/.test(id)) ownValue = id;
+    }
+  } catch { /* use renderer source when direct read fails */ }
+  const after = sessionMonitor.getState();
+  if (before.pid !== after.pid || before.generation !== after.generation || after.pid !== game.pid) return null;
+  if (ownValue) return ownValue;
+  const rendererValue = playAccountSource;
+  return rendererValue?.pid === game.pid && /^[A-Z]\d{12}$/.test(rendererValue.iidxId) ? rendererValue.iidxId : null;
+}
+
+function setPlayAccount(event: { sender: unknown }, payload: unknown): { ok: boolean } {
+  const session = sessionMonitor.getState();
+  if (!mainWindow || event?.sender !== mainWindow.webContents || !payload || typeof payload !== 'object') return { ok: false };
+  const { pid, iidxId } = payload as { pid?: unknown; iidxId?: unknown };
+  if (typeof pid !== 'number' || !Number.isSafeInteger(pid) || pid <= 0 || typeof iidxId !== 'string' || !/^[A-Z]\d{12}$/.test(iidxId) || session.pid !== pid) return { ok: false };
+  playAccountSource = { pid, iidxId };
+  return { ok: true };
+}
 
 // 원격모드(LAN 로컬보드) — renderer 가 계산해 push 한 오소리웹 user 객체(별값 + charts_json) 캐시.
 //   http-server 의 GET /api/me 가 이 값을 노출 → 오소리웹 원격 카드가 supabase 대신 읽음.
 let remoteUser: unknown = null;
+let playProfileOffsets: RemoteProfileMap | null = null;
 // SSE me:update broadcaster — startHttpServer 가 채움. setUser 시 PC2 에 갱신 알림용.
 let notifyMeUpdate: (() => void) | null = null;
 // 추천 브릿지 — http-server(/api/recommend, OpenWebUI 챗봇용) ↔ renderer(recCtx) 중계.
@@ -110,6 +154,11 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   },
   'reflux:tsvPath': async () => RefluxManager.tsvFilePath,
   'session:getState': async () => sessionMonitor.getState(),
+  'account:readPlayCsv': async (...args: never[]) => ({
+    ...(await readAccountPlayCsv(args[0] as string)),
+    appVersion: app.getVersion(),
+    gameVersion: sessionMonitor.getState().pid ? getPlayGameVersion(sessionMonitor.getState().pid!) : '',
+  }),
   'account:list': async () => listAccounts(),
   'account:readTsv': async (...args: never[]) => readAccountTsv(args[0] as string),
   'account:snapshot': async (...args: never[]) => snapshotTsv(args[0] as AccountSnapshotRequest, { sourceTsvPath: RefluxManager.tsvFilePath, getSession: () => sessionMonitor.getState() }),
@@ -169,7 +218,7 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   'rating:status': async () => getRatingCacheStatus(),
 
   // gist offsets.json 의 프로필 메모리 offset — useProfile 이 기본값으로 사용 (없으면 profileOffsets.ts 상수 fallback)
-  'offsets:getProfile': async () => getRemoteProfileOffsets(),
+  'offsets:getProfile': async () => { const result = await getRemoteProfileOffsets(); playProfileOffsets = result?.profile ?? null; return result; },
 
   // GitHub 최신 릴리즈 체크 — "v0.0.X 있음 → 다운로드" 알림용 (자동 다운로드 X)
   'update:check': async () => checkForUpdate(),
@@ -599,10 +648,15 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
     notifyMeUpdate?.();
     return { ok: true };
   },
+  'playlog:set-account': (...args: never[]) => setPlayAccount(...args as unknown as [{ sender: unknown }, unknown]),
 };
 
 // ipcMain 등록 (electron renderer 용)
 for (const [channel, fn] of Object.entries(ipcHandlers)) {
+  if (channel === 'playlog:set-account') {
+    ipcMain.handle(channel, async (event, ...args) => (fn as (...a: unknown[]) => unknown)(event, ...args));
+    continue;
+  }
   ipcMain.handle(channel, async (_evt, ...args) => (fn as (...a: unknown[]) => unknown)(...args));
 }
 
@@ -729,6 +783,8 @@ function createWindow(): void {
 
 async function onSessionStart(): Promise<void> { await refluxManager.hardStop(); remoteUser = null; try { await refluxManager.startAll(); } catch (e) { console.warn('[session] Reflux 시작 실패:', (e as Error).message); } pushSessionState(); }
 async function onSessionEnd(): Promise<void> {
+  playAccountSource = null;
+  probedGameVersion = null;
   const outcome = await requestFinalUpload();
   logFinalOutcome(outcome);
   await refluxManager.hardStop();
@@ -742,16 +798,22 @@ app.whenReady().then(() => {
   stopMainHeartbeat = startMainHeartbeat();
   // 플레이 기록기: 결과 화면마다 plays.csv 에 한 줄 추가 (docs/play-logger.md)
   stopPlayLogger = startPlayLogger({
-    dir: join(app.getPath('userData'), 'play-log'),
+    getAccount: getPlayAccount,
+    appVersion: app.getVersion(),
+    getGameVersion: () => {
+      const pid = sessionMonitor.getState().pid;
+      return pid ? getPlayGameVersion(pid) : '';
+    },
+    onAppend: (event) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('play:appended', event); },
     offsetsPath: join(app.getPath('userData'), 'Reflux', 'offsets.txt'),
     log: appendDiagLine,
-  });
+  } as Parameters<typeof startPlayLogger>[0] & { appVersion: string; getGameVersion: () => string });
   recordGpuStatus(gpuInfoReady ? 'startup-ready' : 'startup-pending');
   createWindow();
   // start 는 pid!=null 을 즉시 통보(뷰어가 "게임 ON" 을 빨리 인지) — Reflux 기동은 chain 에서 이어짐.
-  sessionMonitor.on('start', () => { abortFinalUpload?.(); pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
+  sessionMonitor.on('start', () => { playAccountSource = null; probedGameVersion = null; abortFinalUpload?.(); pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
   // end 는 즉시 통보하지 않는다 — onSessionEnd 가 final upload 를 끝낸 뒤 pid=null 을 push(provenance 유실 방지).
-  sessionMonitor.on('end', () => { sessionOpChain = sessionOpChain.then(() => onSessionEnd()); });
+  sessionMonitor.on('end', () => { playAccountSource = null; probedGameVersion = null; sessionOpChain = sessionOpChain.then(() => onSessionEnd()); });
   sessionMonitor.start();
 
   // 자기 실행 파일이 portable 패턴이면 같은 폴더 내 옛 portable 정리 (자기 패턴만, 안전)
@@ -763,7 +825,7 @@ app.whenReady().then(() => {
   if (!process.env.ELECTRON_RENDERER_URL) {
     const rendererDir = join(__dirname, '../renderer');
     try {
-      const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'), recommendBridge.query);
+      const http = startHttpServer(refluxManager, rendererDir, ipcHandlers, () => remoteUser, join(app.getPath('userData'), 'osr-cache'), recommendBridge.query, () => sessionMonitor.getState().pid !== null);
       notifyMeUpdate = http.notifyMeUpdate;
       serverConnectInfo = http.connectInfo;
     } catch (e) {
@@ -812,4 +874,3 @@ app.on('before-quit', async (e) => {
   mainWindow?.destroy();
   app.exit(0);
 });
-
