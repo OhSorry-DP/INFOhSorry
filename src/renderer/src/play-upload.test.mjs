@@ -28,6 +28,7 @@ function sync(globals = {}) {
 const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : key === 'play_speed' ? '1.00' : '001']));
 const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`).join(',') + '\r\n';
 const csv = rows => keys.join(',') + '\n' + rows.map(csvLine).join('');
+const csvRows = (rows, lengths) => keys.join(',') + '\n' + rows.map((value, i) => Array.from({length:lengths[i]}, (_, j) => shared.PLAY_CSV_SPEED_KEYS[j]).map(key => `"${value[key].replaceAll('"', '""')}"`).join(',')).join('\n') + '\n';
 const plain = x => JSON.parse(JSON.stringify(x));
 
 test('19/21/22 정확한 헤더만 허용하고 추가 열은 헤더 오류', () => {
@@ -101,17 +102,35 @@ test('오류 행은 DBR/완주/자동 배열에서 제외하고 정상 lamp -1�
   assert.equal(api.evaluateAutomaticArrange([normal,error]).reason,'current_not_completed');
 });
 
-test('속도 적격 배치만 현재·이전 비교에 사용하고 속도 판인 마지막 행은 제외', () => {
+test('옛 21열 고득점 행은 배치 비교 기준이며 속도 판은 제외', () => {
   const api = sync();
   const make = (lamp, bp, ex, timestamp, speed = '1.00') => ({ ...row(timestamp), timestamp:String(timestamp), song_id:'80123', difficulty:'DPA', notes:'1', judge_16:'1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', source:'playdata', battle_flag:'0', settings_p1_11:'1 2 0 0 5 4 0 0 0 0 0', clear_lamp:String(lamp), miss_count:String(bp), ex_score:String(ex), play_speed:speed });
-  const result = api.evaluateAutomaticArrange([make(5,40,1500,1), make(7,10,2200,2,'0.70'), make(5,35,1600,3)]);
-  assert.equal(result.previous.lamp, 5); assert.equal(result.previous.bp, 40); assert.equal(result.previous.ex, 1500);
-  assert.equal(result.count, 2);
+  const old = make(7,10,2200,1); const speed = make(8,0,2400,2,'0.70'); const current = make(5,35,1600,3,'1.00');
+  const parsed = api.parsePlayHistory(csvRows([old,speed,current],[21,22,22]));
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed[0], 'play_speed'), false);
+  const result = api.evaluateAutomaticArrange(parsed);
+  assert.equal(result.excluded, false);
+  assert.equal(result.previous.lamp, 7); assert.equal(result.previous.bp, 10); assert.equal(result.previous.ex, 2200);
+  assert.equal(result.count, 0);
   assert.equal(api.evaluateAutomaticArrange([make(5,35,1600,3,'0.70')]).reason, 'speed_not_normal');
 });
-test('속도 값은 엄격한 1 표기만 적격이며 plays 최근 100행에는 속도·결측 행을 보존', () => {
+test('옛 행은 등속이며 신규 결측 속도는 배치와 DBR에서 제외', () => {
   const api = sync(); const values = ['1','1.00',' 1.0 ','0.70','', ' ', 'NaN','Infinity','1e0','0x1',1,null];
+  const missing = { ...row(1) }; delete missing.play_speed;
+  assert.equal(api.isNormalSpeedPlay(missing), true);
   assert.deepEqual(values.map(value => api.isNormalSpeedPlay({ ...row(1), play_speed:value })), [true,true,true,false,false,false,false,false,false,false,false,false]);
+  assert.equal(api.isNormalSpeedPlay({ ...row(1), play_speed:undefined }), false);
+  const parsed = api.parsePlayHistory(csvRows(['',' ','0.70','NaN'].map((value, i) => ({ ...row(i), play_speed:value })), [22,22,22,22]));
+  assert.deepEqual(plain(parsed.map(r => [Object.prototype.hasOwnProperty.call(r,'play_speed'),r.play_speed])), [[true,''],[true,' '],[true,'0.70'],[true,'NaN']]);
+  const validBatch = { ...missing, song_id:'80123', difficulty:'DPA', notes:'1', judge_16:'1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', source:'playdata', battle_flag:'0', settings_p1_11:'1 2 0 0 5 4 0 0 0 0 0', clear_lamp:'5', miss_count:'35', ex_score:'1600' };
+  for (const value of ['', ' ', '0.70', 'NaN']) {
+    const evaluated = api.evaluateAutomaticArrange([{ ...validBatch, play_speed:value }]);
+    assert.equal(evaluated.excluded, true); assert.equal(evaluated.reason, 'speed_not_normal');
+  }
+  const battle = actualRows()[0];
+  for (const value of ['', ' ', '0.70', 'NaN']) assert.equal(api.decodeBattleRandomPlay({ ...battle, play_speed:value }), null);
+  assert.equal(api.evaluateAutomaticArrange([{...validBatch, play_speed:'1.00'}]).excluded, false);
+  assert.notEqual(api.decodeBattleRandomPlay({ ...battle, play_speed:'1.00' }), null);
   const rows = [row(1), { ...row(2), play_speed:'0.70' }, { ...row(3), play_speed:'' }];
   assert.deepEqual(plain(api.parseRecentPlays(csv(rows))), rows);
 });
@@ -215,6 +234,41 @@ test('전송 순간 재확인: serviceStatus 대기 중 게임이 종료되어�
   assert.equal((await api.uploadProfile({ profile: { iidxId: 'C123456789012' }, charts: [], starResult: null,
     plays: [row(0)], gameRecognized: async () => recognized })).ok, true);
   assert.equal(body, undefined);
+});
+test('옛 19·21열 DBR은 허용하고 plays에 속도를 합성하지 않음', async () => {
+  const api = sync({ AbortController, setTimeout, clearTimeout }); const base = actualRows()[0];
+  const old19 = { ...base, ...Object.fromEntries(shared.PLAY_CSV_LEGACY_KEYS.map(k => [k, base[k]])) };
+  const old21 = { ...base };
+  const missingSpeed = { ...base, play_speed:'' };
+  const parsed = api.parsePlayHistory(csvRows([old19,old21,missingSpeed],[19,21,22]));
+  for (const item of parsed.slice(0,2)) {
+    assert.equal(Object.prototype.hasOwnProperty.call(item,'play_speed'),false);
+    assert.equal(api.isNormalSpeedPlay(item),true);
+    assert.deepEqual(plain(api.decodeBattleRandomPlay(item)), { diff:3, lamp:1, ex_score:1637 });
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(parsed[2],'play_speed'),true);
+  assert.equal(parsed[2].play_speed,''); assert.equal(api.decodeBattleRandomPlay(parsed[2]),null);
+  const plays = api.buildUploadPlays({ok:true,csv:csvRows([old19,old21,missingSpeed],[19,21,22])});
+  assert.equal(plays.length,3);
+  for (const item of plays.slice(0,2)) assert.equal(Object.prototype.hasOwnProperty.call(item,'play_speed'),false);
+  const serialized = JSON.parse(JSON.stringify({plays}));
+  for (const item of serialized.plays.slice(0,2)) assert.equal(Object.prototype.hasOwnProperty.call(item,'play_speed'),false);
+  assert.equal(Object.prototype.hasOwnProperty.call(serialized.plays[2],'play_speed'),true);
+  assert.equal(serialized.plays[2].play_speed,'');
+  const error = shared.buildPlayErrorRow(-3,{appVersion:'',gameVersion:''},'2026-10-17T00:00:00.000Z');
+  assert.equal(api.evaluateAutomaticArrange([parsed[0],error]).excluded,true);
+  assert.equal(api.decodeBattleRandomPlay({ ...parsed[0], ...error }),null);
+  const oldError = api.parsePlayHistory(csvRows([error],[21]))[0];
+  assert.equal(Object.prototype.hasOwnProperty.call(oldError,'play_speed'),false);
+  assert.equal(shared.isPlayErrorRow(oldError),true);
+  assert.equal(api.evaluateAutomaticArrange([parsed[0],oldError]).reason,'current_not_completed');
+  assert.equal(api.decodeBattleRandomPlay(oldError),null);
+  const calls = [];
+  const result = await api.uploadAutomaticPlays(plays,'C123456789012',async()=>true,async()=> 'fixture-token',async(_url,options)=>{calls.push(JSON.parse(options.body));return {ok:true};});
+  assert.equal(result.ok,true); assert.equal(calls.length,1);
+  for (const item of calls[0].plays.slice(0,2)) assert.equal(Object.prototype.hasOwnProperty.call(item,'play_speed'),false);
+  assert.equal(Object.prototype.hasOwnProperty.call(calls[0].plays[2],'play_speed'),true);
+  assert.equal(calls[0].plays[2].play_speed,'');
 });
 const actualCsv = `timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version,play_speed
 2026-10-14T14:48:45.825Z,80121,"Bang Pad(Werk Mix)",SPA,1662,1637,656,325,126,-1,49.25,C,"271 161 219 38 53 385 164 138 7 28 68 32 64 66 316 236","1 1 1 0 5 1 0 0 0 0 1","0 2 0 0 5 0 0 0 0 0 0",1,0,8,currentsong,,,1.00
