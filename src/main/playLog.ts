@@ -13,7 +13,8 @@ export const PLAY_LOG_LAYOUT = {
   battleFlagDelta: 0x28,      // 배틀 플래그 (PlaySettings 기준). Reflux 소스의 0x20 은 이 빌드에서 안 맞음
   gaugeWordP1: 77,            // judgeData 기준 int32 인덱스 (Reflux PlayData.cs)
   gaugeWordP2: 78,
-  playDataWords: 8,           // [곡 ID, 난이도, EX, 미스, PGREAT, GREAT, 클리어 램프, ...]
+  playSpeedFromJudge: 0x68c,  // judgeData + 0x68c = 곡 재생 속도 배율 (float32, 0.70 = 0.7배). 0x89c 에 같은 값 사본
+  playDataWords: 8,          // [곡 ID, 난이도, EX, 미스, PGREAT, GREAT, 클리어 램프, ...]
   currentSongWords: 5,        // [곡 ID, 난이도(스타일 안 인덱스), ?, ?, 노트 수]. 배틀에서도 채워진다
   songStride: 0x730,          // 곡 엔트리 크기
   songTitleBytes: 0x100,      // 제목 1 (UTF-16LE)
@@ -25,11 +26,18 @@ export const PLAY_LOG_LAYOUT = {
 
 export const DIFF_NAMES = ['SPB', 'SPN', 'SPH', 'SPA', 'SPL', 'DPB', 'DPN', 'DPH', 'DPA', 'DPL'];
 
-export const PLAY_LOG_HEADER = [
+// 예전(19열) 헤더. play_speed 열 추가 전에 만든 plays.csv 의 첫 줄을 새 헤더로 올릴 때 비교용
+export const PLAY_LOG_HEADER_V1 = [
   'timestamp', 'song_id', 'title', 'difficulty', 'notes', 'ex_score', 'pgreat', 'great', 'miss_count',
   'clear_lamp', 'dj_rate_pct', 'dj_rank', 'judge_16', 'settings_p1_11', 'settings_p2_11', 'battle_flag',
   'gauge_p1_w77', 'gauge_p2_w78', 'source',
 ].join(',');
+export const PLAY_LOG_HEADER = PLAY_LOG_HEADER_V1 + ',play_speed';
+
+// 속도 배율 float 를 CSV 값으로: 정상 범위(0.1~10)면 소수 둘째 자리, 아니면 빈 값
+export function formatPlaySpeed(v: number | null | undefined): string {
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 10 ? v.toFixed(2) : '';
+}
 
 export type OffsetKey = 'songList' | 'judgeData' | 'playSettings' | 'playData' | 'currentSong';
 export type PlayState = 'playing' | 'select' | 'result';
@@ -158,6 +166,8 @@ export interface PlaySnapshot {
   p2Settings: number[];
   gauge: [number, number];
   source: PlaySource;
+  /** 곡 재생 속도 배율 (0.7 = 0.7배). 읽지 못했으면 null/생략 */
+  playSpeed?: number | null;
 }
 
 // 한 플레이 = CSV 한 줄 (PLAY_LOG_HEADER 와 같은 열 순서)
@@ -183,5 +193,6 @@ export function buildPlayRow(s: PlaySnapshot): string {
     s.gauge[0],
     s.gauge[1],
     s.source,
+    formatPlaySpeed(s.playSpeed),
   ].join(',');
 }

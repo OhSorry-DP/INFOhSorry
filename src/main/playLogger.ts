@@ -6,6 +6,7 @@ import { join } from 'path';
 import { closeHandle, findInfinitas, readBytes, type InfinitasHandle } from './memory';
 import {
   PLAY_LOG_HEADER,
+  PLAY_LOG_HEADER_V1,
   PLAY_LOG_LAYOUT as L,
   PREFERRED_BASE,
   buildPlayRow,
@@ -50,7 +51,15 @@ function ints(handle: unknown, addr: bigint, n: number): number[] {
 export function startPlayLogger(opts: PlayLoggerOptions): () => void {
   const csvPath = join(opts.dir, 'plays.csv');
   mkdirSync(opts.dir, { recursive: true });
-  if (!existsSync(csvPath)) writeFileSync(csvPath, PLAY_LOG_HEADER + '\n');
+  if (!existsSync(csvPath)) {
+    writeFileSync(csvPath, PLAY_LOG_HEADER + '\n');
+  } else {
+    // play_speed 열이 생기기 전 파일: 첫 줄만 새 헤더로 바꾼다 (기존 줄은 마지막 칸이 빈 값으로 읽힌다)
+    const text = readFileSync(csvPath, 'utf8');
+    const nl = text.indexOf('\n');
+    const first = (nl < 0 ? text : text.slice(0, nl)).replace(/\r$/, '');
+    if (first === PLAY_LOG_HEADER_V1) writeFileSync(csvPath, PLAY_LOG_HEADER + (nl < 0 ? '\n' : text.slice(nl)));
+  }
 
   let stopped = false;
   let timer: NodeJS.Timeout | null = null;
@@ -144,6 +153,7 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       p2Settings: ints(h, a.playSettings + BigInt(L.p2SettingsDelta), L.settingsWords),
       gauge: [gauge[0], gauge[1]],
       source: play.source,
+      playSpeed: readBytes(h, a.judge + BigInt(L.playSpeedFromJudge), 4).readFloatLE(0),
     });
     return { row, songId: play.songId, source: play.source };
   };

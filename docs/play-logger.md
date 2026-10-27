@@ -95,7 +95,7 @@ Reflux `Utils.FetchGameState` 와 같은 규칙입니다.
 
 ## 6. CSV 열
 
-한 줄 = 결과 화면 한 번. 헤더 19개 열입니다.
+한 줄 = 결과 화면 한 번. 헤더 20개 열입니다 (마지막 `play_speed` 는 2026-10 추가, 11장).
 
 | 열 | 값의 출처 | 설명 |
 |----|-----------|------|
@@ -116,6 +116,7 @@ Reflux `Utils.FetchGameState` 와 같은 규칙입니다.
 | `battle_flag` | playSettings + 0x28 | 배틀 ON = 1 |
 | `gauge_p1_w77` / `gauge_p2_w78` | judgeData 77, 78 | 게이지 원본 값 (아래 한계 참고) |
 | `source` | 계산 | `playdata` = 일반 플레이(PlayData), `currentsong` = 배틀(CurrentSong + 판정 블록, 5장) |
+| `play_speed` | judgeData + 0x68C (float32) | 곡 재생 속도 배율. 0.70 = 0.7배, 1.00 = 등속. 정상 범위(0.1~10) 밖이거나 못 읽으면 빈 값 |
 
 - `settings_p1_11` 의 워드 8 은 Reflux 가 배틀로 읽는 칸이지만 이 빌드에서는 배틀과 무관합니다. 배틀 판정은 `battle_flag` 열을 쓰세요.
 ### 6.1 옵션 값 해석
@@ -200,8 +201,45 @@ Reflux `Utils.FetchGameState` 와 같은 규칙입니다.
 ## 10. 테스트
 
 ```bash
-node --test src/main/playLog.test.mjs   # 순수 로직 13개 (배틀 보정 포함)
+node --test src/main/playLog.test.mjs   # 순수 로직 14개 (배틀 보정·play_speed 포함)
 npm run typecheck:node                  # 타입 검사
 ```
 
 게임과 연결된 동작은 자동 테스트가 없습니다. 실제 플레이로 확인합니다.
+
+## 11. 변경 내역: play_speed (곡 재생 속도) 열 추가
+
+결과 화면에 `PLAY SPEED 0.70` 으로 표시되는 **곡 자체의 재생 속도 배율**(하이스피드와 무관)을 CSV 에 기록합니다. 다른 PC 로 받아서 서버 쪽을 고칠 때 이 장만 보면 됩니다.
+
+### 11.1 무엇이 바뀌었나
+
+| 파일 | 변경 |
+|------|------|
+| `src/main/playLog.ts` | `PLAY_LOG_LAYOUT.playSpeedFromJudge = 0x68c` 추가. `PLAY_LOG_HEADER` 끝에 `play_speed` 추가(19 → 20열). 옛 헤더는 `PLAY_LOG_HEADER_V1` 로 보존. `formatPlaySpeed()` 추가. `PlaySnapshot.playSpeed?` 추가, `buildPlayRow` 가 마지막 칸에 기록 |
+| `src/main/playLogger.ts` | 저장 시점(결과 화면 안정화 후)에 `judgeData + 0x68c` 의 float32 를 읽어 `playSpeed` 로 전달. 시작 시 기존 `plays.csv` 첫 줄이 V1 헤더면 새 헤더로 교체 |
+| `src/main/playLog.test.mjs` | 열 20개·`f[19] === '0.70'`, `formatPlaySpeed` 범위 검사 추가 |
+
+기존 열의 순서·의미는 **그대로**이고 맨 끝에만 열이 늘었습니다. 새 `offsets.txt` 키는 없습니다(`judgeData` 기준 상대 위치).
+
+### 11.2 CSV 호환 (서버가 plays.csv 를 읽는 경우)
+
+- 새 열: `play_speed` (마지막, 20번째). 값은 `0.70` 같은 소수 둘째 자리 문자열. 등속은 `1.00`. 못 읽은 경우는 **빈 값**(NULL 로 받을 것).
+- **옛 줄은 19칸 그대로**입니다. 헤더만 20개로 바뀌고 과거 줄은 다시 쓰지 않습니다. 파서는 열 수가 모자라면 `play_speed` 를 NULL 로 처리해야 합니다. 과거 기록의 속도는 알 수 없으며(그때 안 읽었음) 1.0 으로 가정하면 안 됩니다.
+- 서버 DB 에 저장한다면 `play_speed numeric(4,2) NULL` 같은 널 허용 열을 추가하면 됩니다. 같은 곡·난이도의 기록이라도 속도가 다르면 **점수 비교 대상이 아닙니다**(느린 속도는 쉬움). 랭킹·추천·레이더에 섞기 전에 `play_speed IS NULL OR play_speed = 1.00` 만 쓸지 정책을 정해야 합니다.
+
+### 11.3 주소를 찾은 방법과 근거
+
+- 2026-10-28, 빌드 `2026101400`, 결과 화면에 `PLAY SPEED 0.70` 이 떠 있는 상태에서 `judgeData` / `currentSong` / `playSettings` / `playData` 주변 ±0x400 바이트를 float32 로 훑어 0.7 을 찾았습니다.
+- 후보 두 곳: `judgeData + 0x68c`(= 절대 `0x142887818`)와 `judgeData + 0x89c`(= `0x142887A28`, 0x210 뒤 사본). 둘 다 `0.699999988` 이었습니다. 기록기는 앞의 것을 읽습니다.
+- **다른 배율에서 값이 따라 바뀌는지 확인한 결과는 11.4 에 적습니다.**
+
+### 11.4 검증 상태
+
+- [x] 단위 테스트 14개 통과, `npm run typecheck:node` 통과
+- [ ] 0.70 이외의 배율(예: 0.85 또는 1.00)로 결과 화면에서 같은 주소 값이 바뀌는지 확인 — 미완료
+- [ ] 실제 플레이 후 `plays.csv` 마지막 열 확인 — 미완료
+
+### 11.5 알려진 한계
+
+- 저장 시점은 결과 화면이라, 플레이 도중 속도를 바꾸는 방식이면 **결과 화면에 표시된 최종 값**만 남습니다.
+- 게임 업데이트로 구조가 바뀌면 `playSpeedFromJudge` 가 어긋납니다. 9장 점검 순서에서 이 칸을 같이 확인하세요(속도를 바꿔 가며 float 값이 따라가는 칸을 다시 찾기).

@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PLAY_LOG_HEADER,
+  PLAY_LOG_HEADER_V1,
+  formatPlaySpeed,
   PLAY_LOG_LAYOUT as L,
   buildPlayRow,
   decideState,
@@ -107,6 +109,7 @@ test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x
     p2Settings: Array.from({ length: 11 }, () => 0),
     gauge: [0, 56],
     source: 'playdata',
+    playSpeed: 0.699999988079071,
   });
   const f = splitCsv(row);
   assert.equal(f.length, PLAY_LOG_HEADER.split(',').length);
@@ -119,6 +122,18 @@ test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x
   assert.equal(f[16], '0'); // gauge_p1
   assert.equal(f[17], '56'); // gauge_p2
   assert.equal(f[18], 'playdata');
+  assert.equal(f[19], '0.70'); // play_speed
+});
+
+test('play_speed: 정상 범위만 소수 둘째 자리, 그 외는 빈 값. 헤더는 V1 + play_speed', () => {
+  assert.equal(formatPlaySpeed(0.699999988079071), '0.70');
+  assert.equal(formatPlaySpeed(1), '1.00');
+  assert.equal(formatPlaySpeed(0), '');
+  assert.equal(formatPlaySpeed(NaN), '');
+  assert.equal(formatPlaySpeed(123), '');
+  assert.equal(formatPlaySpeed(null), '');
+  assert.equal(PLAY_LOG_HEADER, PLAY_LOG_HEADER_V1 + ',play_speed');
+  assert.equal(L.playSpeedFromJudge, 0x68c);
 });
 
 test('CSV 행: 제목의 따옴표는 두 번 써서 이스케이프', () => {
