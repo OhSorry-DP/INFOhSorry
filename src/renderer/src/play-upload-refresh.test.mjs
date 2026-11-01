@@ -241,6 +241,24 @@ test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and hidden la
 
 });
 
+test('Recent detail summary shows both visible sides combo break total', () => {
+  const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
+  const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
+  const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33' }));
+  const summary = nodes.find(node => node.props?.className === '__uprofile_playdetail_summary' || node.props?.className?.includes('__uprofile_playdetail_summary'));
+  assert.ok(summary);
+  assert.ok(JSON.stringify(summary.props.children).includes('7'));
+});
+
+test('Recent detail summary shows only P1 combo break total for hidden P2', () => {
+  const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
+  const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
+  const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33', difficulty: 'SPN' }));
+  const summary = nodes.find(node => node.props?.className === '__uprofile_playdetail_summary' || node.props?.className?.includes('__uprofile_playdetail_summary'));
+  assert.ok(summary);
+  assert.ok(JSON.stringify(summary.props.children).includes('3'));
+});
+
 test('Recent detail without FS produces GREAT PG GOOD rows and no rating for empty POOR or CB', () => {
   const lanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]); lanes[0] = [3, 4, 5, 0, 0, 0];
   const nodes = flatten(detailTree({ complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), lane_fs: null, fs: null, lane_fs_unresolved: 0 } }));
