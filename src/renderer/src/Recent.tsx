@@ -23,7 +23,7 @@ import {
   type RecentChartRow,
   type LatestChartEntry,
 } from './supabaseSync';
-import type { PlayCsvRow } from '../../shared/uploadSnapshot';
+import { isPlayErrorRow, type PlayCsvRow } from '../../shared/uploadSnapshot';
 
 // diff (NORMAL/HYPER/ANOTHER/LEGGENDARIA) → slot 색 (오소리웹 DIFF_COLOR 동일).
 const DIFF_COLOR: Record<string, string> = {
@@ -255,6 +255,18 @@ function subscribeRecentPlays(iidxId: string, update: (rows: PlayCsvRow[], error
     request++;
     unsubscribe?.();
   };
+}
+
+function recentPlayTime(timestamp: string | null | undefined): string {
+  if (!timestamp) return '—';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '—';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  const month = part('month'); const day = part('day'); const hour = part('hour'); const minute = part('minute');
+  return month && day && hour && minute ? `${month}-${day} ${hour}:${minute}` : '—';
 }
 
 export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Element {
@@ -576,6 +588,30 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
           })}
         </div>
       )}
+
+      <section className="__uprofile_recentplays" aria-label="최근 플레이">
+        <h3 className="__uprofile_recentplays_title">최근 플레이</h3>
+        {playReadError ? (
+          <p className="__uprofile_tabempty">플레이 기록을 읽지 못했습니다.</p>
+        ) : recentPlays.length === 0 ? (
+          <p className="__uprofile_tabempty">플레이 기록이 없습니다.</p>
+        ) : (
+          <div className="__uprofile_recentplays_list">
+            {[...recentPlays].reverse().map((play, index) => isPlayErrorRow(play) ? (
+              <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={`error-${index}`}>
+                기록 오류 (코드 {play.song_id})
+              </div>
+            ) : (
+              <div className="__uprofile_recentplays_row" key={`${play.timestamp}-${index}`}>
+                <span>{recentPlayTime(play.timestamp)}</span>
+                <span title={play.title}>{play.title || '—'}</span>
+                <span>{play.difficulty || '—'}</span>
+                <span>{play.ex_score || '—'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

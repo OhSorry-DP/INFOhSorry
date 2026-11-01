@@ -3148,6 +3148,37 @@ body {
 }
 .__pd_recrow { cursor: pointer; }
 
+.__uprofile_recentplays { margin-top: 24px; }
+.__uprofile_recentplays_title {
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 600;
+}
+.__uprofile_recentplays_list {
+  display: grid;
+  gap: 1px;
+  background: var(--bg-table-gap);
+  border-top: 1px solid var(--border-secondary);
+}
+.__uprofile_recentplays_row {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr) 58px 72px;
+  gap: 8px;
+  align-items: center;
+  padding: 7px 8px;
+  background: var(--bg-card);
+  color: var(--text-primary);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.__uprofile_recentplays_row > :nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.__uprofile_recentplays_row > :last-child { text-align: right; }
+.__uprofile_recentplays_error { grid-template-columns: 1fr; color: var(--text-muted); }
+@media (max-width: 768px) {
+  .__uprofile_recentplays_row { grid-template-columns: 92px minmax(0, 1fr) 48px 60px; gap: 5px; padding: 7px 6px; }
+}
+
 /* 모바일 — 두 줄 분리. INFOhSorry 의 모바일 breakpoint (768px) 와 통일. */
 @media (max-width: 768px) {
   .__pd_tbody {

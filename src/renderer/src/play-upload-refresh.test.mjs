@@ -82,6 +82,9 @@ test('CSV refresh precedes pending save and upload, using current app version', 
 });
 
 const recentSource = read('./Recent.tsx');
+const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nexport default function Recent'));
+const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nexport default function Recent', recentStart);
 const recentFn = recentSource.slice(recentStart, recentEnd);
@@ -142,4 +145,36 @@ test('Recent account switch ignores late A response and unsubscribes A listener'
   assert.deepEqual(h.updates.map(update => update.account), ['B']);
   assert.equal(h.updates[0].rows[0].timestamp, 'B');
   assert.equal(h.listeners.has(listenerA), false);
+});
+
+test('Recent display reverses chronological rows and formats KST timestamps', () => {
+  const format = vm.runInNewContext(recentViewCode, {}).recentPlayTime;
+  const rows = ['2026-11-01T00:00:00Z', '2026-11-01T01:00:00Z'];
+  assert.deepEqual([...rows].reverse().map(format), ['11-01 10:00', '11-01 09:00']);
+});
+
+test('Recent display preserves repeated songs as separate rows', () => {
+  const snippet = recentSource.slice(recentSource.indexOf('{[...recentPlays].reverse().map('), recentSource.indexOf('</div>\n        )}', recentSource.indexOf('{[...recentPlays].reverse().map(')));
+  assert.match(snippet, /map\(\(play, index\)/);
+  assert.match(snippet, /key=\{`\$\{play\.timestamp\}-\$\{index\}`\}/);
+});
+
+test('Recent rows display title, difficulty, EX score in four grid columns', () => {
+  const snippet = recentSource.slice(recentSource.indexOf('<span>{recentPlayTime(play.timestamp)}</span>'), recentSource.indexOf('</div>\n            ))}', recentSource.indexOf('<span>{recentPlayTime(play.timestamp)}</span>')));
+  assert.match(snippet, /play\.title/);
+  assert.match(snippet, /play\.difficulty/);
+  assert.match(snippet, /play\.ex_score/);
+  assert.match(recentCss, /\.\_\_uprofile_recentplays_row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*104px minmax\(0, 1fr\) 58px 72px;[^}]*gap:\s*8px;/s);
+});
+
+test('Recent error row shows its code in one cell', () => {
+  const snippet = recentSource.slice(recentSource.indexOf('isPlayErrorRow(play) ?'), recentSource.indexOf(': (\n              <div className="__uprofile_recentplays_row"', recentSource.indexOf('isPlayErrorRow(play) ?')));
+  assert.match(snippet, /기록 오류 \(코드 \{play\.song_id\}\)/);
+  assert.match(recentCss, /\.\_\_uprofile_recentplays_error\s*\{\s*grid-template-columns:\s*1fr;/);
+});
+
+test('Recent distinguishes empty history from read failure and keeps chart list code', () => {
+  assert.match(recentSource, /playReadError \? \(/);
+  assert.match(recentSource, /recentPlays\.length === 0 \? \(/);
+  assert.match(recentSource, /sortRows\(computeTodayCharts\(rows, latestIdx\)\)/);
 });
