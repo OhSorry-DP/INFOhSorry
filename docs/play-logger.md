@@ -329,3 +329,52 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 - 읽는 값은 결과 화면 시점의 옵션창 설정입니다. 판 도중에 바꾸는 방식이면 마지막 값만 남습니다.
 - SP 를 2P 쪽으로 치는 경우, 노트 수가 SP/DP 와 모두 같을 때만 P2 판정 합 휴리스틱이 쓰여 DP 로 잘못 볼 수 있습니다(드묾).
 - 게임 업데이트로 구조가 바뀌면 `0x17A0` 이 어긋납니다. 9장 점검 순서와 함께, 옵션창 속도를 바꿔 가며 같은 단계 값이 따라가는 칸을 다시 찾으세요(모듈 메모리 스냅샷 diff 로 `playSettings` 근처에서 찾음).
+
+## 12. 플레이 상세 (등급별 FAST/SLOW · 레인별 판정) — plays_detail.jsonl
+
+### 12.1 무엇을 저장하나
+
+`plays.csv` 와 같은 폴더(`users/<IIDX ID>/`)의 **`plays_detail.jsonl`** 에 판마다 한 줄(JSON)을 추가합니다. `plays.csv` 의 `timestamp` 와 같은 값이 `timestamp` 로 들어가 서로 이어 볼 수 있습니다. **업로드 대상이 아니며** `plays.csv` 의 열(19·21·22칸 검사)은 바꾸지 않았습니다.
+
+| 필드 | 뜻 |
+|------|-----|
+| `v` | 형식 버전(1) |
+| `complete` | 카운터가 0 으로 리셋되는 판 시작부터 관찰했는가. false 면 `fs`·`lane_fs` 는 null |
+| `samples` · `dt_ms` | 플레이 중 읽은 횟수와 평균 간격(ms). 간격이 클수록 미확정이 늘어난다 |
+| `p1` · `p2` | 쪽별 상세 (아래) |
+
+쪽별(`p1`, `p2`) 필드:
+
+| 필드 | 뜻 |
+|------|-----|
+| `fs` | `{fast_great, fast_good, slow_great, slow_good}` 등급별 FAST/SLOW |
+| `fs_unresolved` | 짝지을 수 없어 `fs` 에서 빠진 GREAT·GOOD 노트 수 |
+| `fs_ok` | `fs` 합 + `fs_unresolved` 가 최종 FAST+SLOW 합계와 같은가 |
+| `lanes` | 레인 8개 × `[PGREAT, GREAT, GOOD, BAD, POOR, 공POOR]` 최종값 |
+| `lanes_ok` | 레인 합이 `judge_16` 의 판정 합과 같은가 (POOR 는 공POOR 포함) |
+| `lane_fs` | 레인 8개 × `[FAST GREAT, FAST GOOD, SLOW GREAT, SLOW GOOD]` |
+| `lane_fs_unresolved` | 레인별로는 확정하지 못한 GREAT·GOOD 노트 수 |
+
+### 12.2 메모리에서 확인한 사실 (2026-11-01, 빌드 2026101400, 실제 플레이 4판)
+
+- **FAST/SLOW 는 GREAT 와 GOOD 에서만 오릅니다.** PGREAT·BAD·POOR 는 포함되지 않습니다. 매 판 `FAST+SLOW = GREAT+GOOD` 가 쪽별로 정확히 맞았습니다.
+- **등급별 FAST/SLOW 카운터는 메모리에 없습니다.** `judgeData` 주변 ±16MB 를 플레이 중 스캔해 FAST/SLOW 와 같은 틱에 따라 오르는 칸을 찾았지만, 합계 칸(`judgeData` 12~15)과 판정 칸 외에는 없었습니다.
+- **판정 카운터는 플레이 중 실시간으로 올라가고** 판 시작 때 0 으로 리셋되며, 결과 화면까지 값이 유지됩니다. 1P/2P 는 별도 칸입니다.
+- **레인별 판정 카운터가 있습니다.** `judgeData` 기준 word 위치 P1 `3448349`, P2 `3452263` 부터 레인 8개가 6칸 간격(`[PGREAT, GREAT, GOOD, BAD, POOR, 공POOR]`)으로 이어집니다. 8개 합이 `judge_16` 의 쪽별 판정 합과 4판 모두 정확히 일치했고, POOR 는 `POOR + 공POOR` 가 총 POOR 였습니다. **레인 0~7 이 어느 건반·스크래치인지는 아직 확인하지 못했습니다.**
+
+### 12.3 등급별 FAST/SLOW 를 복원하는 방법
+
+플레이 중 `DETAIL_SAMPLE_MS`(4ms) 간격으로 `judge_16` 과 두 레인 블록을 읽고, 샘플 사이의 증가분을 짝짓습니다(`src/main/playDetail.ts`).
+
+- GREAT/GOOD 증가 수 = FAST/SLOW 증가 수일 때 짝짓습니다. 한 방향(FAST 만 또는 SLOW 만)이거나 한 등급(GREAT 만 또는 GOOD 만)이면 확정합니다.
+- 한 샘플에 GREAT·GOOD·FAST·SLOW 가 전부 섞이면 확정할 수 없어 `fs_unresolved` 로 셉니다. 레인별은 FAST·SLOW 가 섞여도 확정할 수 없어 `lane_fs_unresolved` 로 셉니다.
+- 읽는 도중 값이 갱신되는 경우(FAST 가 먼저, GREAT 가 다음 샘플에 오름)를 위해 균형이 안 맞으면 최대 3샘플까지 이월합니다. 그래도 안 맞으면 미확정입니다.
+- 첫 샘플이 이미 0 이 아니면(플레이 중간에 앱을 켠 경우) 리셋을 볼 때까지 누적하지 않고, 끝내 못 보면 `complete=false` 입니다.
+- 실제 판 기록(5ms 급 스캔 약 9,000샘플)을 재생해 검증: P1 FAST+SLOW 195건 중 193건, P2 200건 중 200건을 확정했습니다(남은 2건은 한 샘플에 네 값이 모두 섞인 경우).
+
+### 12.4 한계와 점검
+
+- **샘플 간격은 OS 타이머에 좌우됩니다.** Windows 에서 4ms 를 요청해도 더 길게 돌 수 있습니다. 실제 간격은 `dt_ms` 로 남고, 로그에도 `[playlog] detail saved ... dt=...ms unresolved=...` 로 나옵니다. 간격이 크면 `fs_unresolved` 가 늘어납니다.
+- 주소는 `judgeData` 기준 **고정 오프셋**입니다. 게임 업데이트로 구조가 바뀌면 어긋나며, 그 신호가 `lanes_ok=false` 입니다. 이 경우 12.2 의 방법(플레이 중 `judgeData` 주변을 스캔해 판정 칸과 같은 틱에 오르는 칸 찾기)으로 다시 찾으세요.
+- 상세 읽기에 실패해도 `plays.csv` 기록은 그대로 저장됩니다(로그에 `detail sampling stopped`).
+- 실제 앱에서의 동작(샘플링 간격·CPU 부하)은 이 문서 작성 시점에 확인하지 않았습니다. 빌드한 뒤 한 판 쳐서 로그의 `dt`·`unresolved` 와 `lanes_ok=true/true` 를 확인하세요.

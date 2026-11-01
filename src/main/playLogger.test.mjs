@@ -16,25 +16,26 @@ function load(source, dependencies = {}, globals = {}) {
 }
 const shared = load(read('../shared/uploadSnapshot.ts'));
 const play = load(read('./playLog.ts'));
+const detail = load(read('./playDetail.ts'));
 function fixture() {
   let now = 0, serial = 0;
   const timers = new Map();
   const s = { pid: 1, id: 'A123456789012', marker: true, playing: true, song: 1,
     mtimeMs: 1, size: 10, missing: false, invalid: false, racing: false, fail: '', memoryFail: false,
-    rows: [], logs: [], closed: [], appends: 0, scans: 0, stats: 0, versions: 0, addresses: [] };
+    rows: [], details: [], logs: [], closed: [], appends: 0, scans: 0, stats: 0, versions: 0, addresses: [] };
   const fs = {
     statSync() { s.stats++; if (s.missing) throw Error('missing'); return { mtimeMs: s.mtimeMs, size: s.size }; },
     readFileSync() { if (s.racing) s.mtimeMs++; return s.invalid ? '' : ['judgeData','playSettings','playData','songList'].map((k,i) => `${k}=0x${(0x140001000n + BigInt(i * 4096)).toString(16)}`).join('\n'); },
     existsSync: () => false,
     mkdirSync() { if (s.fail === 'mkdir') throw Error('mkdir'); },
     writeFileSync() { if (s.fail === 'header') throw Error('header'); },
-    appendFileSync(file, row) { if (s.fail === 'append') throw Error('append'); s.rows.push(row); },
+    appendFileSync(file, row) { if (String(file).endsWith('plays_detail.jsonl')) { s.details.push(row); return; } if (s.fail === 'append') throw Error('append'); s.rows.push(row); },
   };
   const memory = {
     findInfinitas: () => s.pid ? { pid: s.pid, handle: s.pid, modBaseAddr: 0x140000000n } : null,
     closeHandle: h => s.closed.push(h),
     readBytes(h, address, size) {
-      s.addresses.push(address);
+      if (size !== 192) s.addresses.push(address); // 192B = 플레이 상세 레인 블록 (playDetail.test 와 아래 상세 테스트에서 따로 본다)
       const b = Buffer.alloc(size);
       if (size === 96) {
         s.scans++;
@@ -44,12 +45,13 @@ function fixture() {
       else if (address === 0x140003000n) b.writeInt32LE(s.song);
       else if (address === 0x1400037a0n) b.writeInt32LE(10); // playSettings + 0x17a0 = 속도 단계 10 (1.00)
       if (s.memoryFail && size === 64) throw Error('memory');
+      if (s.detailFail && size === 192) throw Error('detail');
       return b;
     },
   };
   const api = load(read('./playLogger.ts'), { fs, path: { dirname: () => '/users' },
-    './accountTsvStore': { accountPlayCsvPath: id => `/users/${id}/plays.csv` }, './memory': memory,
-    './playLog': play, '../shared/uploadSnapshot': shared }, {
+    './accountTsvStore': { accountPlayCsvPath: id => `/users/${id}/plays.csv`, accountPlayDetailPath: id => `/users/${id}/plays_detail.jsonl` }, './memory': memory,
+    './playLog': play, './playDetail': detail, '../shared/uploadSnapshot': shared }, {
     performance: { now: () => now },
     Date: class extends Date { constructor(...args) { super(...(args.length ? args : [1700000000000 + now])); } },
     setTimeout(fn, ms) { const id = ++serial; timers.set(id, { at: now + ms, fn }); return id; },
@@ -79,6 +81,26 @@ test('정상 500ms tick과 결과 전환 1500ms 저장 유지', () => {
   f.advance(4000); assert.equal(f.s.rows.length,1); assert.equal(f.s.appends,1);
   assert.deepEqual(fields(f.s.rows[0]).slice(-3),['app','real-game','1.00']); // app_version, game_version, play_speed
   assert.equal(f.s.versions,1); f.stop();
+});
+
+test('플레이 중 샘플링한 상세가 plays.csv 와 같은 timestamp 로 plays_detail.jsonl 에 한 줄 저장된다', () => {
+  const f = fixture(); f.advance(2000); f.advance(2100); // 플레이 중: 4ms 샘플러 동작
+  f.result();
+  assert.equal(f.s.rows.length, 1); assert.equal(f.s.details.length, 1);
+  const d = JSON.parse(f.s.details[0]);
+  assert.equal(d.timestamp, fields(f.s.rows[0])[0]);
+  assert.equal(d.v, 1); assert.equal(d.complete, true); // 카운터가 0 인 채로 시작했으므로 처음부터 관찰한 것
+  assert.ok(d.samples > 20 && d.dt_ms >= 3 && d.dt_ms <= 5, `samples=${d.samples} dt=${d.dt_ms}`);
+  assert.equal(d.p1.lanes.length, 8); assert.equal(d.p1.lanes_ok, true);
+  assert.equal(f.s.logs.filter(x => x.includes('detail saved')).length, 1);
+  f.stop();
+});
+
+test('상세 읽기가 실패해도 plays.csv 기록은 그대로 저장된다', () => {
+  const f = fixture(); f.s.detailFail = true; f.advance(2000); f.advance(2100); f.result();
+  assert.equal(f.s.rows.length, 1); assert.equal(f.s.details.length, 0);
+  assert.ok(f.s.logs.some(x => x.includes('detail sampling stopped')));
+  f.stop();
 });
 
 test('ID 없는 오류는 diag만, 뒤늦은 ID 소급 없음과 pid 변경 초기화', () => {

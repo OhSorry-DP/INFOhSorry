@@ -2,6 +2,12 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 다음 릴리즈 — 플레이 상세(등급별 FAST/SLOW · 레인별 판정) 기록
+
+- 플레이 중 4ms 간격으로 판정 카운터를 읽어, 판마다 `users/<ID>/plays_detail.jsonl` 에 등급별 FAST/SLOW(FAST GREAT·FAST GOOD·SLOW GREAT·SLOW GOOD)와 레인 8개별 판정·FAST/SLOW 를 한 줄 저장한다(`playDetail.ts`, `playLogger.ts`). `plays.csv` 의 열과 업로드는 바꾸지 않았고 상세 파일은 업로드하지 않는다.
+- 게임 메모리에는 등급별 FAST/SLOW 칸이 없고(FAST/SLOW 는 GREAT·GOOD 합계만), 레인별 판정 카운터는 있다. 짝지을 수 없는 노트는 `fs_unresolved` 로 센다. 자세한 내용은 [docs/play-logger.md 12장](docs/play-logger.md#12-플레이-상세-등급별-fastslow--레인별-판정--plays_detailjsonl).
+- 테스트: playDetail 9건 신규, playLogger 8건(상세 저장·상세 실패 시 기록 유지 2건 신규), playLog 포함 36/36, typecheck 통과. 실제 플레이 로그 재생으로 P1 193/195, P2 200/200 확정. 실제 앱 빌드에서의 샘플링 간격은 확인하지 않았다.
+
 ### 0.0.156 — 2026-10-28 곡 재생 속도(play_speed) 22열 · 속도 판 배치·DBR 제외
 
 - 보완(사용자 결정 2026-10-28): 행 길이 19·21칸인 옛 기록은 등속으로 취급해 배치 이전 비교·DBR에 포함하고, 22칸의 빈 값·공백·잘못된 속도값은 계속 제외한다. plays에는 옛 행의 속도를 합성하지 않는다.

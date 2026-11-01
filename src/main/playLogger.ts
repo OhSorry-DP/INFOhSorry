@@ -4,7 +4,8 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'fs';
 import { buildPlayErrorRow, PLAY_CSV_KEYS } from '../shared/uploadSnapshot';
 import { dirname } from 'path';
-import { accountPlayCsvPath } from './accountTsvStore';
+import { accountPlayCsvPath, accountPlayDetailPath } from './accountTsvStore';
+import { LANE_BLOCK_WORDS, PLAY_DETAIL_LAYOUT, PlayDetailTracker, type DetailSample } from './playDetail';
 import { closeHandle, findInfinitas, readBytes, type InfinitasHandle } from './memory';
 import {
   PLAY_LOG_HEADER,
@@ -27,6 +28,8 @@ const TICK_ATTACHED_MS = 500;
 const TICK_DETACHED_MS = 2000;
 // 결과 화면 진입 후 값이 안정될 때까지 기다리는 시간
 const RESULT_SETTLE_MS = 1500;
+// 플레이 중 판정 카운터를 읽는 간격. 짧을수록 등급별 FAST/SLOW 짝짓기가 정확하다 (docs/play-logger.md 12장)
+const DETAIL_SAMPLE_MS = 4;
 
 export interface PlayLoggerOptions {
   appVersion?: string;
@@ -78,6 +81,8 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
   const observed = new Set<string>();
   let fingerprint: { mtimeMs: number; size: number } | null = null;
   let attachedAt = 0;
+  let detailTracker: PlayDetailTracker | null = null;
+  let sampler: NodeJS.Timeout | null = null;
 
   const account = (game: InfinitasHandle): string | null => {
     try {
@@ -113,7 +118,42 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
   const sameFile = (a: { mtimeMs: number; size: number }, b: { mtimeMs: number; size: number }): boolean =>
     a.mtimeMs === b.mtimeMs && a.size === b.size;
 
+  const stopSampler = (): void => {
+    if (sampler) clearTimeout(sampler);
+    sampler = null;
+  };
+  const readDetailSample = (): DetailSample => {
+    const a = addr!;
+    const h = handle!.handle;
+    return {
+      judge: ints(h, a.judge, 16),
+      p1Lanes: ints(h, a.judge + BigInt(PLAY_DETAIL_LAYOUT.laneWordsP1 * 4), LANE_BLOCK_WORDS),
+      p2Lanes: ints(h, a.judge + BigInt(PLAY_DETAIL_LAYOUT.laneWordsP2 * 4), LANE_BLOCK_WORDS),
+      at: performance.now(),
+    };
+  };
+  // 플레이 중에만 짧은 간격으로 읽는다. 실패하면 상세 기록만 포기하고 plays.csv 기록은 그대로 둔다.
+  const startSampler = (): void => {
+    if (sampler || !handle || !addr) return;
+    const tracker = new PlayDetailTracker();
+    detailTracker = tracker;
+    const step = (): void => {
+      if (stopped || !handle || !addr || detailTracker !== tracker) { sampler = null; return; }
+      try { tracker.feed(readDetailSample()); }
+      catch (e) {
+        opts.log(`[playlog] detail sampling stopped: ${String(e)}`);
+        detailTracker = null;
+        sampler = null;
+        return;
+      }
+      sampler = setTimeout(step, DETAIL_SAMPLE_MS);
+    };
+    sampler = setTimeout(step, 0);
+  };
+
   const detach = (): void => {
+    stopSampler();
+    detailTracker = null;
     try {
       if (handle) closeHandle(handle.handle);
     } catch {
@@ -198,7 +238,7 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
   };
 
   // 저장할 플레이가 없으면 null (PlayData 도 비고 배틀 보정도 불가능한 경우)
-  const buildSnapshotRow = (): { row: string; songId: number; source: string } | null => {
+  const buildSnapshotRow = (): { row: string; songId: number; source: string; timestamp: string } | null => {
     const a = addr!;
     const h = handle!.handle;
     const judge16 = ints(h, a.judge, 16);
@@ -222,8 +262,9 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
     if (!play) return null;
     const song = lookupSongInBuffer(songBuf, play.songId, play.diff) ?? { title: '', notes: 0 };
     const gauge = ints(h, a.judge + BigInt(L.gaugeWordP1 * 4), 2);
+    const timestamp = new Date().toISOString();
     const row = buildPlayRow({
-      timestamp: new Date().toISOString(),
+      timestamp,
       songId: play.songId,
       title: song.title,
       diff: play.diff,
@@ -241,7 +282,23 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       ...versions,
       playSpeed,
     });
-    return { row, songId: play.songId, source: play.source };
+    return { row, songId: play.songId, source: play.source, timestamp };
+  };
+
+  // 같은 timestamp 로 plays_detail.jsonl 에 한 줄. 실패해도 plays.csv 기록에는 영향이 없다.
+  const saveDetail = (iidxId: string, timestamp: string): void => {
+    const tracker = detailTracker;
+    detailTracker = null;
+    if (!tracker) return;
+    try {
+      const path = accountPlayDetailPath(iidxId);
+      if (!path) return;
+      const detail = tracker.finish(readDetailSample(), timestamp);
+      appendFileSync(path, JSON.stringify(detail) + '\n', 'utf8');
+      opts.log(`[playlog] detail saved complete=${detail.complete} samples=${detail.samples} dt=${detail.dt_ms}ms unresolved=${detail.p1.fs_unresolved}/${detail.p2.fs_unresolved} lanes_ok=${detail.p1.lanes_ok}/${detail.p2.lanes_ok}`);
+    } catch (e) {
+      opts.log(`[playlog] detail save failed: ${String(e)}`);
+    }
   };
 
   const saveOnce = (): void => {
@@ -259,7 +316,10 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       diagnose(-2, iidxId);
       return;
     }
-    if (append(iidxId, snap.row)) opts.log(`[playlog] saved play song_id=${snap.songId} source=${snap.source} -> ${accountPlayCsvPath(iidxId)}`);
+    if (append(iidxId, snap.row)) {
+      opts.log(`[playlog] saved play song_id=${snap.songId} source=${snap.source} -> ${accountPlayCsvPath(iidxId)}`);
+      saveDetail(iidxId, snap.timestamp);
+    }
   };
 
   const tick = (): void => {
@@ -276,6 +336,8 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
         return schedule();
       }
       const now = currentState();
+      if (now === 'playing') startSampler();
+      else stopSampler();
       if (prev === 'playing' && now !== 'playing') {
         busy = true;
         setTimeout(() => {

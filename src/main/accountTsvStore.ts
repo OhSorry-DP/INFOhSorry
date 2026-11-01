@@ -96,6 +96,10 @@ export async function setLastSelected(iidxId: string | null): Promise<void> { co
 export function accountPlayCsvPath(iidxId: string): string | null {
   return IIDX_RE.test(iidxId) ? join(accountDir(iidxId), 'plays.csv') : null;
 }
+// 플레이 상세(등급별 FAST/SLOW · 레인별 카운터). plays.csv 와 같은 폴더의 JSON Lines. 업로드 대상이 아니다.
+export function accountPlayDetailPath(iidxId: string): string | null {
+  return IIDX_RE.test(iidxId) ? join(accountDir(iidxId), 'plays_detail.jsonl') : null;
+}
 export async function readAccountPlayCsv(iidxId: string): Promise<PlayCsvReadResult> {
   const path = accountPlayCsvPath(iidxId);
   if (!path) return { ok: false, error: 'invalid id' };
