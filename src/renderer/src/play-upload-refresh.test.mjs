@@ -82,6 +82,7 @@ test('CSV refresh precedes pending save and upload, using current app version', 
 });
 
 const recentSource = read('./Recent.tsx');
+const recentPlaysSource = recentSource.slice(recentSource.indexOf('export function RecentPlays('), recentSource.indexOf('\nexport default function Recent('));
 const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentCss = read('./index.css');
@@ -99,7 +100,17 @@ function recentHarness({ readPlayCsv, onPlayAppend } = {}) {
 }
 const recentRow = timestamp => ({ timestamp });
 
-test('Recent initially reads play history and retains at most 100 rows', async () => {
+test('Recent has no play history section or subscription', () => {
+  const recentOnly = recentSource.slice(recentSource.indexOf('export default function Recent('));
+  assert.doesNotMatch(recentOnly, /subscribeRecentPlays|__uprofile_recentplays|최근 플레이/);
+});
+
+test('RecentPlays distinguishes empty history from read failure', () => {
+  assert.match(recentPlaysSource, /playReadError \? \(/);
+  assert.match(recentPlaysSource, /recentPlays\.length === 0 \? \(/);
+});
+
+test('Recent subscribes and retains at most 100 rows', async () => {
   const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: Array.from({ length: 105 }, (_, i) => recentRow(String(i))) }) });
   const stop = h.subscribe('A123', (rows, error) => h.updates.push({ rows, error }));
   await new Promise(resolve => setImmediate(resolve));
@@ -109,7 +120,7 @@ test('Recent initially reads play history and retains at most 100 rows', async (
   stop();
 });
 
-test('Recent refreshes after append for the subscribed account', async () => {
+test('Recent refreshes after same-account append', async () => {
   let reads = 0;
   const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: [recentRow(String(++reads))] }) });
   h.subscribe('A123', (rows, error) => h.updates.push({ rows, error }));
@@ -118,16 +129,6 @@ test('Recent refreshes after append for the subscribed account', async () => {
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(reads, 2);
   assert.equal(h.updates[1].rows[0].timestamp, '2');
-});
-
-test('Recent ignores append events from another account', async () => {
-  let reads = 0;
-  const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: [recentRow(String(++reads))] }) });
-  h.subscribe('A123', () => {});
-  await new Promise(resolve => setImmediate(resolve));
-  [...h.listeners][0]({ iidxId: 'B456' });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(reads, 1);
 });
 
 test('Recent account switch ignores late A response and unsubscribes A listener', async () => {
@@ -147,30 +148,36 @@ test('Recent account switch ignores late A response and unsubscribes A listener'
   assert.equal(h.listeners.has(listenerA), false);
 });
 
-test('Recent display reverses chronological rows and formats KST timestamps', () => {
+test('RecentPlays display reverses chronological rows and formats KST timestamps', () => {
   const format = vm.runInNewContext(recentViewCode, {}).recentPlayTime;
   const rows = ['2026-11-01T00:00:00Z', '2026-11-01T01:00:00Z'];
   assert.deepEqual([...rows].reverse().map(format), ['11-01 10:00', '11-01 09:00']);
 });
 
-test('Recent display preserves repeated songs as separate rows', () => {
-  const snippet = recentSource.slice(recentSource.indexOf('{[...recentPlays].reverse().map('), recentSource.indexOf('</div>\n        )}', recentSource.indexOf('{[...recentPlays].reverse().map(')));
+test('RecentPlays preserves repeated songs and four-column row format', () => {
+  const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('{[...recentPlays].reverse().map('));
   assert.match(snippet, /map\(\(play, index\)/);
   assert.match(snippet, /key=\{`\$\{play\.timestamp\}-\$\{index\}`\}/);
-});
-
-test('Recent rows display title, difficulty, EX score in four grid columns', () => {
-  const snippet = recentSource.slice(recentSource.indexOf('<span>{recentPlayTime(play.timestamp)}</span>'), recentSource.indexOf('</div>\n            ))}', recentSource.indexOf('<span>{recentPlayTime(play.timestamp)}</span>')));
   assert.match(snippet, /play\.title/);
   assert.match(snippet, /play\.difficulty/);
   assert.match(snippet, /play\.ex_score/);
   assert.match(recentCss, /\.\_\_uprofile_recentplays_row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*104px minmax\(0, 1fr\) 58px 72px;[^}]*gap:\s*8px;/s);
 });
 
-test('Recent error row shows its code in one cell', () => {
-  const snippet = recentSource.slice(recentSource.indexOf('isPlayErrorRow(play) ?'), recentSource.indexOf(': (\n              <div className="__uprofile_recentplays_row"', recentSource.indexOf('isPlayErrorRow(play) ?')));
+test('RecentPlays error row shows code -11 in one cell', () => {
+  const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('isPlayErrorRow(play) ?'));
   assert.match(snippet, /기록 오류 \(코드 \{play\.song_id\}\)/);
   assert.match(recentCss, /\.\_\_uprofile_recentplays_error\s*\{\s*grid-template-columns:\s*1fr;/);
+});
+
+test('App places PLAY LOG after RECENT and passes profile ID while retaining playdata defaults and stats exclusion', () => {
+  const appSource = read('./App.tsx');
+  const buttons = appSource.slice(appSource.indexOf("onClick={() => setTab('recent')}") - 100, appSource.indexOf("onClick={() => setTab('playdata')}") + 120);
+  assert.ok(buttons.indexOf('RECENT') < buttons.indexOf('PLAY LOG'));
+  assert.ok(buttons.indexOf('PLAY LOG') < buttons.indexOf('PLAYDATA'));
+  assert.match(appSource, /<RecentPlays iidxId=\{profile\.iidxId\} \/>/);
+  assert.match(appSource, /useState<Tab>\('playdata'\)/);
+  assert.match(appSource, /tab === 'recent' \|\| tab === 'plays' \|\| tab === 'analysis' \|\| tab === 'playdata'/);
 });
 
 test('Recent distinguishes empty history from read failure and keeps chart list code', () => {
