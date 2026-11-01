@@ -1,6 +1,37 @@
 import type { RecInputChart } from './recommend';
 import type { SongChart, StarResult } from './types';
 
+/** [FAST GREAT, FAST GOOD, SLOW GREAT, SLOW GOOD] */
+export type FsCounts = [number, number, number, number];
+
+export interface SideDetail {
+  /** 등급별 FAST/SLOW. 플레이 시작부터 못 봤으면 null */
+  fs: { fast_great: number; fast_good: number; slow_great: number; slow_good: number } | null;
+  /** 짝지을 수 없어 위 값에서 빠진 GREAT/GOOD 노트 수 */
+  fs_unresolved: number;
+  /** 확정값 + 미확정이 최종 FAST+SLOW 합계와 같고, 확정 FAST·SLOW 가 각각 합계를 넘지 않는가 */
+  fs_ok: boolean;
+  /** 레인별 [PGREAT, GREAT, GOOD, BAD, POOR, 공POOR] 최종값 */
+  lanes: number[][];
+  /** 레인 합이 judge_16 판정 합계와 같은가 (POOR 는 공POOR 포함) */
+  lanes_ok: boolean;
+  /** 레인별 [FAST GREAT, FAST GOOD, SLOW GREAT, SLOW GOOD]. 못 봤으면 null */
+  lane_fs: FsCounts[] | null;
+  lane_fs_unresolved: number;
+}
+
+export interface PlayDetail {
+  v: 1;
+  timestamp: string;
+  /** 플레이 시작(카운터 0 리셋)부터 관찰했는가 */
+  complete: boolean;
+  samples: number;
+  /** 평균 샘플 간격(ms). 클수록 짝짓기 모호성이 늘어난다 */
+  dt_ms: number;
+  p1: SideDetail;
+  p2: SideDetail;
+}
+
 export const SNAPSHOT_VERSION = 1;
 
 export type SnapshotReason = 'periodic' | 'game-exit' | 'id-switch' | 'app-close' | 'manual';
