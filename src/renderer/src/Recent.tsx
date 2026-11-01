@@ -24,6 +24,7 @@ import {
   type LatestChartEntry,
 } from './supabaseSync';
 import { isPlayErrorRow, type PlayCsvRow, type PlayDetail, type SideDetail } from '../../shared/uploadSnapshot';
+import { LAMP_NUM_TO_ABBR } from './lampStyle';
 
 // diff (NORMAL/HYPER/ANOTHER/LEGGENDARIA) → slot 색 (오소리웹 DIFF_COLOR 동일).
 const DIFF_COLOR: Record<string, string> = {
@@ -274,15 +275,44 @@ function detailSideHidden(side: SideDetail | null | undefined): boolean {
   return side.fs === null || (side.fs != null && [side.fs.fast_great, side.fs.fast_good, side.fs.slow_great, side.fs.slow_good].every((value) => typeof value === 'number' && value === 0));
 }
 
-function renderPlayDetail(detail: PlayDetail): JSX.Element | null {
+function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | null {
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
   if (!sides.length) return null;
-  return <details className="__uprofile_playdetail"><summary>상세 기록</summary>{sides.map(([label, side]) => <section key={label} className="__uprofile_playdetail_side">
-    <strong>{label}</strong>{!detail.complete && <span className="__uprofile_playdetail_state">부분 기록</span>}
-    <div className="__uprofile_playdetail_fs">{side.fs == null ? 'FAST/SLOW 기록 없음(플레이 시작부터 관찰 못 함)' : <>FAST&nbsp; GREAT {side.fs.fast_great ?? '—'} · GOOD {side.fs.fast_good ?? '—'}　SLOW&nbsp; GREAT {side.fs.slow_great ?? '—'} · GOOD {side.fs.slow_good ?? '—'}　미확정 {side.fs_unresolved ?? '—'}</>}{side.fs_ok === false && <span className="__uprofile_playdetail_state">검증 불일치</span>}</div>
-    <div className="__uprofile_playdetail_lanehead">레인별 판정{side.lanes_ok === false && <span className="__uprofile_playdetail_state">검증 불일치</span>}　미확정 {side.lane_fs_unresolved ?? '—'}</div>
-    <table className="__uprofile_playdetail_table"><thead><tr><th>Lane</th>{['PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name) => <th key={name}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{side.lanes?.[lane]?.[col] ?? '—'}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`}>{side.lane_fs == null ? '—' : side.lane_fs[lane]?.[col] ?? '—'}</td>)}</tr>)}</tbody></table>
-  </section>)}</details>;
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  const aggregate = (index: number) => {
+    const values = sides.flatMap(([, side]) => side.lanes?.map((lane) => lane?.[index]));
+    return values.length === sides.length * 8 && values.every(valid) ? values.reduce((sum, value) => sum + value, 0) : null;
+  };
+  const fsValues = sides.map(([, side]) => side.fs);
+  const hasFs = fsValues.every((fs) => fs != null && [fs.fast_great, fs.fast_good, fs.slow_great, fs.slow_good].every(valid));
+  const sumFs = (key: 'fast_great' | 'fast_good' | 'slow_great' | 'slow_good') => hasFs ? fsValues.reduce((sum, fs) => sum + (fs?.[key] ?? 0), 0) : null;
+  const unresolved = sides.every(([, side]) => valid(side.fs_unresolved)) ? sides.reduce((sum, [, side]) => sum + side.fs_unresolved, 0) : null;
+  const values = [aggregate(0), aggregate(1), aggregate(2), aggregate(3), aggregate(4), aggregate(5)] as const;
+  const scoreValues = values.slice(0, 5);
+  const total = scoreValues.every(valid) ? scoreValues.reduce<number>((sum, value) => sum + (valid(value) ? value : 0), 0) : null;
+  const cbParts = (play.judge_16 || '').trim().split(/\\s+/);
+  const cb = cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\\d+$/.test(value))
+    ? sides.reduce((sum, [label]) => sum + Number(cbParts[label === 'P1' ? 10 : 11]), 0) : null;
+  const lampRaw = play.clear_lamp;
+  const lampNum = lampRaw == null || lampRaw.trim() === '' ? null : Number(lampRaw);
+  const lamp = lampNum == null ? '—' : Number.isInteger(lampNum) && LAMP_NUM_TO_ABBR[lampNum] ? LAMP_NUM_TO_ABBR[lampNum] : lampRaw;
+  const fmt = (value: unknown) => valid(value) ? String(value) : '—';
+  const rows: { kind: string; tag?: string; name: string; value: number | null; pct?: boolean; bar?: boolean }[] = [];
+  const add = (kind: string, name: string, value: number | null, tag?: string, pct = true, bar = true) => rows.push({ kind, tag, name, value, pct, bar });
+  if (hasFs) {
+    add('k-good', 'GOOD', sumFs('fast_good'), 'FAST'); add('k-great', 'GREAT', sumFs('fast_great'), 'FAST');
+    add('k-pg', 'PERFECT GREAT', values[0]); add('k-great', 'GREAT', sumFs('slow_great'), 'SLOW'); add('k-good', 'GOOD', sumFs('slow_good'), 'SLOW');
+  } else { add('k-great', 'GREAT', values[1]); add('k-pg', 'PERFECT GREAT', values[0]); add('k-good', 'GOOD', values[2]); }
+  rows.push({ kind: 'sep', name: '', value: null });
+  add('k-bad', 'BAD', values[3]); add('k-poor', 'POOR', values[4]); add('k-empty', '空POOR', values[5], undefined, false); add('k-cb', 'COMBO BREAK', cb, undefined, false, false);
+  const percent = (value: number | null) => total != null && total > 0 && valid(value) ? `${Math.round(value / total * 100)}%` : '—';
+  return <div className="__uprofile_playdetail_judge">
+    <div className="__uprofile_playdetail_summary">{[['램프', lamp], ['EX', play.ex_score], ['DJ RATE', play.dj_rate_pct ? `${play.dj_rate_pct}%${play.dj_rank ? ` ${play.dj_rank}` : ''}` : '—'], ['미스', play.miss_count], ['콤보 브레이크', fmt(cb)]].map(([label, value]) => <span key={label}>{label} <b>{value || '—'}</b></span>)}{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}{sides.some(([, side]) => side.lanes_ok === false) && <span className="__uprofile_playdetail_badge">레인 검증 불일치</span>}</div>
+    <div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>
+    <small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small>
+    <label className="__uprofile_playdetail_toggle"><input type="checkbox" onChange={(event) => { const lanes = event.currentTarget.closest('.__uprofile_playdetail_judge')?.querySelector('.__uprofile_playdetail_lanes'); if (lanes) (lanes as HTMLElement).hidden = !event.currentTarget.checked; }} />레인별 판정 보기</label>
+    <div className="__uprofile_playdetail_lanes">{sides.map(([label, side]) => <section key={label}><h4>{label} · 레인 미확정 {fmt(side.lane_fs_unresolved)}</h4><div className="__uprofile_playdetail_tablebox"><table className="__uprofile_playdetail_lanetable"><thead><tr>{['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name, index) => <th key={name} className={index === 7 ? 'g-fs' : undefined}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{fmt(side.lanes?.[lane]?.[col])}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`} className={col === 0 ? 'g-fs' : undefined}>{side.lane_fs == null ? '—' : fmt(side.lane_fs[lane]?.[col])}</td>)}</tr>)}</tbody></table></div></section>)}</div>
+  </div>;
 }
 
 export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element {
@@ -313,15 +343,16 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
             기록 오류 (코드 {play.song_id})
           </div>
         ) : (
-          <div className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
-            <div className="__uprofile_recentplays_row">
+          play.detail != null ? <details className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
+            <summary className="__uprofile_recentplays_row">
               <span>{recentPlayTime(play.timestamp)}</span>
               <span title={play.title}>{play.title || '—'}</span>
               <span>{play.difficulty || '—'}</span>
               <span>{play.ex_score || '—'}</span>
-            </div>
-            {play.detail != null && renderPlayDetail(play.detail)}
-          </div>
+              <span className="__uprofile_recentplays_chev">›</span>
+            </summary>
+            {renderPlayDetail(play.detail, play)}
+          </details> : <div className="__uprofile_recentplays_item __uprofile_recentplays_plain" key={`${play.timestamp}-${index}`}><div className="__uprofile_recentplays_row"><span>{recentPlayTime(play.timestamp)}</span><span title={play.title}>{play.title || '—'}</span><span>{play.difficulty || '—'}</span><span>{play.ex_score || '—'}</span><span /></div></div>
         ))}
       </div>
     )}
