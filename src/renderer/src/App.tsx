@@ -1295,6 +1295,37 @@ export default function App() {
     dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope,
     tsvMtime, rowsRevision: rowsRevisionRef.current };
 
+  const remotePlaysRef = useRef<{ iidxId: string; plays: ReturnType<typeof buildUploadPlays> } | null>(null);
+  const remotePlaysRequestRef = useRef(0);
+  const remotePlaysScopeRef = useRef({ iidxId: profile.iidxId, generation: session.generation });
+  remotePlaysScopeRef.current = { iidxId: profile.iidxId, generation: session.generation };
+  const refreshRemotePlays = useCallback(async (iidxId: string, generation: number): Promise<void> => {
+    const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+    if (!readPlayCsv || !VALID_IIDX_ID.test(iidxId)) return;
+    const request = ++remotePlaysRequestRef.current;
+    let result;
+    try { result = await readPlayCsv(iidxId); } catch { result = { ok: false as const }; }
+    const current = remotePlaysScopeRef.current;
+    if (request !== remotePlaysRequestRef.current || current.iidxId !== iidxId
+      || current.generation !== generation || sessionRef.current.generation !== generation) return;
+    const plays = buildUploadPlays(result.ok
+      ? { ...result, appVersion: result.appVersion ?? APP_VERSION, gameVersion: result.gameVersion ?? '' }
+      : { ok: false, appVersion: APP_VERSION, gameVersion: '' }).slice(-10);
+    remotePlaysRef.current = { iidxId, plays };
+  }, []);
+
+  useEffect(() => {
+    const current = profile.iidxId;
+    if (!current || !VALID_IIDX_ID.test(current)) {
+      remotePlaysRequestRef.current += 1;
+      remotePlaysRef.current = null;
+      return;
+    }
+    remotePlaysRef.current = null;
+    void refreshRemotePlays(current, session.generation);
+    return () => { remotePlaysRequestRef.current += 1; };
+  }, [profile.iidxId, session.generation, refreshRemotePlays]);
+
   function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
     const p = uploadStateRef.current.profile;
     const snap = lastSnapshotRef.current;
@@ -1629,6 +1660,7 @@ export default function App() {
     const handlePlaysAppend = ({ iidxId }: { iidxId: string }): void => {
       const readPlayCsv = window.infohsorry.upload.readPlayCsv;
       if (!readPlayCsv) return;
+      void refreshRemotePlays(iidxId, sessionRef.current.generation);
       const previous = playsChainByAccount.get(iidxId) ?? Promise.resolve();
       const next = previous.catch(() => {}).then(async () => {
         let result;
@@ -1686,7 +1718,7 @@ export default function App() {
       window.infohsorry.upload.finalDone(outcome);
     })());
     return () => { cancelInitialTimer(); offPlayAppend?.(); offArrangeAppend?.(); offPlaysAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
-  }, []);
+  }, [refreshRemotePlays]);
 
   // 마지막 스냅샷 이후에도 준비 상태가 바뀔 수 있으므로 타이머를 직접 설정하거나 재확인한다.
   useEffect(() => {

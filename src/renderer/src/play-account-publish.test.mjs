@@ -6,6 +6,7 @@ import ts from 'typescript';
 
 const read = relative => readFileSync(new URL(relative, import.meta.url), 'utf8');
 const source = read('./useProfile.ts');
+const appSource = read('./App.tsx');
 function profile({ text = 'A123456789012', readOk = true, pids = [123, 123], publish = async () => ({ ok: true }), diag = () => {} } = {}) {
   const calls = [];
   const timers = [];
@@ -72,4 +73,29 @@ test('publish reject는 ID 읽기 성공을 보존하고 같은 오류 진단은
   assert.equal(second.ok, true);
   assert.equal(second.iidxId, 'A123456789012');
   assert.deepEqual(diagnostics, ['플레이 계정 ID 전달 실패: IPC unavailable']);
+});
+
+test('remote plays는 11행에서 마지막 10행만 보관', () => {
+  assert.match(appSource, /buildUploadPlays\(result\.ok[\s\S]*?\)\.slice\(-10\)/);
+});
+
+test('append 이벤트는 CSV를 다시 읽어 remote plays를 갱신', () => {
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.match(append, /refreshRemotePlays\(iidxId, sessionRef\.current\.generation\)/);
+  assert.match(appSource, /await readPlayCsv\(iidxId\)/);
+});
+
+test('remote plays 갱신은 자동 전송 성공이나 Bearer 유무에 의존하지 않음', () => {
+  const refresh = appSource.slice(appSource.indexOf('const refreshRemotePlays'), appSource.indexOf('function uploadIdentityOk'));
+  assert.match(refresh, /remotePlaysRef\.current = \{ iidxId, plays \}/);
+  assert.doesNotMatch(refresh, /uploadAutomaticPlays|Bearer/);
+});
+
+test('계정 또는 세션 전환과 역순 응답은 오래된 결과를 버림', () => {
+  const refresh = appSource.slice(appSource.indexOf('const refreshRemotePlays'), appSource.indexOf('function uploadIdentityOk'));
+  assert.match(refresh, /request !== remotePlaysRequestRef\.current/);
+  assert.match(refresh, /current\.iidxId !== iidxId/);
+  assert.match(refresh, /current\.generation !== generation/);
+  assert.match(refresh, /sessionRef\.current\.generation !== generation/);
+  assert.match(refresh, /remotePlaysRequestRef\.current \+= 1/);
 });
