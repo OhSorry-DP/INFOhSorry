@@ -49,5 +49,15 @@ test('CDN 프로필 로더의 TTL·병합·오류 보존 및 compose 계약', as
     assert.equal(composed.remote_recent.cdn_revision, '99'); assert.equal(cdn.dp[0].lamp, 4);
     const mismatch = composeV3Profile(remote, { ...cdn, user: { iidx_id: 'OTHER' } }, songs, '2026-10-01T15:00:00.000Z');
     assert.deepEqual(mismatch.remote_recent.rows, []); assert.equal(mismatch.remote_recent.cdn_revision, null);
+
+    const plays = Array.from({ length: 11 }, (_, i) => ({ n: i }));
+    const withPlays = composeV3Profile({ iidx_id: 'ab-c', plays }, { user: { iidx_id: 'A-BC', plays: [{ cdn: true }] }, dp: [], sp: [] }, null);
+    assert.deepEqual(withPlays.user.plays, plays.slice(-10));
+    const wrongPlaysOwner = composeV3Profile({ iidx_id: 'ABC', plays }, { user: { iidx_id: 'OTHER' } }, null);
+    assert.deepEqual(wrongPlaysOwner.user.plays, []);
+    assert.deepEqual(composeV3Profile({ iidx_id: 'ABC' }, null, null).user.plays, []);
+    assert.deepEqual(composeV3Profile({ iidx_id: 'ABC', plays: {} }, null, null).user.plays, []);
+    const emptyRemotePlays = composeV3Profile({ iidx_id: 'ABC', plays: [] }, { user: { iidx_id: 'ABC', plays: [{ cdn: true }] } }, null);
+    assert.deepEqual(emptyRemotePlays.user.plays, []);
   } finally { await rm(fixture, { recursive: true, force: true }); }
 });
