@@ -18,7 +18,7 @@ import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
 import DpTable from './DpTable';
 import Analysis from './Analysis';
-import Recent from './Recent';
+import Recent, { RecentPlays } from './Recent';
 import PlayData from './PlayData';
 import { computeClient, rendererInput } from './compute/rendererService';
 import { analysisUploadLedger } from './compute/analysisUploadGate';
@@ -92,7 +92,7 @@ const SNAPSHOT_RETRY_INTERVAL_MS = 15 * 1000;
 const SNAPSHOT_RETRY_REPORT_AFTER = 4;
 const ID_SWITCH_SNAPSHOT_BLOCK_MS = 20 * 1000; // Reflux 재기동 직후 부분 tracker.tsv 스냅샷 방지
 
-type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
+type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'plays' | 'playdata' | 'grid';
 const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
 type SnapshotCaptureResult =
   | { ok: true; iidxId: string; generation: number; tsvMtime: number }
@@ -685,7 +685,7 @@ export default function App() {
 
   // SP/DP 탭의 통계
   const stats = useMemo(() => {
-    if (tab === 'dp12' || tab === 'recent' || tab === 'analysis' || tab === 'playdata' || tab === 'grid') return { total: 0, unlocked: 0, played: 0 };
+    if (tab === 'dp12' || tab === 'recent' || tab === 'plays' || tab === 'analysis' || tab === 'playdata' || tab === 'grid') return { total: 0, unlocked: 0, played: 0 };
     const slots = tab === 'sp' ? ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'] : ['DPN', 'DPH', 'DPA', 'DPL'];
     let unlocked = 0;
     let played = 0;
@@ -2223,12 +2223,18 @@ export default function App() {
             }}
           />
           <nav className="tabs">
-            {/* 표시 순서: RECENT → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
+            {/* 표시 순서: RECENT → PLAY LOG → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
             <button
               className={tab === 'recent' ? 'tab active' : 'tab'}
               onClick={() => setTab('recent')}
             >
               RECENT
+            </button>
+            <button
+              className={tab === 'plays' ? 'tab active' : 'tab'}
+              onClick={() => setTab('plays')}
+            >
+              PLAY LOG
             </button>
             <button
               className={tab === 'playdata' ? 'tab active' : 'tab'}
@@ -2272,7 +2278,7 @@ export default function App() {
             <span className="tab-stats">
               {tab === 'dp12' || tab === 'grid'
                 ? `${dp12Stats.total}곡 · 시도 ${dp12Stats.attempted} · 클리어 ${dp12Stats.cleared} · HC ${dp12Stats.hard} · EXH ${dp12Stats.exhard} · FC ${dp12Stats.fc}`
-                : tab === 'recent' || tab === 'analysis' || tab === 'playdata'
+                : tab === 'recent' || tab === 'plays' || tab === 'analysis' || tab === 'playdata'
                 ? ''
                 : `${rows.length}곡 · ${stats.unlocked}/${stats.total} unlock · ${stats.played} played`}
               {tsvMtime > 0 && (
@@ -2319,6 +2325,8 @@ export default function App() {
                   setScrollTarget(target);
                 }}
               />
+            ) : tab === 'plays' ? (
+              <RecentPlays iidxId={profile.iidxId} />
             ) : tab === 'playdata' ? (
               <PlayData
                 rows={rows}
