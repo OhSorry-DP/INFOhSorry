@@ -4,6 +4,10 @@ INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [R
 
 ### 다음 릴리즈 — 플레이 상세 선택 업로드·최근 100판·리모트 10판 (2026-11-02)
 
+- 표시 위치를 Recent에서 별도 PLAY LOG 탭(RECENT 다음)으로 이동했다. Recent에서는 판별 목록과 세부 판정을 제거한다. INF 로컬은 최대 100판을 표시한다.
+- PLAY LOG 표시: 요약 한 줄(램프·EX·레이트·미스·콤보 브레이크, DP는 P1+P2 합산, 부분 기록·검증 불일치 배지), 전체 판정 막대와 기본 꺼짐인 레인별 판정 보기 체크박스를 제공한다. 전체 판정 막대의 비율 분모는 PG+GR+GD+BD+POOR이며, 레인은 0–7이다. 색상은 게임 결과 화면(判定詳細) 관례를 따른다. BAD/POOR는 FAST/SLOW로 나누지 않는다.
+- 이번 표시 위치 변경 검증 수치(Claude, 2026-11-02): INF 전체 `node --test`: tests 334 / pass 325 / fail 9 / skipped 0. 기존 실패 9건 동일(dbr-recent 5·compute 4). typecheck·build 통과. 웹 `test:auth` 729 / 726 pass / 3 fail, `test:v3` 4154 / 4153 pass / 1 fail(기존 실패 4건 동일).
+- 표시 위치 변경 변이 검증(Claude, 모두 원복): INF `judge_16` 정규식을 옛 이중 백슬래시로 변경 시 fail 2, App의 PLAY LOG 렌더 분기 제거 시 fail 1. 웹 원격 본인 판정 무력화 시 fail 3(남의 CDN plays·남 탭·본인 조회 실패).
 - `buildUploadPlays`는 기존 `PUT /api/me/plays` → R2 `plays/{id}.json` 전송에 선택 상세를 결합한다. v:1, 최대 100행·262144바이트 제한과 기존 DB·웹훅·dump·R2 키 계약은 유지한다. 상세는 원본 `timestamp`와 일치하는 선택 필드이며, 불확정 값·부재를 0으로 바꾸거나 품질 미확정을 정상 확정으로 표시하지 않는다. 웹은 상세 수신을 검증하고, Recent는 최근 기록과 세부 판정을 표시하며, `composeV3Profile`은 소유 계정이 일치하는 리모트 plays 최대 10개를 구성한다.
 - 통합 검증 기록(Claude, 2026-11-02): INF 전체 `node --test` 329 tests / 320 pass / 9 fail / 0 skipped; 기존 실패 9건은 dbr-recent 5건(테스트 스텁의 `./diagLog` 누락), compute 4건(형제 레포 `ohSorryRating` 산출물 SHA-256 고정값 불일치)이다. 이번 작업으로 play-upload 기존 실패 1건(테스트 스텁 `./playDetail` 누락)은 해소됐다. typecheck·build 통과. 웹 `test:auth` 729 / 726 pass / 3 fail, `test:v3` 4145 / 4144 pass / 1 fail이며, 실패 4건은 기존 v2 blob parity, middleware v2 분기 SHA, v3 SP context title-only, P1 Stats i18n `未分類 1`이다. 지정 테스트 `node --test src/main/playDetail.test.mjs`는 9 pass / 0 fail / 0 skipped, `npm run typecheck`는 통과.
 - 변이 검증 기록(Claude): INF 업로드 결합 제거 시 fail 1, JSONL 읽기 제거 시 fail 4, v3profile 10판 제한·CDN 상속 제거 시 fail 1; 웹 PUT 검증·코치 제한 무력화 시 fail 8, 리모트 오류 행 판정 무력화 시 fail 1. 모두 원복했다. 검수 중 `supabaseSync.ts`의 `PlayCsvRow` 캐스트, `[resource].js` 죽은 분기의 `detailLimit` 참조 제거, `Recent.tsx` 레인 표 셀 key 중복을 수정했고, Luna 재요청 A2·D1·G4 및 소유권 재생성 F1c도 반영됐다.

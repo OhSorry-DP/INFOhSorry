@@ -46,6 +46,10 @@ Claude 검수에서 다음을 수정했다.
 
 ## 검증 수치
 
+표시 위치 변경(2026-11-02): 판별 목록과 세부 판정을 Recent에서 별도 PLAY LOG 탭(RECENT 다음)으로 이동했고 Recent에서는 제거했다. INF 로컬은 최대 100판을 표시한다. PLAY LOG는 램프·EX·레이트·미스·콤보 브레이크 요약(DP는 P1+P2 합산, 부분 기록·검증 불일치 배지), 전체 판정 막대(PG+GR+GD+BD+POOR 분모), 기본 꺼짐인 레인별 판정 보기 체크박스(레인 0–7)를 제공한다. BAD/POOR는 FAST/SLOW로 나누지 않는다.
+
+표시 위치 변경 검증 수치(Claude 제공, 재측정 안 함): INF 전체 `node --test`: tests 334 / pass 325 / fail 9 / skipped 0(기존 실패 9건 동일: dbr-recent 5·compute 4). typecheck·build 통과. 웹 `test:auth` 729 / 726 pass / 3 fail, `test:v3` 4154 / 4153 pass / 1 fail(기존 실패 4건 동일). 표시 위치 변이: INF 정규식 변경 fail 2, App 렌더 분기 제거 fail 1; 웹 원격 본인 판정 무력화 fail 3.
+
 INF 전체 `node --test`(src 아래 모든 `*.test.mjs`): tests 329 / pass 320 / fail 9 / skipped 0. 기존 실패 9건은 `dbr-recent` 5건(테스트 스텁에 `./diagLog` 누락), `compute` 4건(형제 레포 ohSorryRating의 `dist`·`onlyOSR.js` SHA-256 고정값 불일치)이다. 이번 작업으로 `play-upload`의 기존 실패 1건(`./playDetail` 스텁 누락)은 해소됐다. typecheck·build 통과.
 
 웹 `test:auth`: tests 729 / pass 726 / fail 3. `test:v3`: tests 4145 / pass 4144 / fail 1. 실패 4건은 모두 기존 실패로, main 파일로 되돌려도 동일하다: v2 blob parity, middleware v2 분기 SHA, v3 SP context title-only, P1 Stats i18n `未分類 1`.
