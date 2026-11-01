@@ -285,9 +285,50 @@ function renderPlayDetail(detail: PlayDetail): JSX.Element | null {
   </section>)}</details>;
 }
 
-export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Element {
+export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element {
   const [recentPlays, setRecentPlays] = useState<PlayCsvRow[]>([]);
   const [playReadError, setPlayReadError] = useState<string | null>(null);
+  const normalizedId = useMemo(() => iidxId?.replace(/-/g, '').trim() || '', [iidxId]);
+
+  useEffect(() => {
+    setRecentPlays([]);
+    setPlayReadError(null);
+    if (!normalizedId) return;
+    return subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
+      setRecentPlays(nextRows);
+      setPlayReadError(nextError);
+    });
+  }, [normalizedId]);
+
+  return <section className="__uprofile_recentplays" aria-label="최근 플레이">
+    <h3 className="__uprofile_recentplays_title">최근 플레이</h3>
+    {playReadError ? (
+      <p className="__uprofile_tabempty">플레이 기록을 읽지 못했습니다.</p>
+    ) : recentPlays.length === 0 ? (
+      <p className="__uprofile_tabempty">플레이 기록이 없습니다.</p>
+    ) : (
+      <div className="__uprofile_recentplays_list">
+        {[...recentPlays].reverse().map((play, index) => isPlayErrorRow(play) ? (
+          <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={`error-${index}`}>
+            기록 오류 (코드 {play.song_id})
+          </div>
+        ) : (
+          <div className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
+            <div className="__uprofile_recentplays_row">
+              <span>{recentPlayTime(play.timestamp)}</span>
+              <span title={play.title}>{play.title || '—'}</span>
+              <span>{play.difficulty || '—'}</span>
+              <span>{play.ex_score || '—'}</span>
+            </div>
+            {play.detail != null && renderPlayDetail(play.detail)}
+          </div>
+        ))}
+      </div>
+    )}
+  </section>;
+}
+
+export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Element {
   // dates[0] = "오늘 (라이브)", dates[1..] = supabase 의 이전 업로드 날짜 (desc).
   // dateIdx === 0 → TSV vs latest, > 0 → fetchRecentCharts(pastDates[dateIdx-1].date_kst).
   const [supabaseDates, setSupabaseDates] = useState<{ date_kst: string; row_count: number }[]>([]);
@@ -315,16 +356,6 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
     if (!iidxId) return '';
     return iidxId.replace(/-/g, '').trim();
   }, [iidxId]);
-
-  useEffect(() => {
-    setRecentPlays([]);
-    setPlayReadError(null);
-    if (!normalizedId) return;
-    return subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
-      setRecentPlays(nextRows);
-      setPlayReadError(nextError);
-    });
-  }, [normalizedId]);
 
   // supabase 의 "이전 날짜" 목록 — 라이브 박스가 오늘 변동을 이미 표시하므로
   // 첫 entry 가 오늘 KST 와 같으면 중복 제거 (nav `<` 가 어제로 바로 이동).
@@ -605,32 +636,6 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
         </div>
       )}
 
-      <section className="__uprofile_recentplays" aria-label="최근 플레이">
-        <h3 className="__uprofile_recentplays_title">최근 플레이</h3>
-        {playReadError ? (
-          <p className="__uprofile_tabempty">플레이 기록을 읽지 못했습니다.</p>
-        ) : recentPlays.length === 0 ? (
-          <p className="__uprofile_tabempty">플레이 기록이 없습니다.</p>
-        ) : (
-          <div className="__uprofile_recentplays_list">
-            {[...recentPlays].reverse().map((play, index) => isPlayErrorRow(play) ? (
-              <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={`error-${index}`}>
-                기록 오류 (코드 {play.song_id})
-              </div>
-            ) : (
-              <div className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
-              <div className="__uprofile_recentplays_row">
-                <span>{recentPlayTime(play.timestamp)}</span>
-                <span title={play.title}>{play.title || '—'}</span>
-                <span>{play.difficulty || '—'}</span>
-                <span>{play.ex_score || '—'}</span>
-              </div>
-              {play.detail != null && renderPlayDetail(play.detail)}
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
     </div>
   );
 }
