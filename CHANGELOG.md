@@ -2,7 +2,7 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 다음 릴리즈 — 플레이 상세 선택 업로드·최근 100판·리모트 10판 (2026-11-02)
+### 0.0.157 — 2026-11-02 플레이 세부판정 업로드·PLAY LOG 탭·리모트 Play Log
 
 - 표시 위치를 Recent에서 별도 PLAY LOG 탭(RECENT 다음)으로 이동했다. Recent에서는 판별 목록과 세부 판정을 제거한다. INF 로컬은 최대 100판을 표시한다.
 - PLAY LOG 표시: 요약 한 줄(램프·EX·레이트·미스·콤보 브레이크, DP는 P1+P2 합산, 부분 기록·검증 불일치 배지), 전체 판정 막대와 기본 꺼짐인 레인별 판정 보기 체크박스를 제공한다. 전체 판정 막대의 비율 분모는 PG+GR+GD+BD+POOR이며, 레인은 0–7이다. 색상은 게임 결과 화면(判定詳細) 관례를 따른다. BAD/POOR는 FAST/SLOW로 나누지 않는다.
@@ -14,7 +14,7 @@ INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [R
 - 통합 커밋 기록: INF는 `55df8ab` 위에 `2b14967`, `17d6938`, `0c9e547`, `07a80e7`, `84b476b`, `77e1201`, `dc27232`, `2350203`, `d7c1914`, `fac1c13`; 웹은 `f71edc9` 위에 `f13e444`, `4ef74e9`, `a4ded5f`, `042a604`, `be2f39f`, `6b65aa3`, `834c201`, `f94fb8e`다. 두 레포 모두 `feat/play-detail`; push·배포·릴리스는 아직 하지 않았다(사용자 확인 대기).
 - 남은 위험·확인: 배포 순서는 웹(PUT 수용·코치 옵션·리모트 표시) → INF 릴리스 → 코치 GPT Actions·MCP 스키마 갱신이며 순서를 어기면 새 INF PUT이 400이 된다. 실기에서 INF Recent 상세 표, 리모트 최근 10판, 코치 `getPlays detail_limit=1` 응답은 아직 확인하지 않았다. 레인 0–7의 실제 건반 대응은 미확정이라 번호로만 표시한다. 실제 `plays_detail.jsonl` 크기 분포는 미측정(구조상 판당 약 0.8–1.3KB). INF 소스 약 55개 파일의 소유자는 `CodexSandboxOffline`이며 관리자 `takeown` 필요 여부는 사용자 결정 대기다.
 
-### 다음 릴리즈 — 플레이 상세(등급별 FAST/SLOW · 레인별 판정) 기록
+### 0.0.157 (기록기) — 플레이 상세(등급별 FAST/SLOW · 레인별 판정) 기록
 
 - 플레이 중 4ms 간격으로 판정 카운터를 읽어, 판마다 `users/<ID>/plays_detail.jsonl` 에 등급별 FAST/SLOW(FAST GREAT·FAST GOOD·SLOW GREAT·SLOW GOOD)와 레인 8개별 판정·FAST/SLOW 를 한 줄 저장한다(`playDetail.ts`, `playLogger.ts`). `plays.csv` 의 열과 업로드는 바꾸지 않았고 상세 파일은 업로드하지 않는다.
 - 게임 메모리에는 등급별 FAST/SLOW 칸이 없고(FAST/SLOW 는 GREAT·GOOD 합계만), 레인별 판정 카운터는 있다. 짝지을 수 없는 노트는 `fs_unresolved` 로 센다. 자세한 내용은 [docs/play-logger.md 12장](docs/play-logger.md#12-플레이-상세-등급별-fastslow--레인별-판정--plays_detailjsonl).
