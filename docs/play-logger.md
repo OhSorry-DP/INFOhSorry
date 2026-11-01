@@ -334,7 +334,9 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 
 ### 12.1 무엇을 저장하나
 
-`plays.csv` 와 같은 폴더(`users/<IIDX ID>/`)의 **`plays_detail.jsonl`** 에 판마다 한 줄(JSON)을 추가합니다. `plays.csv` 의 `timestamp` 와 같은 값이 `timestamp` 로 들어가 서로 이어 볼 수 있습니다. **업로드 대상이 아니며** `plays.csv` 의 열(19·21·22칸 검사)은 바꾸지 않았습니다.
+`plays.csv` 와 같은 계정 폴더(`users/<IIDX ID>/`)의 **`plays_detail.jsonl`** 에 판마다 한 줄(JSON)을 추가합니다. `plays.csv` 의 원본 `timestamp` 와 정확히 같은 값으로 연결합니다. 읽기·업로드 경로는 같은 계정의 timestamp 가 일치하는 상세만 선택적으로 붙이며, 상세 파일이 없거나 해당 timestamp 의 상세가 없으면 `detail` 필드를 생략합니다. CSV 의 열(19·21·22칸 검사)은 바꾸지 않았습니다.
+
+업로드는 기존 `PUT /api/me/plays` 경로를 사용하며, 서버는 `plays/{id}.json` R2 객체에 `v: 1` 형식으로 저장합니다. 업로드 묶음은 최대 100행, 본문은 최대 262144바이트입니다. `detail` 은 선택 필드이므로 상세가 없는 기존 행도 같은 경로로 업로드됩니다. Recent 는 최근 최대 100판을 표시하고, 각 행에 상세가 있으면 펼쳐 FAST/SLOW 와 레인별 판정을 보여 줍니다. 판 완료 훅은 없습니다.
 
 | 필드 | 뜻 |
 |------|-----|
@@ -354,6 +356,8 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 | `lanes_ok` | 레인 합이 `judge_16` 의 판정 합과 같은가 (POOR 는 공POOR 포함) |
 | `lane_fs` | 레인 8개 × `[FAST GREAT, FAST GOOD, SLOW GREAT, SLOW GOOD]` |
 | `lane_fs_unresolved` | 레인별로는 확정하지 못한 GREAT·GOOD 노트 수 |
+
+상세 스키마는 `PlayDetail = {v:1,timestamp,complete,samples,dt_ms,p1,p2}` 이며 각 쪽은 `{fs,fs_unresolved,fs_ok,lanes,lanes_ok,lane_fs,lane_fs_unresolved}` 입니다. `lanes` 는 8×6 `[PGREAT,GREAT,GOOD,BAD,POOR,공POOR]`, `lane_fs` 는 null 또는 8×4 `[FAST GREAT,FAST GOOD,SLOW GREAT,SLOW GOOD]` 입니다. `fs` 는 null 또는 `{fast_great,fast_good,slow_great,slow_good}` 입니다. `complete:false` 에서는 `fs` 와 `lane_fs` 가 null일 수 있습니다. null 이나 부재는 0으로 간주하지 않으며, `fs_ok`·`lanes_ok` 가 false 인 자료를 정상 확정으로 표시하지 않습니다. 화면 레인 번호는 0–7입니다.
 
 ### 12.2 메모리에서 확인한 사실 (2026-11-01, 빌드 2026101400, 실제 플레이 4판)
 
