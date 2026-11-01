@@ -82,11 +82,11 @@ test('CSV refresh precedes pending save and upload, using current app version', 
 });
 
 const recentSource = read('./Recent.tsx');
-const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nexport default function Recent'));
+const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
-const recentEnd = recentSource.indexOf('\nexport default function Recent', recentStart);
+const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
 const recentFn = recentSource.slice(recentStart, recentEnd);
 const recentCode = ts.transpileModule(`${recentFn}; subscribeRecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 function recentHarness({ readPlayCsv, onPlayAppend } = {}) {
@@ -177,4 +177,32 @@ test('Recent distinguishes empty history from read failure and keeps chart list 
   assert.match(recentSource, /playReadError \? \(/);
   assert.match(recentSource, /recentPlays\.length === 0 \? \(/);
   assert.match(recentSource, /sortRows\(computeTodayCharts\(rows, latestIdx\)\)/);
+});
+
+test('Recent only renders expandable play detail when detail exists and is non-null', () => {
+  assert.match(recentSource, /play\.detail != null && renderPlayDetail\(play\.detail\)/);
+  assert.match(recentSource, /function renderPlayDetail\(detail: PlayDetail\)/);
+  assert.match(recentSource, /return <details className="__uprofile_playdetail"><summary>상세 기록<\/summary>/);
+});
+
+test('Recent FS summary prints four counts and unresolved count without coercing missing values', () => {
+  assert.match(recentSource, /FAST&nbsp; GREAT \{side\.fs\.fast_great \?\? '—'\} · GOOD \{side\.fs\.fast_good \?\? '—'\}　SLOW&nbsp; GREAT \{side\.fs\.slow_great \?\? '—'\} · GOOD \{side\.fs\.slow_good \?\? '—'\}　미확정 \{side\.fs_unresolved \?\? '—'\}/);
+});
+
+test('Recent detail shows partial and validation states beside their sections', () => {
+  assert.match(recentSource, /!detail\.complete && <span className="__uprofile_playdetail_state">부분 기록<\/span>/);
+  assert.match(recentSource, /side\.fs_ok === false && <span className="__uprofile_playdetail_state">검증 불일치<\/span>/);
+  assert.match(recentSource, /side\.lanes_ok === false && <span className="__uprofile_playdetail_state">검증 불일치<\/span>/);
+});
+
+test('Recent detail table lays out lane indices and six judge plus four lane FS columns', () => {
+  assert.match(recentSource, /Array\.from\(\{ length: 8 \}, \(_, lane\)/);
+  assert.match(recentSource, /\['PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'\]/);
+  assert.match(recentSource, /side\.lane_fs == null \? '—' : side\.lane_fs\[lane\]\?\.\[col\] \?\? '—'/);
+});
+
+test('Recent hides a side only when every lane count and FS count is zero or FS is null', () => {
+  assert.match(recentSource, /function detailSideHidden\(side: SideDetail \| null \| undefined\)/);
+  assert.match(recentSource, /lane\.some\(\(value\) => typeof value !== 'number' \|\| value !== 0\)/);
+  assert.match(recentSource, /side\.fs === null \|\| \(side\.fs != null && \[side\.fs\.fast_great, side\.fs\.fast_good, side\.fs\.slow_great, side\.fs\.slow_good\]\.every\(\(value\) => typeof value === 'number' && value === 0\)\)/);
 });

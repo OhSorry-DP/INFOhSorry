@@ -3175,6 +3175,15 @@ body {
 .__uprofile_recentplays_row > :nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .__uprofile_recentplays_row > :last-child { text-align: right; }
 .__uprofile_recentplays_error { grid-template-columns: 1fr; color: var(--text-muted); }
+.__uprofile_playdetail { padding: 0 8px 8px; background: var(--bg-card); color: var(--text-secondary); font-size: 11px; }
+.__uprofile_playdetail summary { cursor: pointer; padding: 4px 0; }
+.__uprofile_playdetail_side { overflow-x: auto; padding: 4px 0 8px; }
+.__uprofile_playdetail_side > strong { color: var(--text-primary); margin-right: 8px; }
+.__uprofile_playdetail_state { color: var(--text-muted); margin-left: 8px; }
+.__uprofile_playdetail_fs, .__uprofile_playdetail_lanehead { margin: 4px 0; white-space: nowrap; }
+.__uprofile_playdetail_table { border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.__uprofile_playdetail_table th, .__uprofile_playdetail_table td { padding: 2px 6px; text-align: right; }
+.__uprofile_playdetail_table th:first-child { text-align: center; }
 @media (max-width: 768px) {
   .__uprofile_recentplays_row { grid-template-columns: 92px minmax(0, 1fr) 48px 60px; gap: 5px; padding: 7px 6px; }
 }

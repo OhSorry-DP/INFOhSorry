@@ -23,7 +23,7 @@ import {
   type RecentChartRow,
   type LatestChartEntry,
 } from './supabaseSync';
-import { isPlayErrorRow, type PlayCsvRow } from '../../shared/uploadSnapshot';
+import { isPlayErrorRow, type PlayCsvRow, type PlayDetail, type SideDetail } from '../../shared/uploadSnapshot';
 
 // diff (NORMAL/HYPER/ANOTHER/LEGGENDARIA) → slot 색 (오소리웹 DIFF_COLOR 동일).
 const DIFF_COLOR: Record<string, string> = {
@@ -267,6 +267,22 @@ function recentPlayTime(timestamp: string | null | undefined): string {
   const part = (type: string) => parts.find((item) => item.type === type)?.value;
   const month = part('month'); const day = part('day'); const hour = part('hour'); const minute = part('minute');
   return month && day && hour && minute ? `${month}-${day} ${hour}:${minute}` : '—';
+}
+
+function detailSideHidden(side: SideDetail | null | undefined): boolean {
+  if (!side || !Array.isArray(side.lanes) || side.lanes.length !== 8 || side.lanes.some((lane) => !Array.isArray(lane) || lane.length !== 6 || lane.some((value) => typeof value !== 'number' || value !== 0))) return false;
+  return side.fs === null || (side.fs != null && [side.fs.fast_great, side.fs.fast_good, side.fs.slow_great, side.fs.slow_good].every((value) => typeof value === 'number' && value === 0));
+}
+
+function renderPlayDetail(detail: PlayDetail): JSX.Element | null {
+  const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
+  if (!sides.length) return null;
+  return <details className="__uprofile_playdetail"><summary>상세 기록</summary>{sides.map(([label, side]) => <section key={label} className="__uprofile_playdetail_side">
+    <strong>{label}</strong>{!detail.complete && <span className="__uprofile_playdetail_state">부분 기록</span>}
+    <div className="__uprofile_playdetail_fs">{side.fs == null ? 'FAST/SLOW 기록 없음(플레이 시작부터 관찰 못 함)' : <>FAST&nbsp; GREAT {side.fs.fast_great ?? '—'} · GOOD {side.fs.fast_good ?? '—'}　SLOW&nbsp; GREAT {side.fs.slow_great ?? '—'} · GOOD {side.fs.slow_good ?? '—'}　미확정 {side.fs_unresolved ?? '—'}</>}{side.fs_ok === false && <span className="__uprofile_playdetail_state">검증 불일치</span>}</div>
+    <div className="__uprofile_playdetail_lanehead">레인별 판정{side.lanes_ok === false && <span className="__uprofile_playdetail_state">검증 불일치</span>}　미확정 {side.lane_fs_unresolved ?? '—'}</div>
+    <table className="__uprofile_playdetail_table"><thead><tr><th>Lane</th>{['PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name) => <th key={name}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{side.lanes?.[lane]?.[col] ?? '—'}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`}>{side.lane_fs == null ? '—' : side.lane_fs[lane]?.[col] ?? '—'}</td>)}</tr>)}</tbody></table>
+  </section>)}</details>;
 }
 
 export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Element {
@@ -602,11 +618,14 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
                 기록 오류 (코드 {play.song_id})
               </div>
             ) : (
-              <div className="__uprofile_recentplays_row" key={`${play.timestamp}-${index}`}>
+              <div className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
+              <div className="__uprofile_recentplays_row">
                 <span>{recentPlayTime(play.timestamp)}</span>
                 <span title={play.title}>{play.title || '—'}</span>
                 <span>{play.difficulty || '—'}</span>
                 <span>{play.ex_score || '—'}</span>
+              </div>
+              {play.detail != null && renderPlayDetail(play.detail)}
               </div>
             ))}
           </div>
