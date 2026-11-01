@@ -1304,7 +1304,7 @@ export function parsePlayHistoryDetailed(csv: string): PlayHistoryParse {
   let lastCompleteError: { columns: number } | null = null;
   for (const row of records) {
     if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length && row.length !== PLAY_CSV_SPEED_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
-    const mapped = Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i] ?? ''])) as PlayCsvRow;
+    const mapped = Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i] ?? ''])) as unknown as PlayCsvRow;
     if (row.length === PLAY_CSV_SPEED_KEYS.length) mapped.play_speed = row[21];
     valid.push(mapped);
     lastCompleteError = null;
