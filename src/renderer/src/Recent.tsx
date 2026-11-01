@@ -290,8 +290,8 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
   const values = [aggregate(0), aggregate(1), aggregate(2), aggregate(3), aggregate(4), aggregate(5)] as const;
   const scoreValues = values.slice(0, 5);
   const total = scoreValues.every(valid) ? scoreValues.reduce<number>((sum, value) => sum + (valid(value) ? value : 0), 0) : null;
-  const cbParts = (play.judge_16 || '').trim().split(/\\s+/);
-  const cb = cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\\d+$/.test(value))
+  const cbParts = (play.judge_16 || '').trim().split(/\s+/);
+  const cb = cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
     ? sides.reduce((sum, [label]) => sum + Number(cbParts[label === 'P1' ? 10 : 11]), 0) : null;
   const lampRaw = play.clear_lamp;
   const lampNum = lampRaw == null || lampRaw.trim() === '' ? null : Number(lampRaw);
