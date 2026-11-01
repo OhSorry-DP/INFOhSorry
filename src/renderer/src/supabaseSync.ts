@@ -1319,7 +1319,17 @@ export function buildUploadPlays(result: PlayCsvReadResult): PlayCsvRow[] {
   const parsed = parsePlayHistoryDetailed(result.csv ?? '');
   if (parsed.errorCode === -9) return error(-9);
   if (parsed.rows.length === 0) return error(-10);
-  return parsed.rows.slice(-100);
+  const rows = parsed.rows.slice(-100);
+  if (result.details?.length) {
+    const detailsByTimestamp = new Map<string, (typeof result.details)[number]>();
+    for (const detail of result.details) detailsByTimestamp.set(detail.timestamp, detail);
+    for (const row of rows) {
+      if (isPlayErrorRow(row)) continue;
+      const detail = detailsByTimestamp.get(row.timestamp);
+      if (detail) row.detail = detail;
+    }
+  }
+  return rows;
 }
 export function parsePlayHistory(csv: string): PlayCsvRow[] { return parsePlayHistoryDetailed(csv).rows; }
 // 기존 최근 100행 동작을 유지한다.
