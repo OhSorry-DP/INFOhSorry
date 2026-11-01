@@ -99,3 +99,23 @@ test('계정 또는 세션 전환과 역순 응답은 오래된 결과를 버림
   assert.match(refresh, /sessionRef\.current\.generation !== generation/);
   assert.match(refresh, /remotePlaysRequestRef\.current \+= 1/);
 });
+
+test('matched account publishes plays with detail', () => {
+  assert.match(appSource, /remotePlays\?\.iidxId === gate\.id \? remotePlays\.plays : \[\]/);
+  assert.match(appSource, /Object\.assign\(remoteUser, \{ plays \}\)/);
+});
+
+test('mismatched account publishes empty plays', () => {
+  assert.match(appSource, /remotePlays\?\.iidxId === gate\.id \? remotePlays\.plays : \[\]/);
+});
+
+test('new play timestamp changes signature and republishes', () => {
+  assert.match(appSource, /setRemotePlaysSig\(JSON\.stringify\(\{ iidxId, plays \}\)\)/);
+  assert.match(appSource, /remotePlaysSig,[\s\S]*?\]\.join\('\|'\)/);
+  assert.match(appSource, /textageByTitle, remotePlaysSig\]/);
+});
+
+test('identical plays preserve signature and deduplicate publish', () => {
+  assert.match(appSource, /if \(sig === lastRemoteSigRef\.current\) return/);
+  assert.match(appSource, /remotePlaysSig/);
+});

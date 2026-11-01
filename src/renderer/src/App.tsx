@@ -1296,6 +1296,7 @@ export default function App() {
     tsvMtime, rowsRevision: rowsRevisionRef.current };
 
   const remotePlaysRef = useRef<{ iidxId: string; plays: ReturnType<typeof buildUploadPlays> } | null>(null);
+  const [remotePlaysSig, setRemotePlaysSig] = useState('');
   const remotePlaysRequestRef = useRef(0);
   const remotePlaysScopeRef = useRef({ iidxId: profile.iidxId, generation: session.generation });
   remotePlaysScopeRef.current = { iidxId: profile.iidxId, generation: session.generation };
@@ -1312,6 +1313,7 @@ export default function App() {
       ? { ...result, appVersion: result.appVersion ?? APP_VERSION, gameVersion: result.gameVersion ?? '' }
       : { ok: false, appVersion: APP_VERSION, gameVersion: '' }).slice(-10);
     remotePlaysRef.current = { iidxId, plays };
+    setRemotePlaysSig(JSON.stringify({ iidxId, plays }));
   }, []);
 
   useEffect(() => {
@@ -1319,9 +1321,11 @@ export default function App() {
     if (!current || !VALID_IIDX_ID.test(current)) {
       remotePlaysRequestRef.current += 1;
       remotePlaysRef.current = null;
+      setRemotePlaysSig('');
       return;
     }
     remotePlaysRef.current = null;
+    setRemotePlaysSig('');
     void refreshRemotePlays(current, session.generation);
     return () => { remotePlaysRequestRef.current += 1; };
   }, [profile.iidxId, session.generation, refreshRemotePlays]);
@@ -1768,6 +1772,7 @@ export default function App() {
       tag + arr.length + ':' + sumEx(arr) + ':' + sumLamp(arr);
     const sig = [
       profile.iidxId,
+      remotePlaysSig,
       dp12StarResult.star.toFixed(3),
       part('c', dp12Match.charts),
       part('u', dp12Match.unclassifiedCharts),
@@ -1787,10 +1792,11 @@ export default function App() {
     if (sig === lastRemoteSigRef.current) return dbg('skip: tsv 값 변동 없음(동일)');  // 값 동일 → push 안 함
     lastRemoteSigRef.current = sig;
     dbg('PUSH ✅ setUser 호출');
-    void window.infohsorry.remote.setUser(
-      buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined, dpAllCharts),
-    );
-  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, dpAllCharts, spAllCharts, spTierData, spStarResult, textageByTitle]);
+    const remotePlays = remotePlaysRef.current;
+    const plays = remotePlays?.iidxId === gate.id ? remotePlays.plays : [];
+    const remoteUser = buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined, dpAllCharts) as Record<string, unknown>;
+    void window.infohsorry.remote.setUser(Object.assign(remoteUser, { plays }));
+  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, dpAllCharts, spAllCharts, spTierData, spStarResult, textageByTitle, remotePlaysSig]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:
