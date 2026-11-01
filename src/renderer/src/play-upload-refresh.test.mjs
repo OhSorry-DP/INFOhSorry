@@ -80,3 +80,66 @@ test('CSV refresh precedes pending save and upload, using current app version', 
   assert.deepEqual(h.events.filter(x => typeof x === 'string'), ['read', 'save', 'upload']);
   assert.equal(h.saved[0].appVersion, 'current-app');
 });
+
+const recentSource = read('./Recent.tsx');
+const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
+const recentEnd = recentSource.indexOf('\nexport default function Recent', recentStart);
+const recentFn = recentSource.slice(recentStart, recentEnd);
+const recentCode = ts.transpileModule(`${recentFn}; subscribeRecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+function recentHarness({ readPlayCsv, onPlayAppend } = {}) {
+  const updates = []; const listeners = new Set(); const unsubscriptions = [];
+  const subscribe = vm.runInNewContext(recentCode, {
+    window: { infohsorry: { upload: { readPlayCsv, onPlayAppend: cb => { listeners.add(cb); const off = () => { listeners.delete(cb); unsubscriptions.push(true); }; return off; } } } },
+    buildUploadPlays: result => result.rows,
+  });
+  return { subscribe, updates, listeners, unsubscriptions };
+}
+const recentRow = timestamp => ({ timestamp });
+
+test('Recent initially reads play history and retains at most 100 rows', async () => {
+  const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: Array.from({ length: 105 }, (_, i) => recentRow(String(i))) }) });
+  const stop = h.subscribe('A123', (rows, error) => h.updates.push({ rows, error }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.updates[0].rows.length, 100);
+  assert.equal(h.updates[0].rows[0].timestamp, '5');
+  assert.equal(h.updates[0].error, null);
+  stop();
+});
+
+test('Recent refreshes after append for the subscribed account', async () => {
+  let reads = 0;
+  const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: [recentRow(String(++reads))] }) });
+  h.subscribe('A123', (rows, error) => h.updates.push({ rows, error }));
+  await new Promise(resolve => setImmediate(resolve));
+  [...h.listeners][0]({ iidxId: 'A123' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 2);
+  assert.equal(h.updates[1].rows[0].timestamp, '2');
+});
+
+test('Recent ignores append events from another account', async () => {
+  let reads = 0;
+  const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: [recentRow(String(++reads))] }) });
+  h.subscribe('A123', () => {});
+  await new Promise(resolve => setImmediate(resolve));
+  [...h.listeners][0]({ iidxId: 'B456' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 1);
+});
+
+test('Recent account switch ignores late A response and unsubscribes A listener', async () => {
+  let resolveA;
+  const h = recentHarness({ readPlayCsv: id => id === 'A123'
+    ? new Promise(resolve => { resolveA = resolve; })
+    : Promise.resolve({ ok: true, rows: [recentRow('B')] }) });
+  const stopA = h.subscribe('A123', (rows, error) => h.updates.push({ account: 'A', rows, error }));
+  const listenerA = [...h.listeners][0];
+  stopA();
+  h.subscribe('B456', (rows, error) => h.updates.push({ account: 'B', rows, error }));
+  resolveA({ ok: true, rows: [recentRow('late-A')] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.unsubscriptions.length, 1);
+  assert.deepEqual(h.updates.map(update => update.account), ['B']);
+  assert.equal(h.updates[0].rows[0].timestamp, 'B');
+  assert.equal(h.listeners.has(listenerA), false);
+});

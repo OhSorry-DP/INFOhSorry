@@ -19,9 +19,11 @@ import {
   fetchRecentCharts,
   fetchUserLatestCharts,
   loadDbrMap,
+  buildUploadPlays,
   type RecentChartRow,
   type LatestChartEntry,
 } from './supabaseSync';
+import type { PlayCsvRow } from '../../shared/uploadSnapshot';
 
 // diff (NORMAL/HYPER/ANOTHER/LEGGENDARIA) → slot 색 (오소리웹 DIFF_COLOR 동일).
 const DIFF_COLOR: Record<string, string> = {
@@ -224,7 +226,40 @@ function getTodayKst(): string {
   }).format(new Date());
 }
 
+function subscribeRecentPlays(iidxId: string, update: (rows: PlayCsvRow[], error: string | null) => void): () => void {
+  const upload = window.infohsorry.upload;
+  const readPlayCsv = upload.readPlayCsv;
+  if (!readPlayCsv) {
+    update([], 'Play history is unavailable');
+    return () => {};
+  }
+  let active = true;
+  let request = 0;
+  const refresh = async () => {
+    const current = ++request;
+    try {
+      const result = await readPlayCsv(iidxId);
+      if (!active || current !== request) return;
+      update(buildUploadPlays(result).slice(-100), result.ok ? null : 'Could not read play history');
+    } catch (error) {
+      if (!active || current !== request) return;
+      update([], (error as Error).message || 'Could not read play history');
+    }
+  };
+  void refresh();
+  const unsubscribe = upload.onPlayAppend?.((event) => {
+    if (event.iidxId.replace(/-/g, '').trim() === iidxId) void refresh();
+  });
+  return () => {
+    active = false;
+    request++;
+    unsubscribe?.();
+  };
+}
+
 export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Element {
+  const [recentPlays, setRecentPlays] = useState<PlayCsvRow[]>([]);
+  const [playReadError, setPlayReadError] = useState<string | null>(null);
   // dates[0] = "오늘 (라이브)", dates[1..] = supabase 의 이전 업로드 날짜 (desc).
   // dateIdx === 0 → TSV vs latest, > 0 → fetchRecentCharts(pastDates[dateIdx-1].date_kst).
   const [supabaseDates, setSupabaseDates] = useState<{ date_kst: string; row_count: number }[]>([]);
@@ -252,6 +287,16 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
     if (!iidxId) return '';
     return iidxId.replace(/-/g, '').trim();
   }, [iidxId]);
+
+  useEffect(() => {
+    setRecentPlays([]);
+    setPlayReadError(null);
+    if (!normalizedId) return;
+    return subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
+      setRecentPlays(nextRows);
+      setPlayReadError(nextError);
+    });
+  }, [normalizedId]);
 
   // supabase 의 "이전 날짜" 목록 — 라이브 박스가 오늘 변동을 이미 표시하므로
   // 첫 entry 가 오늘 KST 와 같으면 중복 제거 (nav `<` 가 어제로 바로 이동).
