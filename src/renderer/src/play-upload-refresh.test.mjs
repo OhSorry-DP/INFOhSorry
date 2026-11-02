@@ -86,7 +86,7 @@ const recentPlaysSource = recentSource.slice(recentSource.indexOf('export functi
 const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentDetail = recentSource.slice(recentSource.indexOf('function detailSideHidden('), recentSource.indexOf('\nexport function RecentPlays('));
-const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail, PlayLaneController, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
@@ -101,8 +101,13 @@ function recentHarness({ readPlayCsv, onPlayAppend } = {}) {
   return { subscribe, updates, listeners, unsubscriptions };
 }
 function detailTree(detail, play = {}) {
-  const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
-  const { renderPlayDetail } = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {} });
+  let PlayLaneController;
+  const React = { createElement: (type, props, ...children) => type === PlayLaneController
+    ? PlayLaneController(props)
+    : ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
+  const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {} });
+  PlayLaneController = module.PlayLaneController;
+  const { renderPlayDetail } = module;
   return renderPlayDetail(detail, play);
 }
 function recentCalculations() {
@@ -111,7 +116,12 @@ function recentCalculations() {
 function flatten(node, result = []) {
   if (node == null || typeof node === 'boolean') return result;
   if (Array.isArray(node)) { for (const child of node) flatten(child, result); return result; }
-  if (typeof node === 'object') { result.push(node); flatten(node.props?.children, result); }
+  if (typeof node === 'object') {
+    result.push(node);
+    if (typeof node.type === 'function') flatten(node.type(node.props), result);
+    else if (Array.isArray(node.props?.children)) flatten(node.props.children, result);
+    else flatten(node.props?.children, result);
+  }
   return result;
 }
 const recentRow = timestamp => ({ timestamp });
@@ -381,4 +391,30 @@ test('Recent lane evaluation rejects invalid lanes while partial detail remains 
   const tree = detailTree({ complete: false, p1: { ...side, fs_ok: false, lane_fs: null, lane_fs_unresolved: 0 }, p2: { ...side, lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), fs: null, fs_ok: false, lane_fs: null, lane_fs_unresolved: 0 } });
   assert.ok(tree);
   assert.ok(JSON.stringify(tree).includes('부분 기록'));
+});
+
+test('Recent lane controllers render both seven-key sides, oriented scratch, ranks, unresolved counts, and activity dimming', () => {
+  const lanes = Array.from({ length: 8 }, (_, lane) => [lane + 1, 0, 0, 0, 0, 0]);
+  const side = { lanes_ok: true, lanes, lane_fs_unresolved: 3, fs: null };
+  const p1Activity = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
+  const nodes = flatten(detailTree({ complete: true, p1: side, p2: side }, p1Activity));
+  const controllers = nodes.filter(node => node.props?.className === '__uprofile_play_controller');
+  assert.equal(controllers.length, 2);
+  const buttons = nodes.filter(node => ['__uprofile_play_scratch', '__uprofile_play_key __uprofile_play_key_white', '__uprofile_play_key __uprofile_play_key_black'].includes(node.props?.className) && node.type === 'button');
+  assert.equal(buttons.length, 16, JSON.stringify(buttons.map(node => ({ type: node.type, className: node.props.className }))));
+  assert.equal(buttons.filter(node => node.props.className === '__uprofile_play_scratch').length, 2);
+  assert.equal(buttons.filter(node => node.props.className.includes('__uprofile_play_key_white')).length, 8);
+  assert.equal(buttons.filter(node => node.props.className.includes('__uprofile_play_key_black')).length, 6);
+  assert.equal(buttons.filter(node => node.props.className.startsWith('__uprofile_play_key ')).length, 14);
+  assert.equal(buttons[0].props.className, '__uprofile_play_scratch');
+  assert.equal(buttons[8].props.className, '__uprofile_play_key __uprofile_play_key_white');
+  assert.equal(buttons[15].props.className, '__uprofile_play_scratch');
+  assert.deepEqual(buttons.slice(0, 8).map(node => node.props.children[1].props.children), ['AAA', 'AAA', 'AA', 'AA', 'A', 'A', 'A', 'A']);
+  assert.ok(nodes.filter(node => node.type === 'button' && node.props?.className?.includes('__uprofile_play_inactive')).length >= 8);
+  assert.equal(nodes.filter(node => node.type === 'h5' && JSON.stringify(node.props.children).includes('레인 미확정 3')).length, 2);
+  const invalid = flatten(detailTree({ complete: true, p1: { ...side, lanes_ok: false }, p2: null }, p1Activity));
+  const invalidButtons = invalid.filter(node => node.type === 'button' && (node.props?.className === '__uprofile_play_scratch' || node.props?.className?.startsWith('__uprofile_play_key ')));
+  assert.equal(invalidButtons.length, 16);
+  assert.ok(invalidButtons.every(node => node.props.children[1].props.children === '—'));
+  assert.equal(invalid.filter(node => node.type === 'h5' && JSON.stringify(node.props.children).includes('레인 미확정 —')).length, 1);
 });
