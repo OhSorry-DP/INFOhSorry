@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { PLAY_CSV_KEYS } from '../shared/uploadSnapshot.ts';
+import {
+  PLAY_CSV_LEGACY_KEYS,
+  PLAY_CSV_KEYS,
+  PLAY_CSV_SPEED_KEYS,
+  PLAY_CSV_LANE_KEYS,
+  buildPlayErrorRow,
+  isPlayErrorRow,
+} from '../shared/uploadSnapshot.ts';
 import {
   PLAY_LOG_HEADER,
   PLAY_LOG_HEADER_V2,
@@ -173,7 +180,28 @@ test('CSV battle row preserves normal lamp and the legacy 19-field prefix', () =
     exScore: 1788, pgreat: 719, great: 350, miss: 114, lamp: -1, judge16: BATTLE_JUDGE,
     p1Settings: Array.from({ length: 11 }, () => 0), p2Settings: Array.from({ length: 11 }, () => 0),
     gauge: [0, 56], source: 'currentsong', appVersion: 'app', gameVersion: 'game',
-  };
+};
+
+test('공용 CSV 열 계약과 기존 행 및 오류 행 호환성을 유지한다', () => {
+  assert.equal(PLAY_CSV_LEGACY_KEYS.length, 19);
+  assert.equal(PLAY_CSV_KEYS.length, 21);
+  assert.equal(PLAY_CSV_SPEED_KEYS.length, 22);
+  assert.equal(PLAY_CSV_LANE_KEYS.length, 24);
+  assert.deepEqual(PLAY_CSV_LANE_KEYS.slice(-2), ['lane_order_p1', 'lane_order_p2']);
+
+  const legacyRow = buildPlayRow({
+    timestamp: 't', songId: 1, title: 'song', diff: 0, notes: 0, exScore: 0, pgreat: 0, great: 0, miss: 0, lamp: 0,
+    judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'playdata', appVersion: '', gameVersion: '',
+  });
+  assert.equal(Object.hasOwn(legacyRow, 'lane_order_p1'), false);
+  assert.equal(Object.hasOwn(legacyRow, 'lane_order_p2'), false);
+
+  const errorRow = buildPlayErrorRow(-9, { appVersion: 'app', gameVersion: 'game' }, 't');
+  assert.equal(Object.keys(errorRow).length, 21);
+  assert.equal(isPlayErrorRow(errorRow), true);
+  assert.equal(isPlayErrorRow({ ...errorRow, source: '' }), false);
+  assert.equal(PLAY_CSV_SPEED_KEYS.join(','), `${PLAY_CSV_KEYS.join(',')},play_speed`);
+});
   const fields = splitCsv(buildPlayRow(snapshot));
   assert.equal(fields.length, 22);
   assert.deepEqual(fields.slice(0, 19), [
