@@ -116,6 +116,36 @@ function flatten(node, result = []) {
 }
 const recentRow = timestamp => ({ timestamp });
 
+test('play score calculations cover zero, thresholds, MAX, invalid inputs, and chart matching', () => {
+  const source = recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction recentPlayTime(')) + recentSource.slice(recentSource.indexOf('\nfunction detailSideHidden('), recentSource.indexOf('\nfunction playOptionInfo('));
+  const code = ts.transpileModule(`${source}; ({ playScoreInfo, playChartLevel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const { playScoreInfo, playChartLevel } = vm.runInNewContext(code, { norm: value => value.trim().toLowerCase(), ensureTextageMeta: async () => null });
+  assert.deepEqual({ ...playScoreInfo(0, 9) }, { rank: 'F', rate: '0.00%', next: 'E-0004' });
+  assert.deepEqual({ ...playScoreInfo(14, 9) }, { rank: 'AA', rate: '77.78%', next: 'AAA-0002' });
+  assert.deepEqual({ ...playScoreInfo(18, 9) }, { rank: 'AAA', rate: '100.00%', next: 'MAX-0000' });
+  for (const value of [null, -1, 18.5, 19]) assert.equal(playScoreInfo(value, 9).rate, '—');
+  assert.equal(playScoreInfo(1, 0).rank, '—');
+  const rows = [{ title: 'Song', charts: { SPH: { level: 10 }, DPH: { level: 11 } } }];
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, rows, null), 10);
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'DPH' }, rows, null), 11);
+  assert.equal(playChartLevel({ title: 'Other', difficulty: 'SPH' }, rows, null), null);
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, rows.concat(rows), null), null);
+});
+
+test('RecentPlays discards prior account metadata results after account switch cleanup', async () => {
+  let resolveFirst;
+  let current = 'first';
+  let result = null;
+  let activeFirst = true;
+  const first = new Promise(resolve => { resolveFirst = resolve; }).then(value => { if (activeFirst && current === 'first') result = value; });
+  current = 'second';
+  activeFirst = false;
+  resolveFirst({ songs: {} });
+  await first;
+  assert.equal(result, null);
+  assert.match(recentPlaysSource, /if \(active\) setTextage\(meta\)/);
+});
+
 test('Recent has no play history section or subscription', () => {
   const recentOnly = recentSource.slice(recentSource.indexOf('export default function Recent('));
   assert.doesNotMatch(recentOnly, /subscribeRecentPlays|__uprofile_recentplays|최근 플레이/);

@@ -19,6 +19,7 @@ import {
   fetchRecentCharts,
   fetchUserLatestCharts,
   loadDbrMap,
+  ensureTextageMeta,
   buildUploadPlays,
   type RecentChartRow,
   type LatestChartEntry,
@@ -275,6 +276,33 @@ function detailSideHidden(side: SideDetail | null | undefined): boolean {
   return side.fs === null || (side.fs != null && [side.fs.fast_great, side.fs.fast_good, side.fs.slow_great, side.fs.slow_good].every((value) => typeof value === 'number' && value === 0));
 }
 
+function playScoreInfo(exScore: unknown, noteCount: unknown): { rank: string; rate: string; next: string } {
+  if (!Number.isInteger(exScore) || !Number.isInteger(noteCount) || (noteCount as number) <= 0 || (exScore as number) < 0 || (exScore as number) > 2 * (noteCount as number)) return { rank: '—', rate: '—', next: '—' };
+  const ex = exScore as number;
+  const notes = noteCount as number;
+  const max = notes * 2;
+  const rank = ex === 0 ? 'F' : djLevelFromScore(ex, notes) || '—';
+  const next = DJ_NEXT[rank];
+  const cut = next === 'MAX' ? max : next ? Math.ceil(max * DJ_CUT_NUM[next] / 9) : max;
+  return { rank, rate: `${(ex / max * 100).toFixed(2)}%`, next: `${next || 'MAX'}-${String(Math.max(0, cut - ex)).padStart(4, '0')}` };
+}
+
+function playChartLevel(play: PlayCsvRow, rows: SongRow[], textage: Awaited<ReturnType<typeof ensureTextageMeta>>): number | null {
+  const diff = play.difficulty?.replace(/^(SP|DP)/, '');
+  const slot = diff ? `${play.difficulty?.startsWith('DP') ? 'DP' : 'SP'}${diff}` as ChartSlot : null;
+  const title = norm(play.title || '');
+  if (!slot || !title) return null;
+  const matches = rows.filter((row) => norm(row.title) === title).map((row) => row.charts[slot]?.level).filter((level): level is number => typeof level === 'number' && Number.isFinite(level));
+  if (matches.length === 1) return matches[0];
+  if (matches.length > 1) return null;
+  const key: Record<string, string> = { B: 'DB', N: 'DN', H: 'DH', A: 'DA', L: 'DX' };
+  const metaKey = key[diff || ''];
+  if (!metaKey || !textage?.songs) return null;
+  const songs = Object.values(textage.songs).filter((song) => norm(song.title || '') === title);
+  const levels = songs.map((song) => song.levels?.[metaKey]).filter((level): level is number => typeof level === 'number' && Number.isFinite(level));
+  return levels.length === 1 ? levels[0] : null;
+}
+
 function playOptionInfo(play: PlayCsvRow): string {
   const parse = (raw: string | undefined): number[] | null => {
     if (!raw || !/^\s*\d+(?:\s+\d+)*\s*$/.test(raw)) return null;
@@ -374,16 +402,21 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
 export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element {
   const [recentPlays, setRecentPlays] = useState<PlayCsvRow[]>([]);
   const [playReadError, setPlayReadError] = useState<string | null>(null);
+  const [textage, setTextage] = useState<Awaited<ReturnType<typeof ensureTextageMeta>>>(null);
   const normalizedId = useMemo(() => iidxId?.replace(/-/g, '').trim() || '', [iidxId]);
 
   useEffect(() => {
     setRecentPlays([]);
     setPlayReadError(null);
+    setTextage(null);
     if (!normalizedId) return;
-    return subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
+    let active = true;
+    void ensureTextageMeta().then((meta) => { if (active) setTextage(meta); });
+    const unsubscribe = subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
       setRecentPlays(nextRows);
       setPlayReadError(nextError);
     });
+    return () => { active = false; unsubscribe(); };
   }, [normalizedId]);
 
   return <section className="__uprofile_recentplays" aria-label="최근 플레이">
@@ -405,10 +438,11 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
               <span title={play.title}>{play.title || '—'}</span>
               <span>{play.difficulty || '—'}</span>
               <span>{play.ex_score || '—'}</span>
+              {(() => { const info = playScoreInfo(Number(play.ex_score), Number(play.notes)); return <span>{playChartLevel(play, [], textage) ?? '—'} · {info.rank} · {info.rate} · {info.next}</span>; })()}
               <span className="__uprofile_recentplays_chev">›</span>
             </summary>
             {renderPlayDetail(play.detail, play)}
-          </details> : <div className="__uprofile_recentplays_item __uprofile_recentplays_plain" key={`${play.timestamp}-${index}`}><div className="__uprofile_recentplays_row"><span>{recentPlayTime(play.timestamp)}</span><span title={play.title}>{play.title || '—'}</span><span>{play.difficulty || '—'}</span><span>{play.ex_score || '—'}</span><span /></div></div>
+          </details> : <div className="__uprofile_recentplays_item __uprofile_recentplays_plain" key={`${play.timestamp}-${index}`}><div className="__uprofile_recentplays_row"><span>{recentPlayTime(play.timestamp)}</span><span title={play.title}>{play.title || '—'}</span><span>{play.difficulty || '—'}</span><span>{play.ex_score || '—'}</span><span>—</span></div></div>
         ))}
       </div>
     )}
