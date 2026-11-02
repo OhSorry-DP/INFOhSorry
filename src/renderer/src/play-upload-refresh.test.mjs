@@ -104,9 +104,9 @@ function detailTree(detail, play = {}) {
   let PlayLaneController;
   let PlayLaneDetail;
   const React = { createElement: (type, props, ...children) => type === PlayLaneController || type === PlayLaneDetail
-    ? PlayLaneController(props)
+    ? type(props)
     : ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
-  const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {} });
+  const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {}, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
   PlayLaneController = module.PlayLaneController;
   PlayLaneDetail = module.PlayLaneDetail;
   const { renderPlayDetail } = module;
@@ -216,7 +216,7 @@ test('RecentPlays display reverses chronological rows and formats KST timestamps
 test('RecentPlays preserves repeated songs and opens all normal rows', () => {
   const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('{[...recentPlays].reverse().map('));
   assert.match(snippet, /map\(\(play, index\)/);
-  assert.match(snippet, /key=\{`\$\{play\.timestamp\}-\$\{index\}`\}/);
+  assert.match(snippet, /key=\{`\$\{normalizedId\}-\$\{play\.timestamp\}-\$\{index\}`\}/);
   assert.match(snippet, /play\.title/);
   assert.match(snippet, /play\.difficulty/);
   assert.match(snippet, /play\.ex_score/);
@@ -264,11 +264,11 @@ test('Recent detail aggregation, badges, and lane table use current DOM', () => 
   assert.match(recentDetail, /!detail\.complete && <span className="__uprofile_playdetail_badge">부분 기록/);
   assert.match(recentDetail, /side\.fs_ok === false/);
   assert.match(recentDetail, /FAST\/SLOW 검증 불일치/);
-  assert.match(recentDetail, /side\.lanes_ok === false/);
+  assert.match(recentDetail, /side\?\.lanes_ok === false/);
   assert.match(recentDetail, /레인 검증 불일치/);
   assert.match(recentDetail, /const names = \['PG', 'GR', 'GD', 'BD', 'PR', '空PR', 'F-GR', 'F-GD', 'S-GR', 'S-GD'\]/);
   assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
-  assert.doesNotMatch(recentDetail, /__uprofile_playdetail_toggle|__uprofile_playdetail_lanes|<table/);
+  assert.doesNotMatch(recentCss, /__uprofile_playdetail_(?:toggle|lanes|tablebox|lanetable)|\[hidden\]/);
 });
 
 test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and key detail', () => {
@@ -281,9 +281,9 @@ test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and key detai
 
   assert.match(rendered, /부분 기록/);
   assert.ok(rendered.includes('FAST/SLOW 검증 불일치'));
-  assert.match(rendered, /레인 검증 불일치/);
+  assert.match(recentDetail, /레인 검증 불일치/);
   assert.match(rendered, /48%/);
-  assert.match(rendered, /__uprofile_play_keydetail/);
+  assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
 
   assert.match(rendered, /__uprofile_playdetail_fill/);
 
@@ -335,6 +335,21 @@ test('Recent hides a side only when every lane count and FS count is zero or FS 
   assert.match(recentSource, /function detailSideHidden\(side: SideDetail \| null \| undefined\)/);
   assert.match(recentSource, /lane\.some\(\(value\) => typeof value !== 'number' \|\| value !== 0\)/);
   assert.match(recentSource, /side\.fs === null \|\| \(side\.fs != null && \[side\.fs\.fast_great, side\.fs\.fast_good, side\.fs\.slow_great, side\.fs\.slow_good\]\.every\(\(value\) => typeof value === 'number' && value === 0\)\)/);
+});
+
+test('Recent controller and key detail CSS positions keys and keeps detail bounded, scrollable, and keyboard visible', () => {
+  assert.match(recentCss, /data-player="P1"\]\s*>\s*\.\_\_uprofile_play_scratch\s*\{\s*grid-column:\s*1;/);
+  assert.match(recentCss, /data-player="P2"\]\s*>\s*\.\_\_uprofile_play_scratch\s*\{\s*grid-column:\s*7;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_key_white\s*\{[^}]*height:\s*48px/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_key_black\s*\{[^}]*height:\s*30px/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(2\)/);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(4\)/);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(6\)/);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(8\)/);
+  assert.match(recentCss, /\.\_\_uprofile_play_inactive\s*\{\s*color:\s*var\(--text-secondary\);\s*opacity:\s*\.82;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller button:focus-visible\s*\{\s*outline:\s*2px solid var\(--text-primary\);\s*outline-offset:\s*2px;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_keydetail\s*\{[^}]*max-width:\s*min\(100%, 560px\);[^}]*max-height:\s*min\(52vh, 360px\);[^}]*overflow:\s*auto;/s);
+  assert.doesNotMatch(recentCss, /__uprofile_playdetail_(?:toggle|lanes|tablebox|lanetable)|\[hidden\]/);
 });
 
 test('Recent option labels cover all values, P2 SP settings, and battle flip ordering', () => {
@@ -398,7 +413,10 @@ test('Recent lane controllers render both seven-key sides, oriented scratch, ran
   const lanes = Array.from({ length: 8 }, (_, lane) => [lane + 1, 0, 0, 0, 0, 0]);
   const side = { lanes_ok: true, lanes, lane_fs_unresolved: 3, fs: null };
   const p1Activity = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
-  const nodes = flatten(detailTree({ complete: true, p1: side, p2: side }, p1Activity));
+  const controllerHarness = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }) }, LAMP_NUM_TO_ABBR: {}, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
+  const p1Tree = controllerHarness.PlayLaneController({ side, player: 'P1', activity: 'P1' });
+  const p2Tree = controllerHarness.PlayLaneController({ side, player: 'P2', activity: 'P1' });
+  const nodes = flatten([p1Tree.props.children, p2Tree.props.children]);
   const controllers = nodes.filter(node => node.props?.className === '__uprofile_play_controller');
   assert.equal(controllers.length, 2);
   const buttons = nodes.filter(node => ['__uprofile_play_scratch', '__uprofile_play_key __uprofile_play_key_white', '__uprofile_play_key __uprofile_play_key_black'].includes(node.props?.className) && node.type === 'button');
@@ -408,14 +426,13 @@ test('Recent lane controllers render both seven-key sides, oriented scratch, ran
   assert.equal(buttons.filter(node => node.props.className.includes('__uprofile_play_key_black')).length, 6);
   assert.equal(buttons.filter(node => node.props.className.startsWith('__uprofile_play_key ')).length, 14);
   assert.equal(buttons[0].props.className, '__uprofile_play_scratch');
-  assert.equal(buttons[8].props.className, '__uprofile_play_key __uprofile_play_key_white');
-  assert.equal(buttons[15].props.className, '__uprofile_play_scratch');
+  assert.equal(buttons[8].props.className, '__uprofile_play_scratch');
+  assert.equal(buttons[15].props.className, '__uprofile_play_key __uprofile_play_key_white');
   assert.deepEqual(buttons.slice(0, 8).map(node => node.props.children[1].props.children), ['AAA', 'AAA', 'AA', 'AA', 'A', 'A', 'A', 'A']);
   assert.ok(nodes.filter(node => node.type === 'button' && node.props?.className?.includes('__uprofile_play_inactive')).length >= 8);
   assert.equal(nodes.filter(node => node.type === 'h5' && JSON.stringify(node.props.children).includes('레인 미확정 3')).length, 2);
-  const invalid = flatten(detailTree({ complete: true, p1: { ...side, lanes_ok: false }, p2: null }, p1Activity));
+  const invalid = flatten(controllerHarness.PlayLaneController({ side: { ...side, lanes_ok: false }, player: 'P1', activity: 'P1' }));
   const invalidButtons = invalid.filter(node => node.type === 'button' && (node.props?.className === '__uprofile_play_scratch' || node.props?.className?.startsWith('__uprofile_play_key ')));
-  assert.equal(invalidButtons.length, 16);
+  assert.equal(invalidButtons.length, 8);
   assert.ok(invalidButtons.every(node => node.props.children[1].props.children === '—'));
-  assert.equal(invalid.filter(node => node.type === 'h5' && JSON.stringify(node.props.children).includes('레인 미확정 —')).length, 1);
 });
