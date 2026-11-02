@@ -39,7 +39,7 @@ test('Recent play detail layout stays in one column and wraps narrow content', (
   assert.match(css, /\.__uprofile_play_score > div\s*\{[^}]*overflow-wrap:\s*anywhere/s);
   assert.match(css, /\.__uprofile_play_controller\s*\{[^}]*repeat\(7,\s*minmax\(0,\s*1fr\)\)/s);
   assert.match(css, /\.__uprofile_play_keydetail_row\s*\{[^}]*repeat\(7,\s*minmax\(0,\s*1fr\)\)/s);
-  assert.match(css, /\.__uprofile_play_inactive\s*\{[^}]*color:\s*var\(--text-muted\)[^}]*opacity:\s*\.58/s);
+  assert.match(css, /\.__uprofile_play_inactive\s*\{[^}]*color:\s*var\(--text-secondary\)[^}]*opacity:\s*\.82/s);
   assert.match(css, /\.__uprofile_play_controller \.?__uprofile_play_inactive/);
 });
 
