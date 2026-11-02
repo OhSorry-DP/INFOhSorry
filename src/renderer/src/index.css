@@ -3198,11 +3198,11 @@ body {
 .__uprofile_playdetail_fill { display: block; height: 100%; border-radius: 2px; }
 .__uprofile_playdetail_sep { grid-column: 1 / -1; height: 1px; background: var(--border-secondary); margin: 3px 0; }
 .__uprofile_playdetail_barrow.k-pg .__uprofile_playdetail_lab { color: #a6f3ff; } .__uprofile_playdetail_barrow.k-pg .__uprofile_playdetail_fill { background: #62e2c4; }
-.__uprofile_playdetail_barrow.k-great .__uprofile_playdetail_lab, .__uprofile_playdetail_barrow.k-great .__uprofile_playdetail_fill { color: #ffe63c; background-color: #ffe63c; }
-.__uprofile_playdetail_barrow.k-good .__uprofile_playdetail_lab, .__uprofile_playdetail_barrow.k-good .__uprofile_playdetail_fill { color: #ffa51e; background-color: #ffa51e; }
-.__uprofile_playdetail_barrow.k-bad .__uprofile_playdetail_lab, .__uprofile_playdetail_barrow.k-bad .__uprofile_playdetail_fill { color: #ff6a3a; background-color: #ff6a3a; }
-.__uprofile_playdetail_barrow.k-poor .__uprofile_playdetail_lab, .__uprofile_playdetail_barrow.k-poor .__uprofile_playdetail_fill { color: #ff4a34; background-color: #ff4a34; }
-.__uprofile_playdetail_barrow.k-empty .__uprofile_playdetail_lab, .__uprofile_playdetail_barrow.k-empty .__uprofile_playdetail_fill { color: #b0564a; background-color: #b0564a; }
+.__uprofile_playdetail_barrow.k-great .__uprofile_playdetail_lab { color: #ffe63c; } .__uprofile_playdetail_barrow.k-great .__uprofile_playdetail_fill { background: #ffe63c; }
+.__uprofile_playdetail_barrow.k-good .__uprofile_playdetail_lab { color: #ffa51e; } .__uprofile_playdetail_barrow.k-good .__uprofile_playdetail_fill { background: #ffa51e; }
+.__uprofile_playdetail_barrow.k-bad .__uprofile_playdetail_lab { color: #ff6a3a; } .__uprofile_playdetail_barrow.k-bad .__uprofile_playdetail_fill { background: #ff6a3a; }
+.__uprofile_playdetail_barrow.k-poor .__uprofile_playdetail_lab { color: #ff4a34; } .__uprofile_playdetail_barrow.k-poor .__uprofile_playdetail_fill { background: #ff4a34; }
+.__uprofile_playdetail_barrow.k-empty .__uprofile_playdetail_lab { color: #b0564a; } .__uprofile_playdetail_barrow.k-empty .__uprofile_playdetail_fill { background: #b0564a; }
 .__uprofile_playdetail_barrow.k-cb .__uprofile_playdetail_lab { color: #ff4b4b; }
 .__uprofile_playdetail_foot { color: var(--text-muted); font-size: 11px; }
 .__uprofile_playdetail_toggle { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); font-size: 12px; cursor: pointer; width: fit-content; }
