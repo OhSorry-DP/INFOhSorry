@@ -31,6 +31,18 @@ const csv = rows => keys.join(',') + '\n' + rows.map(csvLine).join('');
 const csvRows = (rows, lengths) => keys.join(',') + '\n' + rows.map((value, i) => Array.from({length:lengths[i]}, (_, j) => shared.PLAY_CSV_SPEED_KEYS[j]).map(key => `"${value[key].replaceAll('"', '""')}"`).join(',')).join('\n') + '\n';
 const plain = x => JSON.parse(JSON.stringify(x));
 
+test('Recent play detail layout stays in one column and wraps narrow content', () => {
+  const css = read('./index.css');
+  assert.match(css, /\.__uprofile_play_sections\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.match(css, /\.__uprofile_play_head\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css, /\.__uprofile_play_score\s*\{[^}]*repeat\(auto-fit,\s*minmax\(min\(100%,\s*\d+px\),\s*1fr\)\)/s);
+  assert.match(css, /\.__uprofile_play_score > div\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.match(css, /\.__uprofile_play_controller\s*\{[^}]*repeat\(7,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(css, /\.__uprofile_play_keydetail_row\s*\{[^}]*repeat\(7,\s*minmax\(0,\s*1fr\)\)/s);
+  assert.match(css, /\.__uprofile_play_inactive\s*\{[^}]*color:\s*var\(--text-muted\)[^}]*opacity:\s*\.58/s);
+  assert.match(css, /\.__uprofile_play_controller \.?__uprofile_play_inactive/);
+});
+
 test('19/21/22 정확한 헤더만 허용하고 추가 열은 헤더 오류', () => {
   const api = sync();
   const legacy = shared.PLAY_CSV_LEGACY_KEYS;
