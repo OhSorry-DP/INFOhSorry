@@ -86,7 +86,7 @@ const recentPlaysSource = recentSource.slice(recentSource.indexOf('export functi
 const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentDetail = recentSource.slice(recentSource.indexOf('function detailSideHidden('), recentSource.indexOf('\nexport function RecentPlays('));
-const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
@@ -104,6 +104,9 @@ function detailTree(detail, play = {}) {
   const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
   const { renderPlayDetail } = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {} });
   return renderPlayDetail(detail, play);
+}
+function recentCalculations() {
+  return vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) }, LAMP_NUM_TO_ABBR: {} });
 }
 function flatten(node, result = []) {
   if (node == null || typeof node === 'boolean') return result;
@@ -283,4 +286,61 @@ test('Recent hides a side only when every lane count and FS count is zero or FS 
   assert.match(recentSource, /function detailSideHidden\(side: SideDetail \| null \| undefined\)/);
   assert.match(recentSource, /lane\.some\(\(value\) => typeof value !== 'number' \|\| value !== 0\)/);
   assert.match(recentSource, /side\.fs === null \|\| \(side\.fs != null && \[side\.fs\.fast_great, side\.fs\.fast_good, side\.fs\.slow_great, side\.fs\.slow_good\]\.every\(\(value\) => typeof value === 'number' && value === 0\)\)/);
+});
+
+test('Recent option labels cover all values, P2 SP settings, and battle flip ordering', () => {
+  const { playOptionInfo } = recentCalculations();
+  const play = { settings_p1_11: '0 0 0 0 0 5 0 0 0 0 0', settings_p2_11: '6 0 0 0 0 0 0 0 0 0 0', battle_flag: '0', difficulty: 'SPN' };
+  assert.equal(playOptionInfo(play), 'OFF / SYMMETRY RANDOM');
+  assert.equal(playOptionInfo({ ...play, settings_p1_11: '0 0 1 1 0 2 0 0 0 0 0', battle_flag: '1' }), 'BATTLE, FLIP, OFF / R-RAN');
+  assert.equal(playOptionInfo({ ...play, settings_p1_11: '0 0 0 0 0 6 0 0 0 0 0', settings_p2_11: '1 0 0 0 0 0 0 0 0 0 0' }), 'OFF / RAN');
+  for (let value = 0; value <= 6; value++) assert.ok(playOptionInfo({ ...play, settings_p1_11: `${value} 0 0 0 0 0 0 0 0 0 0` }).length > 0);
+  assert.ok(playOptionInfo({ ...play, settings_p1_11: '7 0 0 0 0 0 0 0 0 0 0' }).includes('—'));
+});
+
+test('Recent side activity resolves P1, P2, both, and zero sides', () => {
+  const { playSideActivity } = recentCalculations();
+  assert.equal(playSideActivity({ difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' }), 'P1');
+  assert.equal(playSideActivity({ difficulty: 'SPN', battle_flag: '0', judge_16: '0 0 0 0 0 0 0 0 1 0 0 0 0 0 0 0' }), 'P2');
+  assert.equal(playSideActivity({ difficulty: 'DPN', battle_flag: '0', judge_16: '0'.repeat(16).split('').join(' ') }), 'BOTH');
+  assert.equal(playSideActivity({ difficulty: 'SPN', battle_flag: '0', judge_16: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' }), null);
+});
+
+test('Recent display lane order validates permutation and hides S-RAN or missing', () => {
+  const { displayLaneOrder } = recentCalculations();
+  const play = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0' };
+  assert.equal(displayLaneOrder('2035641', 'P1', play), '3146752');
+  assert.equal(displayLaneOrder(undefined, 'P1', play), '—');
+  assert.equal(displayLaneOrder('2035641', 'P1', { ...play, settings_p1_11: '3 0 0 0 0 0 0 0 0 0 0' }), '—');
+  assert.equal(displayLaneOrder('0035641', 'P1', play), '—');
+});
+
+test('Recent lane counter indices keep key order and scratch at seven', () => {
+  const { laneCounterIndex } = recentCalculations();
+  assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map(laneCounterIndex), [0, 1, 2, 3, 4, 5, 6]);
+  assert.equal(laneCounterIndex('scratch'), 7);
+});
+
+test('Recent lane evaluation uses unrounded rank boundaries and zero EX F', () => {
+  const { laneEvaluation } = recentCalculations();
+  const evaluate = (ex, notes = 9) => {
+    const lanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 99]);
+    lanes[0] = [0, 0, 0, 0, notes, 99];
+    if (ex > 0) lanes[0] = [Math.floor(ex / 2), ex % 2, 0, 0, notes - Math.floor(ex / 2) - (ex % 2), 99];
+    return laneEvaluation({ lanes_ok: true, lanes });
+  };
+  for (const [ex, rank] of [[16, 'AAA'], [14, 'AA'], [12, 'A'], [10, 'B'], [8, 'C'], [6, 'D'], [4, 'E'], [2, 'F']]) assert.equal(evaluate(ex).rank, rank);
+  assert.equal(evaluate(0).rank, 'F');
+  assert.equal(evaluate(0).rate, '0.00%');
+  assert.equal(evaluate(0, 0).rank, '—');
+});
+
+test('Recent lane evaluation rejects invalid lanes while partial detail remains renderable', () => {
+  const { laneEvaluation } = recentCalculations();
+  const side = { lanes_ok: true, lanes: Array.from({ length: 8 }, () => [1, 0, 0, 0, 0, 0]) };
+  assert.equal(laneEvaluation({ ...side, lanes_ok: false }), null);
+  assert.equal(laneEvaluation({ ...side, lanes: [[1]] }), null);
+  const tree = detailTree({ complete: false, p1: { ...side, fs_ok: false, lane_fs: null, lane_fs_unresolved: 0 }, p2: { ...side, lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), fs: null, fs_ok: false, lane_fs: null, lane_fs_unresolved: 0 } });
+  assert.ok(tree);
+  assert.ok(JSON.stringify(tree).includes('부분 기록'));
 });

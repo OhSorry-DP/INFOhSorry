@@ -275,6 +275,61 @@ function detailSideHidden(side: SideDetail | null | undefined): boolean {
   return side.fs === null || (side.fs != null && [side.fs.fast_great, side.fs.fast_good, side.fs.slow_great, side.fs.slow_good].every((value) => typeof value === 'number' && value === 0));
 }
 
+function playOptionInfo(play: PlayCsvRow): string {
+  const parse = (raw: string | undefined): number[] | null => {
+    if (!raw || !/^\s*\d+(?:\s+\d+)*\s*$/.test(raw)) return null;
+    return raw.trim().split(/\s+/).map(Number);
+  };
+  const p1 = parse(play.settings_p1_11);
+  const p2 = parse(play.settings_p2_11);
+  const battle = play.battle_flag === '1';
+  const dp = play.difficulty?.startsWith('DP');
+  const label = (n: number | undefined) => Number.isInteger(n) && n! >= 0 && n! <= 6 ? ['OFF', 'RAN', 'R-RAN', 'S-RAN', 'MIR', 'SYNCHRONIZE RANDOM', 'SYMMETRY RANDOM'][n!] : '—';
+  const items: string[] = [];
+  if (battle) items.push('BATTLE');
+  if (p1?.[3] === 1) items.push('FLIP');
+  if (battle || dp) items.push(`${label(p1?.[0])} / ${label(p1?.[5])}`);
+  else items.push(`${label(p1?.[0])} / ${label(p2?.[0])}`);
+  return items.join(', ');
+}
+
+function playSideActivity(play: PlayCsvRow): 'P1' | 'P2' | 'BOTH' | null {
+  if (play.battle_flag === '1' || play.difficulty?.startsWith('DP')) return 'BOTH';
+  const parts = play.judge_16?.trim().split(/\s+/) ?? [];
+  if (parts.length !== 16 || parts.some((value) => !/^\d+$/.test(value))) return null;
+  const sums = [parts.slice(0, 5), parts.slice(5, 10)].map((side) => side.reduce((sum, value) => sum + Number(value), 0));
+  return sums[0] > 0 && sums[1] === 0 ? 'P1' : sums[1] > 0 && sums[0] === 0 ? 'P2' : null;
+}
+
+function displayLaneOrder(raw: string | undefined, side: 'P1' | 'P2', play: PlayCsvRow): string {
+  const activity = playSideActivity(play);
+  if (!raw || activity == null || (activity !== 'BOTH' && activity !== side)) return '—';
+  const order = raw.trim().split('').map(Number);
+  if (!/^\d{7}$/.test(raw.trim()) || [...order].sort((a, b) => a - b).join('') !== '0123456') return '—';
+  const settings = (side === 'P1' ? play.settings_p1_11 : play.settings_p2_11);
+  const parsed = settings && /^\s*\d+(?:\s+\d+)*\s*$/.test(settings) ? settings.trim().split(/\s+/).map(Number) : null;
+  const option = play.battle_flag === '1' || play.difficulty?.startsWith('DP') ? parsed?.[side === 'P1' ? 0 : 5] : parsed?.[0];
+  if (option === 3) return '—';
+  return order.map((value) => value + 1).join('');
+}
+
+function laneCounterIndex(key: number | 'scratch'): number {
+  return key === 'scratch' ? 7 : Number.isInteger(key) && key >= 1 && key <= 7 ? key - 1 : -1;
+}
+
+function laneEvaluation(side: SideDetail | null | undefined): { notes: number; ex: number; rank: string; rate: string } | null {
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  if (!side?.lanes_ok || !Array.isArray(side.lanes) || side.lanes.length !== 8 || side.lanes.some((lane) => !Array.isArray(lane) || lane.length !== 6 || lane.some((value) => !valid(value)))) return null;
+  const sums = [0, 0, 0, 0, 0];
+  for (const lane of side.lanes) for (let i = 0; i < 5; i++) sums[i] += lane[i];
+  const notes = sums.reduce((a, b) => a + b, 0);
+  if (notes === 0) return { notes, ex: 0, rank: '—', rate: '—' };
+  const ex = sums[0] * 2 + sums[1];
+  const ratio = ex / (notes * 2);
+  const rank = ex === 0 ? 'F' : ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F';
+  return { notes, ex, rank, rate: `${(ratio * 100).toFixed(2)}%` };
+}
+
 function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | null {
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
   if (!sides.length) return null;
@@ -290,6 +345,7 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
   const values = [aggregate(0), aggregate(1), aggregate(2), aggregate(3), aggregate(4), aggregate(5)] as const;
   const scoreValues = values.slice(0, 5);
   const total = scoreValues.every(valid) ? scoreValues.reduce<number>((sum, value) => sum + (valid(value) ? value : 0), 0) : null;
+  const evaluations = sides.map(([label, side]) => [label, laneEvaluation(side)] as const);
   const cbParts = (play.judge_16 || '').trim().split(/\s+/);
   const cb = cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
     ? sides.reduce((sum, [label]) => sum + Number(cbParts[label === 'P1' ? 10 : 11]), 0) : null;
@@ -307,11 +363,11 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
   add('k-bad', 'BAD', values[3]); add('k-poor', 'POOR', values[4]); add('k-empty', '空POOR', values[5], undefined, false); add('k-cb', 'COMBO BREAK', cb, undefined, false, false);
   const percent = (value: number | null) => total != null && total > 0 && valid(value) ? `${Math.round(value / total * 100)}%` : '—';
   return <div className="__uprofile_playdetail_judge">
-    <div className="__uprofile_playdetail_summary">{[['램프', lamp], ['EX', play.ex_score], ['DJ RATE', play.dj_rate_pct ? `${play.dj_rate_pct}%${play.dj_rank ? ` ${play.dj_rank}` : ''}` : '—'], ['미스', play.miss_count], ['콤보 브레이크', fmt(cb)]].map(([label, value]) => <span key={label}>{label} <b>{value || '—'}</b></span>)}{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}{sides.some(([, side]) => side.lanes_ok === false) && <span className="__uprofile_playdetail_badge">레인 검증 불일치</span>}</div>
+    <div className="__uprofile_playdetail_summary">{[['램프', lamp], ['EX', play.ex_score], ['DJ RATE', play.dj_rate_pct ? `${play.dj_rate_pct}%${play.dj_rank ? ` ${play.dj_rank}` : ''}` : '—'], ['미스', play.miss_count], ['콤보 브레이크', fmt(cb)], ['옵션', playOptionInfo(play)], ['P1 레인 순서', displayLaneOrder(play.lane_order_p1, 'P1', play)], ['P2 레인 순서', displayLaneOrder(play.lane_order_p2, 'P2', play)]].map(([label, value]) => <span key={label}>{label} <b>{value || '—'}</b></span>)}{evaluations.map(([label, evaluation]) => <span key={`${label}-lane-eval`}>{label} notes / EX / DJ <b>{evaluation ? `${evaluation.notes} / ${evaluation.ex} / ${evaluation.rank} ${evaluation.rate}` : '—'}</b></span>)}{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}{sides.some(([, side]) => side.lanes_ok === false) && <span className="__uprofile_playdetail_badge">레인 검증 불일치</span>}</div>
     <div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>
     <small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small>
     <label className="__uprofile_playdetail_toggle"><input type="checkbox" onChange={(event) => { const lanes = event.currentTarget.closest('.__uprofile_playdetail_judge')?.querySelector('.__uprofile_playdetail_lanes'); if (lanes) (lanes as HTMLElement).hidden = !event.currentTarget.checked; }} />레인별 판정 보기</label>
-    <div className="__uprofile_playdetail_lanes">{sides.map(([label, side]) => <section key={label}><h4>{label} · 레인 미확정 {fmt(side.lane_fs_unresolved)}</h4><div className="__uprofile_playdetail_tablebox"><table className="__uprofile_playdetail_lanetable"><thead><tr>{['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name, index) => <th key={name} className={index === 7 ? 'g-fs' : undefined}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{fmt(side.lanes?.[lane]?.[col])}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`} className={col === 0 ? 'g-fs' : undefined}>{side.lane_fs == null ? '—' : fmt(side.lane_fs[lane]?.[col])}</td>)}</tr>)}</tbody></table></div></section>)}</div>
+    <div className="__uprofile_playdetail_lanes">{sides.map(([label, side]) => <section key={label}><h4>{label} · 레인 미확정 {fmt(side.lane_fs_unresolved)}</h4><div className="__uprofile_playdetail_tablebox"><table className="__uprofile_playdetail_lanetable"><thead><tr>{['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name, index) => <th key={name} className={index === 7 ? 'g-fs' : undefined}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane === 7 ? 'S' : laneCounterIndex(lane + 1)}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{fmt(side.lanes?.[lane]?.[col])}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`} className={col === 0 ? 'g-fs' : undefined}>{side.lane_fs == null ? '—' : fmt(side.lane_fs[lane]?.[col])}</td>)}</tr>)}</tbody></table></div></section>)}</div>
   </div>;
 }
 
