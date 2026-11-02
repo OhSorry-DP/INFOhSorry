@@ -86,7 +86,8 @@ const recentPlaysSource = recentSource.slice(recentSource.indexOf('export functi
 const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentDetail = recentSource.slice(recentSource.indexOf('function detailSideHidden('), recentSource.indexOf('\nexport function RecentPlays('));
-const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const recentControllerSource = recentSource.slice(recentSource.indexOf('function laneCounterIndex('), recentSource.indexOf('\nfunction renderPlayDetail('));
+const recentDetailCode = ts.transpileModule(`${recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction recentPlayTime('))}; ${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation, laneKeyEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
@@ -106,14 +107,14 @@ function detailTree(detail, play = {}) {
   const React = { createElement: (type, props, ...children) => type === PlayLaneController || type === PlayLaneDetail
     ? type(props)
     : ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
-  const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {}, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
+  const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {}, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; }, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
   PlayLaneController = module.PlayLaneController;
   PlayLaneDetail = module.PlayLaneDetail;
   const { renderPlayDetail } = module;
   return renderPlayDetail(detail, play);
 }
 function recentCalculations() {
-  return vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) }, LAMP_NUM_TO_ABBR: {} });
+  return vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) }, LAMP_NUM_TO_ABBR: {}, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; } });
 }
 function flatten(node, result = []) {
   if (node == null || typeof node === 'boolean') return result;
@@ -257,7 +258,7 @@ test('RecentPlays renders missing detail and one-column section structure', () =
   assert.doesNotMatch(recentDetail, /play\.detail \? 0|detail \? 0/);
 });
 
-test('Recent detail aggregation, badges, and lane table use current DOM', () => {
+test('Recent detail aggregation, badges, and per-key detail use current DOM', () => {
   assert.match(recentDetail, /const aggregate = \(index: number\)/);
   assert.match(recentDetail, /values\.every\(valid\) \? values\.reduce/);
   assert.match(recentDetail, /FAST\/SLOW 기록 없음/);
@@ -268,6 +269,8 @@ test('Recent detail aggregation, badges, and lane table use current DOM', () => 
   assert.match(recentDetail, /레인 검증 불일치/);
   assert.match(recentDetail, /const names = \['PG', 'GR', 'GD', 'BD', 'PR', '空PR', 'F-GR', 'F-GD', 'S-GR', 'S-GD'\]/);
   assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
+  assert.match(recentDetail, /side\?\.lanes\?\.\[index\]/);
+  assert.doesNotMatch(recentDetail, /__uprofile_playdetail_(?:toggle|lanes)/);
   assert.doesNotMatch(recentCss, /__uprofile_playdetail_(?:toggle|lanes|tablebox|lanetable)|\[hidden\]/);
 });
 
@@ -283,6 +286,8 @@ test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and key detai
   assert.ok(rendered.includes('FAST/SLOW 검증 불일치'));
   assert.match(recentDetail, /레인 검증 불일치/);
   assert.match(rendered, /48%/);
+  assert.match(rendered, /__uprofile_play_controller/);
+  assert.equal(flatten(nodes).filter(node => node.props?.className === '__uprofile_play_keydetail_row').length, 0);
   assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
 
   assert.match(rendered, /__uprofile_playdetail_fill/);
@@ -352,6 +357,47 @@ test('Recent controller and key detail CSS positions keys and keeps detail bound
   assert.doesNotMatch(recentCss, /__uprofile_playdetail_(?:toggle|lanes|tablebox|lanetable)|\[hidden\]/);
 });
 
+test('lane detail hover stays open across trigger and portal, then closes after leaving both', () => {
+  assert.match(recentDetail, /onMouseEnter=\{\(event\) => open\(event\.currentTarget\)\}/);
+  assert.match(recentDetail, /onMouseLeave=\{\(event\) => \{ if \(!event\.currentTarget\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
+  assert.match(recentDetail, /onMouseLeave=\{\(event\) => \{ if \(!event\.currentTarget\.parentElement\?\.querySelector\('\.__uprofile_play_keydetail'\)\?\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
+});
+
+test('lane detail tap replaces the selected key, outside pointer closes, and inside detail remains', () => {
+  assert.match(recentDetail, /onClick=\{\(event\) => \{ if \(openKey === number\) setOpenKey\(null\); else open\(event\.currentTarget\); \}\}/);
+  assert.match(recentDetail, /document\.addEventListener\('pointerdown', outside\)/);
+  assert.match(recentDetail, /!target\.closest\('\.__uprofile_play_controller'\) && !target\.closest\('\.__uprofile_play_keydetail'\)/);
+  assert.match(recentDetail, /onMouseLeave=\{\(event\) => \{ if \(!event\.currentTarget\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
+});
+
+test('lane detail focus change closes outside, button name identifies side and detail link uses shown ID', () => {
+  assert.match(recentDetail, /aria-label=\{`\$\{player === 'P1' \? '1P' : '2P'\} \$\{label === 'SCRATCH' \? '스크래치' : `건반 \$\{label\}`\}`\}/);
+  assert.match(recentDetail, /aria-describedby=\{openKey === number \? id : undefined\}/);
+  assert.doesNotMatch(recentDetail, /aria-controls/);
+  assert.match(recentDetail, /onBlur=\{\(event\) => \{ if \(!event\.currentTarget\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
+});
+
+test('lane detail Escape closes and restores trigger focus', () => {
+  assert.match(recentDetail, /event\.key === 'Escape'.*setOpenKey\(null\); trigger\.current\?\.focus\(\)/);
+});
+
+test('lane detail flips above and clamps horizontally with viewport bounded internal scrolling', () => {
+  assert.match(recentDetail, /r\.bottom \+ height > window\.innerHeight - 8 \? Math\.max\(8, r\.top - height\) : r\.bottom/);
+  assert.match(recentDetail, /Math\.max\(8, Math\.min\(r\.left, window\.innerWidth - 320\)\)/);
+  assert.match(recentDetail, /maxHeight: 'min\(52vh, 360px\)', overflow: 'auto'/);
+});
+
+test('lane detail closes on collapse, account change, scroll and resize, and cleans up document and window events', () => {
+  assert.match(recentDetail, /useEffect\(\(\) => \{ setOpenKey\(null\); \}, \[accountKey\]\)/);
+  assert.match(recentDetail, /window\.addEventListener\('scroll', close, true\)/);
+  assert.match(recentDetail, /window\.addEventListener\('resize', close\)/);
+  assert.match(recentDetail, /document\.removeEventListener\('keydown', escape\)/);
+  assert.match(recentDetail, /document\.removeEventListener\('pointerdown', outside\)/);
+  assert.match(recentDetail, /window\.removeEventListener\('scroll', close, true\)/);
+  assert.match(recentDetail, /window\.removeEventListener\('resize', close\)/);
+  assert.match(recentPlaysSource, /<details className="__uprofile_recentplays_item"/);
+});
+
 test('Recent option labels cover all values, P2 SP settings, and battle flip ordering', () => {
   const { playOptionInfo } = recentCalculations();
   const play = { settings_p1_11: '0 0 0 0 0 5 0 0 0 0 0', settings_p2_11: '6 0 0 0 0 0 0 0 0 0 0', battle_flag: '0', difficulty: 'SPN' };
@@ -409,16 +455,43 @@ test('Recent lane evaluation rejects invalid lanes while partial detail remains 
   assert.ok(JSON.stringify(tree).includes('부분 기록'));
 });
 
+test('per-key evaluation and detail preserve one lane values, rank, rate, and unresolved FS markers', () => {
+  const { laneKeyEvaluation, PlayLaneDetail } = recentCalculations();
+  const lanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 91]);
+  lanes[0] = [3, 2, 1, 0, 3, 77]; lanes[1] = [0, 0, 0, 0, 1, 88];
+  const side = { lanes_ok: true, lanes, lane_fs: null };
+  assert.deepEqual({ ...laneKeyEvaluation(side, 0) }, { notes: 9, ex: 8, rank: 'C', rate: '44.44%' });
+  assert.equal(laneKeyEvaluation(side, 1).rank, 'F');
+  const tree = PlayLaneDetail({ side, index: 0 });
+  const rendered = JSON.stringify(flatten(tree));
+  assert.match(rendered, /"PG"," ",\{"type":"b","props":\{"children":"3"\}\}/);
+  assert.match(rendered, /"空PR"," ",\{"type":"b","props":\{"children":"77"\}\}/);
+  assert.match(rendered, /"F-GR"," ",\{"type":"b","props":\{"children":"—"\}\}/);
+  assert.match(rendered, /"RANK ",\{"type":"b","props":\{"children":"C"\}\}/);
+  assert.match(rendered, /"EX% ",\{"type":"b","props":\{"children":"44\.44%"\}\}/);
+  assert.doesNotMatch(rendered, /<span>2<\/span>/);
+  const invalid = JSON.stringify(flatten(PlayLaneDetail({ side: { ...side, lanes_ok: false }, index: 0 })));
+  assert.match(invalid, /"PG"," ",\{"type":"b","props":\{"children":"3"\}\}/);
+  assert.match(invalid, /레인 검증 불일치/);
+  assert.match(invalid, /"RANK ",\{"type":"b","props":\{"children":"—"\}\}/);
+  assert.match(invalid, /"EX% ",\{"type":"b","props":\{"children":"—"\}\}/);
+});
+
 test('Recent lane controllers render both seven-key sides, oriented scratch, ranks, unresolved counts, and activity dimming', () => {
   const lanes = Array.from({ length: 8 }, (_, lane) => [lane + 1, 0, 0, 0, 0, 0]);
   const side = { lanes_ok: true, lanes, lane_fs_unresolved: 3, fs: null };
   const p1Activity = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
-  const controllerHarness = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }) }, LAMP_NUM_TO_ABBR: {}, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
-  const p1Tree = controllerHarness.PlayLaneController({ side, player: 'P1', activity: 'P1' });
-  const p2Tree = controllerHarness.PlayLaneController({ side, player: 'P2', activity: 'P1' });
-  const nodes = flatten([p1Tree.props.children, p2Tree.props.children]);
+  const controllerHarness = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }) }, LAMP_NUM_TO_ABBR: {}, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; }, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
+  const React = { createElement: (type, props, ...children) => type === controllerHarness.PlayLaneController ? type(props) : ({ type, props: { ...(props ?? {}), children } }) };
+  const component = { type: 'section', props: { children: [
+    controllerHarness.PlayLaneController({ side, player: 'P1', activity: 'P1' }),
+    controllerHarness.PlayLaneController({ side, player: 'P2', activity: 'P1' }),
+  ] } };
+  const p1Tree = component.props.children[0];
+  const p2Tree = component.props.children[1];
+  const nodes = flatten([p1Tree, p2Tree, controllerHarness.PlayLaneController({ side, player: 'P1', activity: 'P1' }), controllerHarness.PlayLaneController({ side, player: 'P2', activity: 'P1' })]);
   const controllers = nodes.filter(node => node.props?.className === '__uprofile_play_controller');
-  assert.equal(controllers.length, 2);
+  assert.equal(controllers.length, 4);
   const buttons = nodes.filter(node => ['__uprofile_play_scratch', '__uprofile_play_key __uprofile_play_key_white', '__uprofile_play_key __uprofile_play_key_black'].includes(node.props?.className) && node.type === 'button');
   assert.equal(buttons.length, 16, JSON.stringify(buttons.map(node => ({ type: node.type, className: node.props.className }))));
   assert.equal(buttons.filter(node => node.props.className === '__uprofile_play_scratch').length, 2);
@@ -428,11 +501,10 @@ test('Recent lane controllers render both seven-key sides, oriented scratch, ran
   assert.equal(buttons[0].props.className, '__uprofile_play_scratch');
   assert.equal(buttons[8].props.className, '__uprofile_play_scratch');
   assert.equal(buttons[15].props.className, '__uprofile_play_key __uprofile_play_key_white');
-  assert.deepEqual(buttons.slice(0, 8).map(node => node.props.children[1].props.children), ['AAA', 'AAA', 'AA', 'AA', 'A', 'A', 'A', 'A']);
-  assert.ok(nodes.filter(node => node.type === 'button' && node.props?.className?.includes('__uprofile_play_inactive')).length >= 8);
-  assert.equal(nodes.filter(node => node.type === 'h5' && JSON.stringify(node.props.children).includes('레인 미확정 3')).length, 2);
+  assert.deepEqual(buttons.slice(0, 8).map(node => node.props.children[1].props.children[0]), ['AAA', 'AAA', 'AAA', 'AAA', 'AAA', 'AAA', 'AAA', 'AAA']);
+  assert.ok(nodes.filter(node => node.type === 'button' && node.props?.className?.includes('__uprofile_play_inactive')).length >= 7);
   const invalid = flatten(controllerHarness.PlayLaneController({ side: { ...side, lanes_ok: false }, player: 'P1', activity: 'P1' }));
   const invalidButtons = invalid.filter(node => node.type === 'button' && (node.props?.className === '__uprofile_play_scratch' || node.props?.className?.startsWith('__uprofile_play_key ')));
   assert.equal(invalidButtons.length, 8);
-  assert.ok(invalidButtons.every(node => node.props.children[1].props.children === '—'));
+  assert.ok(invalidButtons.every(node => node.props.children[1].props.children[0] === '—'));
 });

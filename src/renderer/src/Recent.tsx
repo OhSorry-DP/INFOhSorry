@@ -359,54 +359,68 @@ function laneEvaluation(side: SideDetail | null | undefined): { notes: number; e
   return { notes, ex, rank, rate: `${(ratio * 100).toFixed(2)}%` };
 }
 
-function PlayLaneController({ side, player, activity }: { side: SideDetail | null | undefined; player: 'P1' | 'P2'; activity: 'P1' | 'P2' | 'BOTH' | null }): JSX.Element {
+function laneKeyEvaluation(side: SideDetail | null | undefined, index: number): { notes: number; ex: number; rank: string; rate: string } | null {
+  const lane = side?.lanes?.[index];
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  if (!side?.lanes_ok || !Array.isArray(lane) || lane.length !== 6 || lane.some((value) => !valid(value))) return null;
+  const notes = lane.slice(0, 5).reduce((sum, value) => sum + value, 0);
+  if (notes === 0) return { notes, ex: 0, rank: '—', rate: '—' };
+  const ex = lane[0] * 2 + lane[1];
+  const rank = ex === 0 ? 'F' : djLevelFromScore(ex, notes) || '—';
+  return { notes, ex, rank, rate: `${(ex / (notes * 2) * 100).toFixed(2)}%` };
+}
+
+function PlayLaneController({ side, player, activity, accountKey }: { side: SideDetail | null | undefined; player: 'P1' | 'P2'; activity: 'P1' | 'P2' | 'BOTH' | null; accountKey?: string | null }): JSX.Element {
   const [openKey, setOpenKey] = useState<number | 'scratch' | null>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
   const trigger = useMemo(() => ({ current: null as HTMLButtonElement | null }), []);
   useEffect(() => {
     if (openKey == null) return;
     const close = () => setOpenKey(null);
+    const outside = (event: PointerEvent) => { const target = event.target as Element | null; if (target && !target.closest('.__uprofile_play_controller') && !target.closest('.__uprofile_play_keydetail')) close(); };
     const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setOpenKey(null); trigger.current?.focus(); } };
     document.addEventListener('keydown', escape);
+    document.addEventListener('pointerdown', outside);
     window.addEventListener('scroll', close, true);
     window.addEventListener('resize', close);
-    return () => { document.removeEventListener('keydown', escape); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+    return () => { document.removeEventListener('keydown', escape); document.removeEventListener('pointerdown', outside); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
   }, [openKey, trigger]);
-  const evaluation = laneEvaluation(side);
+  useEffect(() => { setOpenKey(null); }, [accountKey]);
   const inactive = activity != null && activity !== 'BOTH' && activity !== player;
   const key = (number: number | 'scratch', className: string, label: string) => {
     const index = laneCounterIndex(number);
     const id = `play-key-detail-${player}-${number}`;
-    const open = (button: HTMLButtonElement) => { trigger.current = button; const r = button.getBoundingClientRect(); setPosition({ top: r.bottom, left: r.left }); setOpenKey(number); };
-    return <button type="button" key={String(number)} className={`${className}${inactive ? ' __uprofile_play_inactive' : ''}`} aria-label={`${player === 'P1' ? '1P' : '2P'} ${label === 'SCRATCH' ? '스크래치' : `건반 ${label}`}`} aria-expanded={openKey === number} aria-controls={openKey === number ? id : undefined} onMouseEnter={(event) => open(event.currentTarget)} onFocus={(event) => open(event.currentTarget)} onClick={(event) => { if (openKey === number) setOpenKey(null); else open(event.currentTarget); }}><span>{label}</span><span className="__uprofile_play_rank">{evaluation && index >= 0 ? evaluation.rank : '—'}</span></button>;
+    const open = (button: HTMLButtonElement) => { trigger.current = button; const r = button.getBoundingClientRect(); const height = Math.min(360, window.innerHeight - 16); const top = r.bottom + height > window.innerHeight - 8 ? Math.max(8, r.top - height) : r.bottom; setPosition({ top, left: Math.max(8, Math.min(r.left, window.innerWidth - 320)) }); setOpenKey(number); };
+    const evaluation = index >= 0 ? laneKeyEvaluation(side, index) : null;
+    return <button type="button" key={String(number)} className={`${className}${inactive ? ' __uprofile_play_inactive' : ''}`} aria-label={`${player === 'P1' ? '1P' : '2P'} ${label === 'SCRATCH' ? '스크래치' : `건반 ${label}`}`} aria-expanded={openKey === number} aria-describedby={openKey === number ? id : undefined} onMouseEnter={(event) => open(event.currentTarget)} onFocus={(event) => open(event.currentTarget)} onClick={(event) => { if (openKey === number) setOpenKey(null); else open(event.currentTarget); }}><span>{label}</span><span className="__uprofile_play_rank">{evaluation?.rank ?? '—'}</span></button>;
   };
   const keys = Array.from({ length: 7 }, (_, index) => index + 1);
   return <><div className="__uprofile_play_controller" data-player={player} onMouseLeave={(event) => { if (!event.currentTarget.parentElement?.querySelector('.__uprofile_play_keydetail')?.contains(event.relatedTarget as Node)) setOpenKey(null); }}>
     {player === 'P1' && key('scratch', '__uprofile_play_scratch', 'SCRATCH')}
     {keys.map((number) => key(number, `__uprofile_play_key ${number % 2 === 1 ? '__uprofile_play_key_white' : '__uprofile_play_key_black'}`, String(number)))}
     {player === 'P2' && key('scratch', '__uprofile_play_scratch', 'SCRATCH')}
-  </div>{openKey != null && position && createPortal(<div id={`play-key-detail-${player}-${openKey}`} onMouseLeave={() => setOpenKey(null)} style={{ position: 'fixed', zIndex: 10000, top: Math.min(position.top, window.innerHeight - 80), left: Math.max(8, Math.min(position.left, window.innerWidth - 320)), maxWidth: 'calc(100vw - 16px)', maxHeight: 'calc(100vh - 16px)', overflow: 'auto' }}><PlayLaneDetail side={side} /></div>, document.body)}</>;
+  </div>{openKey != null && position && createPortal(<div id={`play-key-detail-${player}-${openKey}`} onMouseEnter={() => {}} onMouseLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpenKey(null); }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpenKey(null); }} style={{ position: 'fixed', zIndex: 10000, top: position.top, left: position.left, width: 'min(560px, calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(52vh, 360px)', overflow: 'auto' }}><PlayLaneDetail side={side} index={laneCounterIndex(openKey)} /></div>, document.body)}</>;
 }
 
-function PlayLaneDetail({ side }: { side: SideDetail | null | undefined }): JSX.Element {
+function PlayLaneDetail({ side, index }: { side: SideDetail | null | undefined; index: number }): JSX.Element {
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-  const evaluation = laneEvaluation(side);
+  const evaluation = laneKeyEvaluation(side, index);
   const names = ['PG', 'GR', 'GD', 'BD', 'PR', '空PR', 'F-GR', 'F-GD', 'S-GR', 'S-GD'];
   return <div className="__uprofile_play_keydetail">
-    {Array.from({ length: 8 }, (_, lane) => <div key={lane} className="__uprofile_play_keydetail_row">
-      <span>{lane === 7 ? 'S' : lane + 1}</span>
+    <div className="__uprofile_play_keydetail_row">
+      <span>{index === 7 ? 'SCRATCH' : index + 1}</span>
       {names.map((name, column) => {
-        const value = column < 6 ? side?.lanes?.[lane]?.[column] : side?.lane_fs?.[lane]?.[column - 6];
+        const value = column < 6 ? side?.lanes?.[index]?.[column] : side?.lane_fs?.[index]?.[column - 6];
         const shown = column >= 6 && side?.lane_fs == null ? '—' : valid(value) ? String(value) : '—';
         return <span key={name}>{name} <b>{shown}</b></span>;
       })}
       <span>RANK <b>{evaluation?.rank ?? '—'}</b></span><span>EX% <b>{evaluation?.rate ?? '—'}</b></span>
-    </div>)}
+    </div>
     {side?.lanes_ok === false && <small>레인 검증 불일치</small>}
   </div>;
 }
 
-function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, chartCode: string): JSX.Element {
+function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, chartCode: string, accountKey?: string | null): JSX.Element {
   if (!detail) return <div className="__uprofile_play_sections"><div className="__uprofile_play_head">{level ?? '—'} · {play.title || '—'} · {chartCode} · {playOptionInfo(play)}</div><section className="__uprofile_play_score"><h4>스코어 정보</h4><div>CLEAR TYPE <b>{play.clear_lamp || '—'}</b></div><div>SCORE <b>{play.ex_score === '' ? '—' : play.ex_score} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rank} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rate} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).next}</b></div><div>MISS COUNT <b>{play.miss_count || '—'}</b></div></section><section className="__uprofile_playdetail_judge __uprofile_play_inactive"><h4>판정 상세</h4><p>상세 기록 없음</p></section><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{(['P1', 'P2'] as const).map((side) => <div key={side}>PLAYER{side === 'P1' ? '1' : '2'} LANE <b>{displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play)}</b></div>)}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4>{(['P1', 'P2'] as const).map((side) => <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'} · 레인 미확정 —</h5><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} /></div>)}</section></div>;
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
@@ -444,7 +458,7 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
     <section className="__uprofile_play_score"><h4>스코어 정보</h4><div>CLEAR TYPE <b>{lamp}</b></div><div>SCORE <b>{play.ex_score === '' ? '—' : play.ex_score} · {score.rank} · {score.rate} · {score.next}</b></div><div>MISS COUNT <b>{play.miss_count || '—'}</b></div></section>
     <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><h4>판정 상세</h4><div className="__uprofile_playdetail_summary">{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div><small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small></section>
     <section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{(['P1', 'P2'] as const).map((side) => <div key={side}>PLAYER{side === 'P1' ? '1' : '2'} LANE <b>{displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play)}</b></div>)}</section>
-    <section className="__uprofile_play_rating"><h4>레인별 평가</h4>{(['P1', 'P2'] as const).map((side) => { const sideDetail = detail[side === 'P1' ? 'p1' : 'p2']; const count = valid(sideDetail?.lane_fs_unresolved) ? String(sideDetail.lane_fs_unresolved) : '—'; return <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'} · 레인 미확정 {count}</h5><PlayLaneController side={sideDetail} player={side} activity={playSideActivity(play)} /></div>; })}</section>
+    <section className="__uprofile_play_rating"><h4>레인별 평가</h4>{(['P1', 'P2'] as const).map((side) => { const sideDetail = detail[side === 'P1' ? 'p1' : 'p2']; const count = valid(sideDetail?.lane_fs_unresolved) ? String(sideDetail.lane_fs_unresolved) : '—'; return <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'} · 레인 미확정 {count}</h5><PlayLaneController side={sideDetail} player={side} activity={playSideActivity(play)} accountKey={accountKey} /></div>; })}</section>
   </div>;
 }
 
@@ -490,7 +504,7 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
               <span>{playChartLevel(play, [], textage) ?? '—'} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rank} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rate} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).next}</span>
               <span className="__uprofile_recentplays_chev">›</span>
             </summary>
-            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), play.difficulty || '—')}
+            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), play.difficulty || '—', normalizedId)}
           </details>
         ))}
       </div>
