@@ -1,4 +1,4 @@
-import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, PLAY_CSV_SPEED_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
+import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, PLAY_CSV_SPEED_KEYS, PLAY_CSV_LANE_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
 // Supabase 새 디비 (users + scores) upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
 // ohSorry / INFOhSorry 가 같은 DB 공유 (iidx_id text PK 라 namespace 호환).
 //
@@ -1299,13 +1299,18 @@ export function parsePlayHistoryDetailed(csv: string): PlayHistoryParse {
   const legacyHeader = !!header && header.length === PLAY_CSV_LEGACY_KEYS.length && PLAY_CSV_LEGACY_KEYS.every((key, i) => header[i] === key);
   const currentHeader = !!header && header.length === PLAY_CSV_KEYS.length && PLAY_CSV_KEYS.every((key, i) => header[i] === key);
   const speedHeader = !!header && header.length === PLAY_CSV_SPEED_KEYS.length && PLAY_CSV_SPEED_KEYS.every((key, i) => header[i] === key);
-  if (!legacyHeader && !currentHeader && !speedHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
+  const laneHeader = !!header && header.length === PLAY_CSV_LANE_KEYS.length && PLAY_CSV_LANE_KEYS.every((key, i) => header[i] === key);
+  if (!legacyHeader && !currentHeader && !speedHeader && !laneHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
   const valid: PlayCsvRow[] = [];
   let lastCompleteError: { columns: number } | null = null;
   for (const row of records) {
-    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length && row.length !== PLAY_CSV_SPEED_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
+    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length && row.length !== PLAY_CSV_SPEED_KEYS.length && row.length !== PLAY_CSV_LANE_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
     const mapped = Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i] ?? ''])) as unknown as PlayCsvRow;
-    if (row.length === PLAY_CSV_SPEED_KEYS.length) mapped.play_speed = row[21];
+    if (row.length === PLAY_CSV_SPEED_KEYS.length || row.length === PLAY_CSV_LANE_KEYS.length) mapped.play_speed = row[21];
+    if (row.length === PLAY_CSV_LANE_KEYS.length) {
+      mapped.lane_order_p1 = row[22];
+      mapped.lane_order_p2 = row[23];
+    }
     valid.push(mapped);
     lastCompleteError = null;
   }

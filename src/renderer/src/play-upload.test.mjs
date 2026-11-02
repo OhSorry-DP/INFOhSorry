@@ -251,6 +251,51 @@ test('전송 순간 재확인: serviceStatus 대기 중 게임이 종료되어�
     plays: [row(0)], gameRecognized: async () => recognized })).ok, true);
   assert.equal(body, undefined);
 });
+test('19/21/22/24 headers and mixed complete rows preserve only fields present in each row', () => {
+  const api = sync();
+  const base = row(1); base.title = 'plain';
+  const rowsByLength = [19, 21, 22, 24].map((length, i) => {
+    const value = { ...base, timestamp: String(i + 1), play_speed: '1.00', lane_order_p1: 'P1 lanes', lane_order_p2: '' };
+    return Array.from({ length }, (_, j) => shared.PLAY_CSV_LANE_KEYS[j]).map(key => value[key] ?? '');
+  });
+  const header = shared.PLAY_CSV_LANE_KEYS.join(',');
+  const mixed = api.parsePlayHistoryDetailed(`${header}\n${rowsByLength.map(values => values.join(',')).join('\n')}\n`);
+  assert.equal(mixed.errorCode, undefined);
+  assert.deepEqual(plain(mixed.rows.map(x => x.timestamp)), ['1', '2', '3', '4']);
+  for (const i of [0, 1]) assert.equal(Object.hasOwn(mixed.rows[i], 'play_speed'), false);
+  assert.deepEqual([mixed.rows[2].play_speed, mixed.rows[2].lane_order_p1, mixed.rows[2].lane_order_p2], ['1.00', undefined, undefined]);
+  assert.deepEqual([mixed.rows[3].play_speed, mixed.rows[3].lane_order_p1, mixed.rows[3].lane_order_p2], ['1.00', 'P1 lanes', '']);
+  const laneHeaders = [shared.PLAY_CSV_LEGACY_KEYS, shared.PLAY_CSV_KEYS, shared.PLAY_CSV_SPEED_KEYS, shared.PLAY_CSV_LANE_KEYS];
+  for (const keysForHeader of laneHeaders) assert.equal(api.parsePlayHistoryDetailed(`${keysForHeader.join(',')}\n`).errorCode, undefined);
+  const twentyThree = rowsByLength[3].slice(0, 23);
+  const invalid = api.parsePlayHistoryDetailed(`${header}\n${rowsByLength[0].join(',')}\n${twentyThree.join(',')}\n${rowsByLength[3].join(',')}\n`);
+  assert.deepEqual(plain(invalid.lastCompleteError), null);
+  assert.equal(invalid.rows.length, 2);
+  const finalInvalid = api.parsePlayHistoryDetailed(`${header}\n${rowsByLength[3].join(',')}\n${twentyThree.join(',')}\n`);
+  assert.deepEqual(plain(finalInvalid.lastCompleteError), { columns: 23 });
+});
+test('mixed CSV tokenizer keeps quoted commas and newlines, ignores unfinished tail, and attaches details across latest 100 rows', () => {
+  const api = sync();
+  const header = shared.PLAY_CSV_LANE_KEYS.join(',');
+  const detail = { v: 1, timestamp: '100', complete: false, samples: 1, dt_ms: 16, p1: {}, p2: {} };
+  const rows = Array.from({ length: 101 }, (_, i) => {
+    const length = i === 100 ? 24 : [19, 21, 22, 24][i % 4];
+    const value = { ...row(i), timestamp: String(i), title: i === 100 ? 'comma, and "quote"\nnext line' : `song ${i}`, play_speed: '1.00', lane_order_p1: '1234567', lane_order_p2: '' };
+    return Array.from({ length }, (_, j) => shared.PLAY_CSV_LANE_KEYS[j]).map(key => `"${String(value[key] ?? '').replaceAll('"', '""')}"`).join(',');
+  });
+  const invalid23 = Array.from({ length: 23 }, (_, i) => `bad${i}`).join(',');
+  const input = `${header}\n${rows.join('\n')}\n${invalid23}\n"unfinished`;
+  const parsed = api.parsePlayHistoryDetailed(input);
+  assert.equal(parsed.rows.length, 101);
+  assert.deepEqual(plain(parsed.lastCompleteError), { columns: 23 });
+  assert.equal(parsed.rows[100].title, 'comma, and "quote"\nnext line');
+  assert.deepEqual([parsed.rows[100].play_speed, parsed.rows[100].lane_order_p1, parsed.rows[100].lane_order_p2], ['1.00', '1234567', '']);
+  const upload = api.buildUploadPlays({ ok: true, csv: input, details: [detail] });
+  assert.equal(upload.length, 100);
+  assert.equal(upload[0].timestamp, '1'); assert.equal(upload.at(-1).timestamp, '100');
+  assert.equal(upload.at(-1).title, 'comma, and "quote"\nnext line');
+  assert.deepEqual(upload.at(-1).detail, detail);
+});
 test('옛 19·21열 DBR은 허용하고 plays에 속도를 합성하지 않음', async () => {
   const api = sync({ AbortController, setTimeout, clearTimeout }); const base = actualRows()[0];
   const old19 = { ...base, ...Object.fromEntries(shared.PLAY_CSV_LEGACY_KEYS.map(k => [k, base[k]])) };
