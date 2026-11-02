@@ -358,9 +358,9 @@ function laneEvaluation(side: SideDetail | null | undefined): { notes: number; e
   return { notes, ex, rank, rate: `${(ratio * 100).toFixed(2)}%` };
 }
 
-function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | null {
+function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, chartCode: string): JSX.Element {
+  if (!detail) return <div className="__uprofile_play_sections"><div className="__uprofile_play_head">{level ?? '—'} · {play.title || '—'} · {chartCode} · {playOptionInfo(play)}</div><section className="__uprofile_play_score"><h4>스코어 정보</h4><div>CLEAR TYPE <b>{play.clear_lamp || '—'}</b></div><div>SCORE <b>{play.ex_score === '' ? '—' : play.ex_score} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rank} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rate} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).next}</b></div><div>MISS COUNT <b>{play.miss_count || '—'}</b></div></section><section className="__uprofile_playdetail_judge __uprofile_play_inactive"><h4>판정 상세</h4><p>상세 기록 없음</p></section><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{(['P1', 'P2'] as const).map((side) => <div key={side}>PLAYER{side === 'P1' ? '1' : '2'} LANE <b>{displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play)}</b></div>)}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div>PLAYER1 LANE —</div><div>PLAYER2 LANE —</div></section></div>;
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
-  if (!sides.length) return null;
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const aggregate = (index: number) => {
     const values = sides.flatMap(([, side]) => side.lanes?.map((lane) => lane?.[index]));
@@ -375,7 +375,7 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
   const total = scoreValues.every(valid) ? scoreValues.reduce<number>((sum, value) => sum + (valid(value) ? value : 0), 0) : null;
   const evaluations = sides.map(([label, side]) => [label, laneEvaluation(side)] as const);
   const cbParts = (play.judge_16 || '').trim().split(/\s+/);
-  const cb = cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
+  const cb = sides.length > 0 && cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
     ? sides.reduce((sum, [label]) => sum + Number(cbParts[label === 'P1' ? 10 : 11]), 0) : null;
   const lampRaw = play.clear_lamp;
   const lampNum = lampRaw == null || lampRaw.trim() === '' ? null : Number(lampRaw);
@@ -390,12 +390,13 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
   rows.push({ kind: 'sep', name: '', value: null });
   add('k-bad', 'BAD', values[3]); add('k-poor', 'POOR', values[4]); add('k-empty', '空POOR', values[5], undefined, false); add('k-cb', 'COMBO BREAK', cb, undefined, false, false);
   const percent = (value: number | null) => total != null && total > 0 && valid(value) ? `${Math.round(value / total * 100)}%` : '—';
-  return <div className="__uprofile_playdetail_judge">
-    <div className="__uprofile_playdetail_summary">{[['램프', lamp], ['EX', play.ex_score], ['DJ RATE', play.dj_rate_pct ? `${play.dj_rate_pct}%${play.dj_rank ? ` ${play.dj_rank}` : ''}` : '—'], ['미스', play.miss_count], ['콤보 브레이크', fmt(cb)], ['옵션', playOptionInfo(play)], ['P1 레인 순서', displayLaneOrder(play.lane_order_p1, 'P1', play)], ['P2 레인 순서', displayLaneOrder(play.lane_order_p2, 'P2', play)]].map(([label, value]) => <span key={label}>{label} <b>{value || '—'}</b></span>)}{evaluations.map(([label, evaluation]) => <span key={`${label}-lane-eval`}>{label} notes / EX / DJ <b>{evaluation ? `${evaluation.notes} / ${evaluation.ex} / ${evaluation.rank} ${evaluation.rate}` : '—'}</b></span>)}{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}{sides.some(([, side]) => side.lanes_ok === false) && <span className="__uprofile_playdetail_badge">레인 검증 불일치</span>}</div>
-    <div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>
-    <small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small>
-    <label className="__uprofile_playdetail_toggle"><input type="checkbox" onChange={(event) => { const lanes = event.currentTarget.closest('.__uprofile_playdetail_judge')?.querySelector('.__uprofile_playdetail_lanes'); if (lanes) (lanes as HTMLElement).hidden = !event.currentTarget.checked; }} />레인별 판정 보기</label>
-    <div className="__uprofile_playdetail_lanes">{sides.map(([label, side]) => <section key={label}><h4>{label} · 레인 미확정 {fmt(side.lane_fs_unresolved)}</h4><div className="__uprofile_playdetail_tablebox"><table className="__uprofile_playdetail_lanetable"><thead><tr>{['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name, index) => <th key={name} className={index === 7 ? 'g-fs' : undefined}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane === 7 ? 'S' : laneCounterIndex(lane + 1)}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{fmt(side.lanes?.[lane]?.[col])}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`} className={col === 0 ? 'g-fs' : undefined}>{side.lane_fs == null ? '—' : fmt(side.lane_fs[lane]?.[col])}</td>)}</tr>)}</tbody></table></div></section>)}</div>
+  const score = playScoreInfo(Number(play.ex_score), Number(play.notes));
+  return <div className="__uprofile_play_sections">
+    <div className="__uprofile_play_head">{level ?? '—'} · {play.title || '—'} · {chartCode} · {playOptionInfo(play)}</div>
+    <section className="__uprofile_play_score"><h4>스코어 정보</h4><div>CLEAR TYPE <b>{lamp}</b></div><div>SCORE <b>{play.ex_score === '' ? '—' : play.ex_score} · {score.rank} · {score.rate} · {score.next}</b></div><div>MISS COUNT <b>{play.miss_count || '—'}</b></div></section>
+    <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><h4>판정 상세</h4><div className="__uprofile_playdetail_summary">{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}{sides.some(([, side]) => side.lanes_ok === false) && <span className="__uprofile_playdetail_badge">레인 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div><small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small><label className="__uprofile_playdetail_toggle"><input type="checkbox" onChange={(event) => { const lanes = event.currentTarget.closest('.__uprofile_playdetail_judge')?.querySelector('.__uprofile_playdetail_lanes'); if (lanes) (lanes as HTMLElement).hidden = !event.currentTarget.checked; }} />레인별 판정 보기</label><div className="__uprofile_playdetail_lanes">{sides.map(([label, side]) => <section key={label}><h4>{label} · 레인 미확정 {fmt(side.lane_fs_unresolved)}</h4><div className="__uprofile_playdetail_tablebox"><table className="__uprofile_playdetail_lanetable"><thead><tr>{['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name, index) => <th key={name} className={index === 7 ? 'g-fs' : undefined}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane === 7 ? 'S' : laneCounterIndex(lane + 1)}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{fmt(side.lanes?.[lane]?.[col])}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`} className={col === 0 ? 'g-fs' : undefined}>{side.lane_fs == null ? '—' : fmt(side.lane_fs[lane]?.[col])}</td>)}</tr>)}</tbody></table></div></section>)}</div></section>
+    <section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{(['P1', 'P2'] as const).map((side) => <div key={side}>PLAYER{side === 'P1' ? '1' : '2'} LANE <b>{displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play)}</b></div>)}</section>
+    <section className="__uprofile_play_rating"><h4>레인별 평가</h4>{(['P1', 'P2'] as const).map((side) => { const evaluation = evaluations.find(([label]) => label === side)?.[1]; return <div key={side}>PLAYER{side === 'P1' ? '1' : '2'} LANE <b>{evaluation ? `${evaluation.notes} / ${evaluation.ex} / ${evaluation.rank} ${evaluation.rate}` : '—'}</b></div>; })}</section>
   </div>;
 }
 
@@ -432,17 +433,17 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
             기록 오류 (코드 {play.song_id})
           </div>
         ) : (
-          play.detail != null ? <details className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
+          <details className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
             <summary className="__uprofile_recentplays_row">
               <span>{recentPlayTime(play.timestamp)}</span>
               <span title={play.title}>{play.title || '—'}</span>
               <span>{play.difficulty || '—'}</span>
-              <span>{play.ex_score || '—'}</span>
-              {(() => { const info = playScoreInfo(Number(play.ex_score), Number(play.notes)); return <span>{playChartLevel(play, [], textage) ?? '—'} · {info.rank} · {info.rate} · {info.next}</span>; })()}
+              <span>{play.ex_score === '' ? '—' : play.ex_score}</span>
+              <span>{playChartLevel(play, [], textage) ?? '—'} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rank} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rate} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).next}</span>
               <span className="__uprofile_recentplays_chev">›</span>
             </summary>
-            {renderPlayDetail(play.detail, play)}
-          </details> : <div className="__uprofile_recentplays_item __uprofile_recentplays_plain" key={`${play.timestamp}-${index}`}><div className="__uprofile_recentplays_row"><span>{recentPlayTime(play.timestamp)}</span><span title={play.title}>{play.title || '—'}</span><span>{play.difficulty || '—'}</span><span>{play.ex_score || '—'}</span><span>—</span></div></div>
+            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), play.difficulty || '—')}
+          </details>
         ))}
       </div>
     )}

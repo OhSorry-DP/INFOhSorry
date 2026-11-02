@@ -201,15 +201,15 @@ test('RecentPlays display reverses chronological rows and formats KST timestamps
   assert.match(recentPlaysSource, /\[\.\.\.recentPlays\]\.reverse\(\)/);
 });
 
-test('RecentPlays preserves repeated songs and four-column row format', () => {
+test('RecentPlays preserves repeated songs and opens all normal rows', () => {
   const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('{[...recentPlays].reverse().map('));
   assert.match(snippet, /map\(\(play, index\)/);
   assert.match(snippet, /key=\{`\$\{play\.timestamp\}-\$\{index\}`\}/);
   assert.match(snippet, /play\.title/);
   assert.match(snippet, /play\.difficulty/);
   assert.match(snippet, /play\.ex_score/);
-  assert.match(snippet, /play\.detail != null \?/);
-  assert.match(snippet, /renderPlayDetail\(play\.detail, play\)/);
+  assert.match(snippet, /<details className="__uprofile_recentplays_item"/);
+  assert.match(snippet, /renderPlayDetail\(play\.detail, play,/);
   assert.match(recentCss, /\.\_\_uprofile_recentplays_row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
 });
 
@@ -235,10 +235,14 @@ test('Recent distinguishes empty history from read failure and keeps chart list 
   assert.match(recentSource, /sortRows\(computeTodayCharts\(rows, latestIdx\)\)/);
 });
 
-test('RecentPlays renders play detail only when detail exists and is non-null', () => {
-  assert.match(recentPlaysSource, /play\.detail != null \?/);
-  assert.match(recentPlaysSource, /renderPlayDetail\(play\.detail, play\)/);
-  assert.match(recentSource, /function renderPlayDetail\(detail: PlayDetail, play: PlayCsvRow\)/);
+test('RecentPlays renders missing detail and one-column section structure', () => {
+  assert.match(recentPlaysSource, /renderPlayDetail\(play\.detail, play,/);
+  assert.match(recentSource, /function renderPlayDetail\(detail: PlayDetail \| null \| undefined/);
+  for (const heading of ['스코어 정보', '판정 상세', '랜덤 레인 패턴', '레인별 평가']) assert.ok(recentDetail.includes(heading));
+  for (const className of ['__uprofile_play_sections', '__uprofile_play_head', '__uprofile_play_score', '__uprofile_play_pattern', '__uprofile_play_rating', '__uprofile_play_tiles', '__uprofile_play_inactive']) assert.ok(recentSource.includes(className));
+  assert.match(recentDetail, /if \(!detail\) return/);
+  assert.match(recentDetail, /SCORE <b>\{play\.ex_score === '' \? '—' : play\.ex_score\}/);
+  assert.doesNotMatch(recentDetail, /play\.detail \? 0|detail \? 0/);
 });
 
 test('Recent detail aggregation, badges, and lane table use current DOM', () => {
@@ -274,22 +278,26 @@ test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and hidden la
 
 });
 
-test('Recent detail summary shows both visible sides combo break total', () => {
+test('Recent detail shows combined combo break once for both visible sides', () => {
   const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
   const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
   const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33' }));
-  const summary = nodes.find(node => node.props?.className === '__uprofile_playdetail_summary' || node.props?.className?.includes('__uprofile_playdetail_summary'));
-  assert.ok(summary);
-  assert.ok(JSON.stringify(summary.props.children).includes('7'));
+  const comboBreak = nodes.find(node => node.props?.className?.endsWith('k-cb'));
+  assert.ok(comboBreak);
+  assert.ok(JSON.stringify(comboBreak.props.children).includes('7'));
+  const summary = nodes.find(node => node.props?.className?.includes('__uprofile_playdetail_summary'));
+  assert.doesNotMatch(JSON.stringify(summary?.props.children), /COMBO BREAK/);
 });
 
-test('Recent detail summary shows only P1 combo break total for hidden P2', () => {
+test('Recent detail shows only P1 combo break for hidden P2', () => {
   const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
   const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
   const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33', difficulty: 'SPN' }));
-  const summary = nodes.find(node => node.props?.className === '__uprofile_playdetail_summary' || node.props?.className?.includes('__uprofile_playdetail_summary'));
-  assert.ok(summary);
-  assert.ok(JSON.stringify(summary.props.children).includes('3'));
+  const comboBreak = nodes.find(node => node.props?.className?.endsWith('k-cb'));
+  assert.ok(comboBreak);
+  assert.ok(JSON.stringify(comboBreak.props.children).includes('3'));
+  const summary = nodes.find(node => node.props?.className?.includes('__uprofile_playdetail_summary'));
+  assert.doesNotMatch(JSON.stringify(summary?.props.children), /COMBO BREAK/);
 });
 
 test('Recent detail without FS produces GREAT PG GOOD rows and no rating for empty POOR or CB', () => {
