@@ -22,13 +22,13 @@ function fixture() {
   const timers = new Map();
   const s = { pid: 1, id: 'A123456789012', marker: true, playing: true, song: 1,
     mtimeMs: 1, size: 10, missing: false, invalid: false, racing: false, fail: '', memoryFail: false,
-    rows: [], details: [], logs: [], closed: [], appends: 0, scans: 0, stats: 0, versions: 0, addresses: [] };
+    rows: [], details: [], logs: [], closed: [], appends: 0, scans: 0, stats: 0, versions: 0, addresses: [], laneFailP1: false, laneFailP2: false, laneP1: [0,1,2,3,4,5,6], laneP2: [6,5,4,3,2,1,0], header: '', headerWritten: false };
   const fs = {
     statSync() { s.stats++; if (s.missing) throw Error('missing'); return { mtimeMs: s.mtimeMs, size: s.size }; },
-    readFileSync() { if (s.racing) s.mtimeMs++; return s.invalid ? '' : ['judgeData','playSettings','playData','songList'].map((k,i) => `${k}=0x${(0x140001000n + BigInt(i * 4096)).toString(16)}`).join('\n'); },
+    readFileSync(file) { if (String(file).endsWith('plays.csv')) return s.header; if (s.racing) s.mtimeMs++; return s.invalid ? '' : ['judgeData','playSettings','playData','songList'].map((k,i) => `${k}=0x${(0x140001000n + BigInt(i * 4096)).toString(16)}`).join('\n'); },
     existsSync: () => false,
     mkdirSync() { if (s.fail === 'mkdir') throw Error('mkdir'); },
-    writeFileSync() { if (s.fail === 'header') throw Error('header'); },
+    writeFileSync(file, text) { if (s.fail === 'header') throw Error('header'); s.header = text; },
     appendFileSync(file, row) { if (String(file).endsWith('plays_detail.jsonl')) { s.details.push(row); return; } if (s.fail === 'append') throw Error('append'); s.rows.push(row); },
   };
   const memory = {
@@ -37,6 +37,8 @@ function fixture() {
     readBytes(h, address, size) {
       if (size !== 192) s.addresses.push(address); // 192B = 플레이 상세 레인 블록 (playDetail.test 와 아래 상세 테스트에서 따로 본다)
       const b = Buffer.alloc(size);
+      if (address === 0x1400047ccn) { if (s.laneFailP1) throw Error('p1 lane read'); s.laneP1.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
+      if (address === 0x1400047ecn) { if (s.laneFailP2) throw Error('p2 lane read'); s.laneP2.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
       if (size === 96) {
         s.scans++;
         if (s.marker) for (const i of [0,8,16]) b.writeInt32LE(20000,i);
@@ -72,6 +74,35 @@ function fixture() {
   function result() { s.playing = false; advance(now + 500); advance(now + 1500); }
   return { s, advance, result, stop, errors, timers, setNow: value => { now = value; } };
 }
+
+test('lane order is read independently and invalid sides become empty', () => {
+  for (const configure of [
+    s => {},
+    s => { s.laneFailP1 = true; },
+    s => { s.laneP1 = [0,0,2,3,4,5,6]; },
+    s => { s.laneP2 = [0,1,2,3,4,5,7]; },
+    s => { s.laneP2 = [-1,1,2,3,4,5,6]; },
+  ]) {
+    const f=fixture(); configure(f.s); f.advance(2000); f.result();
+    assert.equal(fields(f.s.rows[0]).length, 24);
+    const lane = fields(f.s.rows[0]).slice(-2);
+    if (!f.s.laneFailP1 && f.s.laneP1.join('') === '0123456') assert.equal(lane[0], '0123456');
+    else assert.equal(lane[0], '');
+    if (f.s.laneP2.join('') === '6543210') assert.equal(lane[1], '6543210');
+    else assert.equal(lane[1], '');
+    f.stop();
+  }
+});
+
+test('only recognized 19, 21, and 22 column headers are upgraded while old data is preserved', () => {
+  const old19 = 'timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source';
+  for (const old of [old19, play.PLAY_LOG_HEADER_V2, play.PLAY_LOG_HEADER_V3]) {
+    const f=fixture(); f.s.header = `${old}\r\nlegacy,data\n`; f.advance(2000); f.result();
+    assert.ok(f.s.header.startsWith(`${play.PLAY_LOG_HEADER}\r\nlegacy,data\n`)); f.stop();
+  }
+  const f=fixture(); f.s.header = `unknown\r\nlegacy,data\n`; f.advance(2000); f.result();
+  assert.equal(f.s.header, 'unknown\r\nlegacy,data\n'); f.stop();
+});
 const fields = row => row.trim().split(',').map(x => x.replace(/^"|"$/g,''));
 
 test('정상 500ms tick과 결과 전환 1500ms 저장 유지', () => {
@@ -79,7 +110,7 @@ test('정상 500ms tick과 결과 전환 1500ms 저장 유지', () => {
   f.advance(2000); f.s.playing = false; f.advance(2499); assert.equal(f.s.rows.length,0);
   f.advance(2500); f.advance(3999); assert.equal(f.s.rows.length,0);
   f.advance(4000); assert.equal(f.s.rows.length,1); assert.equal(f.s.appends,1);
-  assert.deepEqual(fields(f.s.rows[0]).slice(-3),['app','real-game','1.00']); // app_version, game_version, play_speed
+  assert.deepEqual(fields(f.s.rows[0]).slice(-5),['app','real-game','1.00','','']); // versions, play_speed, lane orders
   assert.equal(f.s.versions,1); f.stop();
 });
 

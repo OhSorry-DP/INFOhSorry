@@ -10,6 +10,7 @@ import { closeHandle, findInfinitas, readBytes, type InfinitasHandle } from './m
 import {
   PLAY_LOG_HEADER,
   PLAY_LOG_HEADER_V2,
+  PLAY_LOG_HEADER_V3,
   playSpeedFromSettingValue,
   PLAY_LOG_LAYOUT as L,
   PREFERRED_BASE,
@@ -59,7 +60,11 @@ function upgradeHeader(csvPath: string): void {
   const text = readFileSync(csvPath, 'utf8');
   const nl = text.indexOf('\n');
   const first = (nl < 0 ? text : text.slice(0, nl)).replace(/\r$/, '');
-  if (first === PLAY_LOG_HEADER_V2) writeFileSync(csvPath, PLAY_LOG_HEADER + (nl < 0 ? '\n' : text.slice(nl)), 'utf8');
+  const legacyHeader = 'timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source';
+  if ([PLAY_LOG_HEADER_V2, PLAY_LOG_HEADER_V3, legacyHeader].includes(first)) {
+    const lineEnding = nl < 0 ? '\n' : text.slice(nl - (nl > 0 && text[nl - 1] === '\r' ? 1 : 0), nl + 1);
+    writeFileSync(csvPath, PLAY_LOG_HEADER + lineEnding + (nl < 0 ? '' : text.slice(nl + 1)), 'utf8');
+  }
   headerChecked.add(csvPath);
 }
 
@@ -243,6 +248,15 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
     const h = handle!.handle;
     const judge16 = ints(h, a.judge, 16);
     const p1Settings = ints(h, a.playSettings, L.settingsWords);
+    const readLaneOrder = (offset: number): string => {
+      try {
+        const order = ints(h, a.playSettings + BigInt(offset), 7);
+        return order.every(value => Number.isInteger(value) && value >= 0 && value <= 6) && new Set(order).size === 7
+          ? order.join('') : '';
+      } catch { return ''; }
+    };
+    const laneOrderP1 = readLaneOrder(L.laneOrderP1FromSettings);
+    const laneOrderP2 = readLaneOrder(L.laneOrderP2FromSettings);
     const battle = p1Settings[L.battleFlagDelta / 4] === 1;
     const playSpeed = playSpeedFromSettingValue(readBytes(h, a.playSettings + BigInt(L.playSpeedFromSettings), 4).readInt32LE(0));
     const currentSong = a.currentSong ? ints(h, a.currentSong, L.currentSongWords) : new Array<number>(L.currentSongWords).fill(0);
@@ -281,6 +295,8 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       source: play.source,
       ...versions,
       playSpeed,
+      laneOrderP1,
+      laneOrderP2,
     });
     return { row, songId: play.songId, source: play.source, timestamp };
   };
