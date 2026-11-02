@@ -26,7 +26,7 @@ function fixture() {
   const fs = {
     statSync() { s.stats++; if (s.missing) throw Error('missing'); return { mtimeMs: s.mtimeMs, size: s.size }; },
     readFileSync(file) { if (String(file).endsWith('plays.csv')) return s.header; if (s.racing) s.mtimeMs++; return s.invalid ? '' : ['judgeData','playSettings','playData','songList'].map((k,i) => `${k}=0x${(0x140001000n + BigInt(i * 4096)).toString(16)}`).join('\n'); },
-    existsSync: () => false,
+    existsSync: () => s.header.length > 0,
     mkdirSync() { if (s.fail === 'mkdir') throw Error('mkdir'); },
     writeFileSync(file, text) { if (s.fail === 'header') throw Error('header'); s.header = text; },
     appendFileSync(file, row) { if (String(file).endsWith('plays_detail.jsonl')) { s.details.push(row); return; } if (s.fail === 'append') throw Error('append'); s.rows.push(row); },
@@ -37,8 +37,8 @@ function fixture() {
     readBytes(h, address, size) {
       if (size !== 192) s.addresses.push(address); // 192B = 플레이 상세 레인 블록 (playDetail.test 와 아래 상세 테스트에서 따로 본다)
       const b = Buffer.alloc(size);
-      if (address === 0x1400047ccn) { if (s.laneFailP1) throw Error('p1 lane read'); s.laneP1.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
-      if (address === 0x1400047ecn) { if (s.laneFailP2) throw Error('p2 lane read'); s.laneP2.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
+      if (address === 0x1400057ccn) { if (s.laneFailP1) throw Error('p1 lane read'); s.laneP1.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
+      if (address === 0x1400057ecn) { if (s.laneFailP2) throw Error('p2 lane read'); s.laneP2.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
       if (size === 96) {
         s.scans++;
         if (s.marker) for (const i of [0,8,16]) b.writeInt32LE(20000,i);
@@ -110,7 +110,7 @@ test('정상 500ms tick과 결과 전환 1500ms 저장 유지', () => {
   f.advance(2000); f.s.playing = false; f.advance(2499); assert.equal(f.s.rows.length,0);
   f.advance(2500); f.advance(3999); assert.equal(f.s.rows.length,0);
   f.advance(4000); assert.equal(f.s.rows.length,1); assert.equal(f.s.appends,1);
-  assert.deepEqual(fields(f.s.rows[0]).slice(-5),['app','real-game','1.00','','']); // versions, play_speed, lane orders
+  assert.deepEqual(fields(f.s.rows[0]).slice(-5),['app','real-game','1.00','0123456','6543210']); // versions, play_speed, lane orders
   assert.equal(f.s.versions,1); f.stop();
 });
 
