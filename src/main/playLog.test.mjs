@@ -11,6 +11,7 @@ import {
 import {
   PLAY_LOG_HEADER,
   PLAY_LOG_HEADER_V2,
+  PLAY_LOG_HEADER_V3,
   formatPlaySpeed,
   playSpeedFromSettingValue,
   PLAY_LOG_LAYOUT as L,
@@ -101,7 +102,7 @@ test('곡 조회: 없는 ID 는 null', () => {
 });
 
 test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x28 값', () => {
-  assert.equal(PLAY_LOG_HEADER, PLAY_CSV_KEYS.join(',') + ',play_speed'); // 공용 21열 + 기록기 전용 play_speed
+  assert.equal(PLAY_LOG_HEADER, PLAY_CSV_LANE_KEYS.join(','));
   const p1 = Array.from({ length: 11 }, (_, i) => (i === 10 ? 1 : 0));
   const row = buildPlayRow({
     timestamp: '2026-10-14T11:11:20.779Z',
@@ -124,7 +125,9 @@ test('CSV 행: 열 수가 헤더와 같고, 배틀 플래그는 PlaySettings +0x
     playSpeed: 0.7,
   });
   const f = splitCsv(row);
-  assert.equal(f.length, PLAY_LOG_HEADER.split(',').length);
+  assert.equal(f.length, 24);
+  assert.equal(f[22], '');
+  assert.equal(f[23], '');
   assert.equal(f[2], 'Euphoric Fragmentation');
   assert.equal(f[3], 'DPA');
   assert.equal(f[5], '2038');
@@ -148,9 +151,14 @@ test('play_speed: 옵션 단계 -> 배율, 정상 범위만 소수 둘째 자리
   assert.equal(formatPlaySpeed(1), '1.00');
   assert.equal(formatPlaySpeed(null), '');
   assert.equal(formatPlaySpeed(123), '');
-  assert.equal(PLAY_LOG_HEADER, PLAY_LOG_HEADER_V2 + ',play_speed');
-  assert.equal(PLAY_LOG_HEADER.split(',').length, 22);
+  assert.equal(PLAY_LOG_HEADER_V3, PLAY_LOG_HEADER_V2 + ',play_speed');
+  assert.equal(PLAY_LOG_HEADER, PLAY_LOG_HEADER_V3 + ',lane_order_p1,lane_order_p2');
+  assert.equal(PLAY_LOG_HEADER.split(',').length, 24);
+  assert.equal(PLAY_LOG_HEADER.split(',')[20], PLAY_LOG_HEADER_V2.split(',')[20]);
+  assert.equal(PLAY_LOG_HEADER.split(',')[21], 'play_speed');
   assert.equal(L.playSpeedFromSettings, 0x17a0);
+  assert.equal(L.laneOrderP1FromSettings, 0x37CC);
+  assert.equal(L.laneOrderP2FromSettings, 0x37EC);
 });
 
 test('CSV 행: 제목의 따옴표는 두 번 써서 이스케이프', () => {
@@ -169,9 +177,11 @@ test('CSV 21 fields: versions containing commas, quotes, and newlines round trip
     judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'currentsong', appVersion, gameVersion,
   });
   const fields = splitCsv(row);
-  assert.equal(fields.length, 22);
+  assert.equal(fields.length, 24);
   assert.equal(fields[19], appVersion);
   assert.equal(fields[20], gameVersion);
+  assert.equal(fields[22], '');
+  assert.equal(fields[23], '');
 });
 
 test('CSV battle row preserves normal lamp and the legacy 19-field prefix', () => {
@@ -193,8 +203,7 @@ test('공용 CSV 열 계약과 기존 행 및 오류 행 호환성을 유지한�
     timestamp: 't', songId: 1, title: 'song', diff: 0, notes: 0, exScore: 0, pgreat: 0, great: 0, miss: 0, lamp: 0,
     judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'playdata', appVersion: '', gameVersion: '',
   });
-  assert.equal(Object.hasOwn(legacyRow, 'lane_order_p1'), false);
-  assert.equal(Object.hasOwn(legacyRow, 'lane_order_p2'), false);
+  assert.deepEqual(splitCsv(legacyRow).slice(-2), ['', '']);
 
   const errorRow = buildPlayErrorRow(-9, { appVersion: 'app', gameVersion: 'game' }, 't');
   assert.equal(Object.keys(errorRow).length, 21);
@@ -202,8 +211,19 @@ test('공용 CSV 열 계약과 기존 행 및 오류 행 호환성을 유지한�
   assert.equal(isPlayErrorRow({ ...errorRow, source: '' }), false);
   assert.equal(PLAY_CSV_SPEED_KEYS.join(','), `${PLAY_CSV_KEYS.join(',')},play_speed`);
 });
+
+test('lane order fields serialize unchanged after play_speed', () => {
+  const fields = splitCsv(buildPlayRow({
+    timestamp: 't', songId: 1, title: 'song', diff: 0, notes: 0, exScore: 0, pgreat: 0, great: 0, miss: 0, lamp: 0,
+    judge16: [], p1Settings: [], p2Settings: [], gauge: [0, 0], source: 'playdata', appVersion: '', gameVersion: '',
+    laneOrderP1: '2035641', laneOrderP2: '1234560',
+  }));
+  assert.equal(fields.length, 24);
+  assert.equal(fields[22], '2035641');
+  assert.equal(fields[23], '1234560');
+});
   const fields = splitCsv(buildPlayRow(snapshot));
-  assert.equal(fields.length, 22);
+  assert.equal(fields.length, 24);
   assert.deepEqual(fields.slice(0, 19), [
     snapshot.timestamp, '80126', 'battle', 'SPH', '1672', '1788', '719', '350', '114', '-1',
     '53.47', 'C', BATTLE_JUDGE.join(' '), '0 0 0 0 0 0 0 0 0 0 0', '0 0 0 0 0 0 0 0 0 0 0',

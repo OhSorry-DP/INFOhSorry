@@ -22,6 +22,8 @@ export const PLAY_LOG_LAYOUT = {
   songNoteOffset: 0x370,      // 난이도별 노트 수 int32 x 10 (SPB..DPL)
   songCount: 2600,
   settingsWords: 11,
+  laneOrderP1FromSettings: 0x37CC,
+  laneOrderP2FromSettings: 0x37EC,
 } as const;
 
 export const DIFF_NAMES = ['SPB', 'SPN', 'SPH', 'SPA', 'SPL', 'DPB', 'DPN', 'DPH', 'DPA', 'DPL'];
@@ -32,7 +34,8 @@ export const PLAY_LOG_HEADER_V2 = [
   'clear_lamp', 'dj_rate_pct', 'dj_rank', 'judge_16', 'settings_p1_11', 'settings_p2_11', 'battle_flag',
   'gauge_p1_w77', 'gauge_p2_w78', 'source', 'app_version', 'game_version',
 ].join(',');
-export const PLAY_LOG_HEADER = PLAY_LOG_HEADER_V2 + ',play_speed';
+export const PLAY_LOG_HEADER_V3 = PLAY_LOG_HEADER_V2 + ',play_speed';
+export const PLAY_LOG_HEADER = PLAY_LOG_HEADER_V3 + ',lane_order_p1,lane_order_p2';
 
 // 옵션창 속도 단계(int32) -> 배율. 0.80/0.85/0.90/1.00/1.05 에서 14/13/12/10/9 로 확인. 범위 밖이면 null
 export function playSpeedFromSettingValue(v: number): number | null {
@@ -202,6 +205,8 @@ export interface PlaySnapshot {
   gameVersion: string;
   /** 곡 재생 속도 배율 (0.7 = 0.7배). 읽지 못했으면 null/생략 */
   playSpeed?: number | null;
+  laneOrderP1?: string;
+  laneOrderP2?: string;
 }
 
 // 한 플레이 = CSV 한 줄 (PLAY_LOG_HEADER 와 같은 열 순서)
@@ -230,5 +235,7 @@ export function buildPlayRow(s: PlaySnapshot): string {
     csvField(s.appVersion),
     csvField(s.gameVersion),
     formatPlaySpeed(s.playSpeed),
+    csvField(s.laneOrderP1 ?? ''),
+    csvField(s.laneOrderP2 ?? ''),
   ].join(',');
 }
