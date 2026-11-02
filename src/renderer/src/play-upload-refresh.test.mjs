@@ -86,7 +86,7 @@ const recentPlaysSource = recentSource.slice(recentSource.indexOf('export functi
 const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentDetail = recentSource.slice(recentSource.indexOf('function detailSideHidden('), recentSource.indexOf('\nexport function RecentPlays('));
-const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail, PlayLaneController, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
@@ -102,11 +102,13 @@ function recentHarness({ readPlayCsv, onPlayAppend } = {}) {
 }
 function detailTree(detail, play = {}) {
   let PlayLaneController;
-  const React = { createElement: (type, props, ...children) => type === PlayLaneController
+  let PlayLaneDetail;
+  const React = { createElement: (type, props, ...children) => type === PlayLaneController || type === PlayLaneDetail
     ? PlayLaneController(props)
     : ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
   const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {} });
   PlayLaneController = module.PlayLaneController;
+  PlayLaneDetail = module.PlayLaneDetail;
   const { renderPlayDetail } = module;
   return renderPlayDetail(detail, play);
 }
@@ -264,12 +266,12 @@ test('Recent detail aggregation, badges, and lane table use current DOM', () => 
   assert.match(recentDetail, /FAST\/SLOW 검증 불일치/);
   assert.match(recentDetail, /side\.lanes_ok === false/);
   assert.match(recentDetail, /레인 검증 불일치/);
-  assert.match(recentDetail, /Array\.from\(\{ length: 8 \}, \(_, lane\)/);
-  assert.match(recentDetail, /\['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'\]/);
-  assert.match(recentDetail, /side\.lane_fs == null \? '—' : fmt\(side\.lane_fs\[lane\]\?\.\[col\]\)/);
+  assert.match(recentDetail, /const names = \['PG', 'GR', 'GD', 'BD', 'PR', '空PR', 'F-GR', 'F-GD', 'S-GR', 'S-GD'\]/);
+  assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
+  assert.doesNotMatch(recentDetail, /__uprofile_playdetail_toggle|__uprofile_playdetail_lanes|<table/);
 });
 
-test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and hidden lane rows', () => {
+test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and key detail', () => {
   const lanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]); lanes[0] = [284, 172, 121, 5, 14, 2];
   const laneFs = Array.from({ length: 8 }, () => [0, 0, 0, 0]); laneFs[0] = [3, 4, 0, 0];
   const fs = { fast_good: 172, fast_great: 284, slow_great: 121, slow_good: 0 };
@@ -281,10 +283,9 @@ test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and hidden la
   assert.ok(rendered.includes('FAST/SLOW 검증 불일치'));
   assert.match(rendered, /레인 검증 불일치/);
   assert.match(rendered, /48%/);
+  assert.match(rendered, /__uprofile_play_keydetail/);
 
   assert.match(rendered, /__uprofile_playdetail_fill/);
-  assert.match(rendered, /"type":"input"/);
-  assert.ok(recentCss.includes(".__uprofile_playdetail_lanes[hidden]"));
 
 });
 
