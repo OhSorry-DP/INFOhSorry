@@ -19,9 +19,12 @@ import {
   fetchRecentCharts,
   fetchUserLatestCharts,
   loadDbrMap,
+  buildUploadPlays,
   type RecentChartRow,
   type LatestChartEntry,
 } from './supabaseSync';
+import { isPlayErrorRow, type PlayCsvRow, type PlayDetail, type SideDetail } from '../../shared/uploadSnapshot';
+import { LAMP_NUM_TO_ABBR } from './lampStyle';
 
 // diff (NORMAL/HYPER/ANOTHER/LEGGENDARIA) → slot 색 (오소리웹 DIFF_COLOR 동일).
 const DIFF_COLOR: Record<string, string> = {
@@ -222,6 +225,138 @@ function getTodayKst(): string {
     timeZone: 'Asia/Seoul',
     year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(new Date());
+}
+
+function subscribeRecentPlays(iidxId: string, update: (rows: PlayCsvRow[], error: string | null) => void): () => void {
+  const upload = window.infohsorry.upload;
+  const readPlayCsv = upload.readPlayCsv;
+  if (!readPlayCsv) {
+    update([], 'Play history is unavailable');
+    return () => {};
+  }
+  let active = true;
+  let request = 0;
+  const refresh = async () => {
+    const current = ++request;
+    try {
+      const result = await readPlayCsv(iidxId);
+      if (!active || current !== request) return;
+      update(buildUploadPlays(result).slice(-100), result.ok ? null : 'Could not read play history');
+    } catch (error) {
+      if (!active || current !== request) return;
+      update([], (error as Error).message || 'Could not read play history');
+    }
+  };
+  void refresh();
+  const unsubscribe = upload.onPlayAppend?.((event) => {
+    if (event.iidxId.replace(/-/g, '').trim() === iidxId) void refresh();
+  });
+  return () => {
+    active = false;
+    request++;
+    unsubscribe?.();
+  };
+}
+
+function recentPlayTime(timestamp: string | null | undefined): string {
+  if (!timestamp) return '—';
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return '—';
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Seoul', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+  }).formatToParts(date);
+  const part = (type: string) => parts.find((item) => item.type === type)?.value;
+  const month = part('month'); const day = part('day'); const hour = part('hour'); const minute = part('minute');
+  return month && day && hour && minute ? `${month}-${day} ${hour}:${minute}` : '—';
+}
+
+function detailSideHidden(side: SideDetail | null | undefined): boolean {
+  if (!side || !Array.isArray(side.lanes) || side.lanes.length !== 8 || side.lanes.some((lane) => !Array.isArray(lane) || lane.length !== 6 || lane.some((value) => typeof value !== 'number' || value !== 0))) return false;
+  return side.fs === null || (side.fs != null && [side.fs.fast_great, side.fs.fast_good, side.fs.slow_great, side.fs.slow_good].every((value) => typeof value === 'number' && value === 0));
+}
+
+function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | null {
+  const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
+  if (!sides.length) return null;
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  const aggregate = (index: number) => {
+    const values = sides.flatMap(([, side]) => side.lanes?.map((lane) => lane?.[index]));
+    return values.length === sides.length * 8 && values.every(valid) ? values.reduce((sum, value) => sum + value, 0) : null;
+  };
+  const fsValues = sides.map(([, side]) => side.fs);
+  const hasFs = fsValues.every((fs) => fs != null && [fs.fast_great, fs.fast_good, fs.slow_great, fs.slow_good].every(valid));
+  const sumFs = (key: 'fast_great' | 'fast_good' | 'slow_great' | 'slow_good') => hasFs ? fsValues.reduce((sum, fs) => sum + (fs?.[key] ?? 0), 0) : null;
+  const unresolved = sides.every(([, side]) => valid(side.fs_unresolved)) ? sides.reduce((sum, [, side]) => sum + side.fs_unresolved, 0) : null;
+  const values = [aggregate(0), aggregate(1), aggregate(2), aggregate(3), aggregate(4), aggregate(5)] as const;
+  const scoreValues = values.slice(0, 5);
+  const total = scoreValues.every(valid) ? scoreValues.reduce<number>((sum, value) => sum + (valid(value) ? value : 0), 0) : null;
+  const cbParts = (play.judge_16 || '').trim().split(/\s+/);
+  const cb = cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
+    ? sides.reduce((sum, [label]) => sum + Number(cbParts[label === 'P1' ? 10 : 11]), 0) : null;
+  const lampRaw = play.clear_lamp;
+  const lampNum = lampRaw == null || lampRaw.trim() === '' ? null : Number(lampRaw);
+  const lamp = lampNum == null ? '—' : Number.isInteger(lampNum) && LAMP_NUM_TO_ABBR[lampNum] ? LAMP_NUM_TO_ABBR[lampNum] : lampRaw;
+  const fmt = (value: unknown) => valid(value) ? String(value) : '—';
+  const rows: { kind: string; tag?: string; name: string; value: number | null; pct?: boolean; bar?: boolean }[] = [];
+  const add = (kind: string, name: string, value: number | null, tag?: string, pct = true, bar = true) => rows.push({ kind, tag, name, value, pct, bar });
+  if (hasFs) {
+    add('k-good', 'GOOD', sumFs('fast_good'), 'FAST'); add('k-great', 'GREAT', sumFs('fast_great'), 'FAST');
+    add('k-pg', 'PERFECT GREAT', values[0]); add('k-great', 'GREAT', sumFs('slow_great'), 'SLOW'); add('k-good', 'GOOD', sumFs('slow_good'), 'SLOW');
+  } else { add('k-great', 'GREAT', values[1]); add('k-pg', 'PERFECT GREAT', values[0]); add('k-good', 'GOOD', values[2]); }
+  rows.push({ kind: 'sep', name: '', value: null });
+  add('k-bad', 'BAD', values[3]); add('k-poor', 'POOR', values[4]); add('k-empty', '空POOR', values[5], undefined, false); add('k-cb', 'COMBO BREAK', cb, undefined, false, false);
+  const percent = (value: number | null) => total != null && total > 0 && valid(value) ? `${Math.round(value / total * 100)}%` : '—';
+  return <div className="__uprofile_playdetail_judge">
+    <div className="__uprofile_playdetail_summary">{[['램프', lamp], ['EX', play.ex_score], ['DJ RATE', play.dj_rate_pct ? `${play.dj_rate_pct}%${play.dj_rank ? ` ${play.dj_rank}` : ''}` : '—'], ['미스', play.miss_count], ['콤보 브레이크', fmt(cb)]].map(([label, value]) => <span key={label}>{label} <b>{value || '—'}</b></span>)}{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}{sides.some(([, side]) => side.lanes_ok === false) && <span className="__uprofile_playdetail_badge">레인 검증 불일치</span>}</div>
+    <div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>
+    <small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small>
+    <label className="__uprofile_playdetail_toggle"><input type="checkbox" onChange={(event) => { const lanes = event.currentTarget.closest('.__uprofile_playdetail_judge')?.querySelector('.__uprofile_playdetail_lanes'); if (lanes) (lanes as HTMLElement).hidden = !event.currentTarget.checked; }} />레인별 판정 보기</label>
+    <div className="__uprofile_playdetail_lanes">{sides.map(([label, side]) => <section key={label}><h4>{label} · 레인 미확정 {fmt(side.lane_fs_unresolved)}</h4><div className="__uprofile_playdetail_tablebox"><table className="__uprofile_playdetail_lanetable"><thead><tr>{['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name, index) => <th key={name} className={index === 7 ? 'g-fs' : undefined}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{fmt(side.lanes?.[lane]?.[col])}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`} className={col === 0 ? 'g-fs' : undefined}>{side.lane_fs == null ? '—' : fmt(side.lane_fs[lane]?.[col])}</td>)}</tr>)}</tbody></table></div></section>)}</div>
+  </div>;
+}
+
+export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element {
+  const [recentPlays, setRecentPlays] = useState<PlayCsvRow[]>([]);
+  const [playReadError, setPlayReadError] = useState<string | null>(null);
+  const normalizedId = useMemo(() => iidxId?.replace(/-/g, '').trim() || '', [iidxId]);
+
+  useEffect(() => {
+    setRecentPlays([]);
+    setPlayReadError(null);
+    if (!normalizedId) return;
+    return subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
+      setRecentPlays(nextRows);
+      setPlayReadError(nextError);
+    });
+  }, [normalizedId]);
+
+  return <section className="__uprofile_recentplays" aria-label="최근 플레이">
+    <h3 className="__uprofile_recentplays_title">최근 플레이</h3>
+    {playReadError ? (
+      <p className="__uprofile_tabempty">플레이 기록을 읽지 못했습니다.</p>
+    ) : recentPlays.length === 0 ? (
+      <p className="__uprofile_tabempty">플레이 기록이 없습니다.</p>
+    ) : (
+      <div className="__uprofile_recentplays_list">
+        {[...recentPlays].reverse().map((play, index) => isPlayErrorRow(play) ? (
+          <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={`error-${index}`}>
+            기록 오류 (코드 {play.song_id})
+          </div>
+        ) : (
+          play.detail != null ? <details className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
+            <summary className="__uprofile_recentplays_row">
+              <span>{recentPlayTime(play.timestamp)}</span>
+              <span title={play.title}>{play.title || '—'}</span>
+              <span>{play.difficulty || '—'}</span>
+              <span>{play.ex_score || '—'}</span>
+              <span className="__uprofile_recentplays_chev">›</span>
+            </summary>
+            {renderPlayDetail(play.detail, play)}
+          </details> : <div className="__uprofile_recentplays_item __uprofile_recentplays_plain" key={`${play.timestamp}-${index}`}><div className="__uprofile_recentplays_row"><span>{recentPlayTime(play.timestamp)}</span><span title={play.title}>{play.title || '—'}</span><span>{play.difficulty || '—'}</span><span>{play.ex_score || '—'}</span><span /></div></div>
+        ))}
+      </div>
+    )}
+  </section>;
 }
 
 export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Element {
@@ -531,6 +666,7 @@ export default function Recent({ rows, iidxId, onPickChart }: Props): JSX.Elemen
           })}
         </div>
       )}
+
     </div>
   );
 }

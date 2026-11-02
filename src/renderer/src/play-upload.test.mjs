@@ -94,6 +94,22 @@ test('CSV 오류 행은 ISO 시각과 함께 유지되고 업로드는 최근 10
   const parsedError = api.parsePlayHistory(`${keys.join(',')}\n${values.join(',')}\n`)[0];
   assert.equal(parsedError.timestamp,'2026-10-17T00:00:00.000Z'); assert.equal(shared.isPlayErrorRow(parsedError),true);
 });
+test('A3 detail timestamp match, missing match, error exclusion, and existing row parsing', () => {
+  const api = sync(); const detail = {v:1,timestamp:'1',complete:false,samples:3,dt_ms:16,p1:{},p2:{}};
+  const normal = row(1); normal.timestamp='1'; normal.title='plain';
+  const normal2 = row(2); normal2.timestamp='2'; normal2.title='plain';
+  const error = shared.buildPlayErrorRow(-4,{appVersion:'',gameVersion:''},'err');
+  const input = `${keys.join(',')}\n${[normal,normal2,error].map(x=>keys.map(key=>x[key]).join(',')).join('\n')}\n`;
+  const upload = api.buildUploadPlays({ok:true,csv:input,details:[detail,{...detail,timestamp:'elsewhere'},{...detail,timestamp:'err'}]});
+  assert.equal(upload[0].detail,detail); assert.equal(Object.hasOwn(upload[1],'detail'),false); assert.equal(Object.hasOwn(upload[2],'detail'),false);
+  const sourceRow = row(7); sourceRow.title='plain';
+  const parsed = api.parsePlayHistory(`${shared.PLAY_CSV_LEGACY_KEYS.join(',')}\n${shared.PLAY_CSV_LEGACY_KEYS.map(key=>sourceRow[key]).join(',')}\n${shared.PLAY_CSV_KEYS.join(',')}\n${shared.PLAY_CSV_KEYS.map(key=>sourceRow[key]).join(',')}\n${keys.join(',')}\n${keys.map(key=>sourceRow[key]).join(',')}\n`);
+  assert.equal(parsed.length,5); assert.equal(Object.hasOwn(parsed[0],'play_speed'),false);
+  assert.equal(parsed[1].app_version,'app_version'); assert.equal(parsed[2].timestamp,sourceRow.timestamp);
+  const many = `${keys.join(',')}\n${Array.from({length:101},(_,i)=>{const x=row(i);x.timestamp=String(i);x.title='plain';return keys.map(key=>x[key]).join(',');}).join('\n')}\n`;
+  const limited=api.buildUploadPlays({ok:true,csv:many});
+  assert.equal(limited.length,100); assert.equal(limited[0].timestamp,'1'); assert.equal(limited.at(-1).timestamp,'100');
+});
 test('오류 행은 DBR/완주/자동 배열에서 제외하고 정상 lamp -1은 오류가 아님', () => {
   const api = sync(); const error = shared.buildPlayErrorRow(-3,{appVersion:'',gameVersion:''},'2026-10-17T00:00:00.000Z');
   const normal = {...row(1), clear_lamp:'-1', notes:'1', judge_16:'1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'};
@@ -487,7 +503,8 @@ test('saveOnce 실제 저장 경계: A→B 경로, 미취득 생략, append 성�
     statSync: () => ({ mtimeMs: 1, size: 1 }), readFileSync: () => 'judgeData=0x140001000\nplaySettings=0x140002000\nplayData=0x140003000\nsongList=0x140004000',
     existsSync: p => files.has(p), mkdirSync() {}, writeFileSync: (p, value) => files.set(p, Buffer.from(value)),
     appendFileSync: (p, value) => { if (fail) throw new Error('append failed'); const prior = files.get(p) ?? Buffer.alloc(0); files.set(p, Buffer.concat([prior, Buffer.from(value)])); },
-  }, path: { dirname: p => path.dirname(p) }, './accountTsvStore': { accountPlayCsvPath: store.accountPlayCsvPath },
+  }, path: { dirname: p => path.dirname(p) }, './accountTsvStore': { accountPlayCsvPath: store.accountPlayCsvPath, accountPlayDetailPath: () => '/fixture/detail.json' },
+  './playDetail': { LANE_BLOCK_WORDS: 0, PLAY_DETAIL_LAYOUT: {}, PlayDetailTracker: class {} },
   './memory': memory, './playLog': load(read('../../main/playLog.ts')),
   '../shared/uploadSnapshot': shared }, {
     performance: { now: () => clock }, Date, setTimeout: scheduleTimer, clearTimeout: timerId => timers.delete(timerId),
@@ -575,5 +592,5 @@ test('계정 CSV 읽기 IPC 저장소는 UTF-8 원본을 반환하고 없는 파
   assert.equal(calls[0].encoding, 'utf8');
   assert.deepEqual(plain(await store.readAccountPlayCsv('C999999999999')), { ok: true, found: false, csv: '' });
   assert.deepEqual(plain(await store.readAccountPlayCsv('../outside')), { ok: false, error: 'invalid id' });
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 3);
 });

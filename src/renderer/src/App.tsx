@@ -18,7 +18,7 @@ import { lampStyle, letterColor } from './lampStyle';
 import ChartTable from './ChartTable';
 import DpTable from './DpTable';
 import Analysis from './Analysis';
-import Recent from './Recent';
+import Recent, { RecentPlays } from './Recent';
 import PlayData from './PlayData';
 import { computeClient, rendererInput } from './compute/rendererService';
 import { analysisUploadLedger } from './compute/analysisUploadGate';
@@ -92,7 +92,7 @@ const SNAPSHOT_RETRY_INTERVAL_MS = 15 * 1000;
 const SNAPSHOT_RETRY_REPORT_AFTER = 4;
 const ID_SWITCH_SNAPSHOT_BLOCK_MS = 20 * 1000; // Reflux 재기동 직후 부분 tracker.tsv 스냅샷 방지
 
-type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'playdata' | 'grid';
+type Tab = 'sp' | 'dp' | 'dp12' | 'analysis' | 'recent' | 'plays' | 'playdata' | 'grid';
 const VALID_IIDX_ID = /^[A-Z]\d{12}$/;
 type SnapshotCaptureResult =
   | { ok: true; iidxId: string; generation: number; tsvMtime: number }
@@ -685,7 +685,7 @@ export default function App() {
 
   // SP/DP 탭의 통계
   const stats = useMemo(() => {
-    if (tab === 'dp12' || tab === 'recent' || tab === 'analysis' || tab === 'playdata' || tab === 'grid') return { total: 0, unlocked: 0, played: 0 };
+    if (tab === 'dp12' || tab === 'recent' || tab === 'plays' || tab === 'analysis' || tab === 'playdata' || tab === 'grid') return { total: 0, unlocked: 0, played: 0 };
     const slots = tab === 'sp' ? ['SPB', 'SPN', 'SPH', 'SPA', 'SPL'] : ['DPN', 'DPH', 'DPA', 'DPL'];
     let unlocked = 0;
     let played = 0;
@@ -1295,6 +1295,41 @@ export default function App() {
     dp12Match, tsvPath, spAllCharts, dpAllCharts, allTsvCharts, scope: rowsState.scope,
     tsvMtime, rowsRevision: rowsRevisionRef.current };
 
+  const remotePlaysRef = useRef<{ iidxId: string; plays: ReturnType<typeof buildUploadPlays> } | null>(null);
+  const [remotePlaysSig, setRemotePlaysSig] = useState('');
+  const remotePlaysRequestRef = useRef(0);
+  const remotePlaysScopeRef = useRef({ iidxId: profile.iidxId, generation: session.generation });
+  remotePlaysScopeRef.current = { iidxId: profile.iidxId, generation: session.generation };
+  const refreshRemotePlays = useCallback(async (iidxId: string, generation: number): Promise<void> => {
+    const readPlayCsv = window.infohsorry.upload.readPlayCsv;
+    if (!readPlayCsv || !VALID_IIDX_ID.test(iidxId)) return;
+    const request = ++remotePlaysRequestRef.current;
+    let result;
+    try { result = await readPlayCsv(iidxId); } catch { result = { ok: false as const }; }
+    const current = remotePlaysScopeRef.current;
+    if (request !== remotePlaysRequestRef.current || current.iidxId !== iidxId
+      || current.generation !== generation || sessionRef.current.generation !== generation) return;
+    const plays = buildUploadPlays(result.ok
+      ? { ...result, appVersion: result.appVersion ?? APP_VERSION, gameVersion: result.gameVersion ?? '' }
+      : { ok: false, appVersion: APP_VERSION, gameVersion: '' }).slice(-10);
+    remotePlaysRef.current = { iidxId, plays };
+    setRemotePlaysSig(JSON.stringify({ iidxId, plays }));
+  }, []);
+
+  useEffect(() => {
+    const current = profile.iidxId;
+    if (!current || !VALID_IIDX_ID.test(current)) {
+      remotePlaysRequestRef.current += 1;
+      remotePlaysRef.current = null;
+      setRemotePlaysSig('');
+      return;
+    }
+    remotePlaysRef.current = null;
+    setRemotePlaysSig('');
+    void refreshRemotePlays(current, session.generation);
+    return () => { remotePlaysRequestRef.current += 1; };
+  }, [profile.iidxId, session.generation, refreshRemotePlays]);
+
   function uploadIdentityOk(trigger: string): { ok: true; id: string } | { ok: false; reason: string } {
     const p = uploadStateRef.current.profile;
     const snap = lastSnapshotRef.current;
@@ -1629,6 +1664,7 @@ export default function App() {
     const handlePlaysAppend = ({ iidxId }: { iidxId: string }): void => {
       const readPlayCsv = window.infohsorry.upload.readPlayCsv;
       if (!readPlayCsv) return;
+      void refreshRemotePlays(iidxId, sessionRef.current.generation);
       const previous = playsChainByAccount.get(iidxId) ?? Promise.resolve();
       const next = previous.catch(() => {}).then(async () => {
         let result;
@@ -1686,7 +1722,7 @@ export default function App() {
       window.infohsorry.upload.finalDone(outcome);
     })());
     return () => { cancelInitialTimer(); offPlayAppend?.(); offArrangeAppend?.(); offPlaysAppend?.(); offFinal(); delete (window as unknown as { updateSupabase?: () => void }).updateSupabase; delete (window as unknown as { __tryUploadManual?: () => void }).__tryUploadManual; delete (window as unknown as { __tryUploadIfDue?: (id: string) => void }).__tryUploadIfDue; };
-  }, []);
+  }, [refreshRemotePlays]);
 
   // 마지막 스냅샷 이후에도 준비 상태가 바뀔 수 있으므로 타이머를 직접 설정하거나 재확인한다.
   useEffect(() => {
@@ -1736,6 +1772,7 @@ export default function App() {
       tag + arr.length + ':' + sumEx(arr) + ':' + sumLamp(arr);
     const sig = [
       profile.iidxId,
+      remotePlaysSig,
       dp12StarResult.star.toFixed(3),
       part('c', dp12Match.charts),
       part('u', dp12Match.unclassifiedCharts),
@@ -1755,10 +1792,11 @@ export default function App() {
     if (sig === lastRemoteSigRef.current) return dbg('skip: tsv 값 변동 없음(동일)');  // 값 동일 → push 안 함
     lastRemoteSigRef.current = sig;
     dbg('PUSH ✅ setUser 호출');
-    void window.infohsorry.remote.setUser(
-      buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined, dpAllCharts),
-    );
-  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, dpAllCharts, spAllCharts, spTierData, spStarResult, textageByTitle]);
+    const remotePlays = remotePlaysRef.current;
+    const plays = remotePlays?.iidxId === gate.id ? remotePlays.plays : [];
+    const remoteUser = buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined, dpAllCharts) as Record<string, unknown>;
+    void window.infohsorry.remote.setUser(Object.assign(remoteUser, { plays }));
+  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, dpAllCharts, spAllCharts, spTierData, spStarResult, textageByTitle, remotePlaysSig]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:
@@ -2185,12 +2223,18 @@ export default function App() {
             }}
           />
           <nav className="tabs">
-            {/* 표시 순서: RECENT → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
+            {/* 표시 순서: RECENT → PLAY LOG → PLAYDATA → DP RECOMMEND → ANALYSIS. 기본 탭 = PLAYDATA. */}
             <button
               className={tab === 'recent' ? 'tab active' : 'tab'}
               onClick={() => setTab('recent')}
             >
               RECENT
+            </button>
+            <button
+              className={tab === 'plays' ? 'tab active' : 'tab'}
+              onClick={() => setTab('plays')}
+            >
+              PLAY LOG
             </button>
             <button
               className={tab === 'playdata' ? 'tab active' : 'tab'}
@@ -2234,7 +2278,7 @@ export default function App() {
             <span className="tab-stats">
               {tab === 'dp12' || tab === 'grid'
                 ? `${dp12Stats.total}곡 · 시도 ${dp12Stats.attempted} · 클리어 ${dp12Stats.cleared} · HC ${dp12Stats.hard} · EXH ${dp12Stats.exhard} · FC ${dp12Stats.fc}`
-                : tab === 'recent' || tab === 'analysis' || tab === 'playdata'
+                : tab === 'recent' || tab === 'plays' || tab === 'analysis' || tab === 'playdata'
                 ? ''
                 : `${rows.length}곡 · ${stats.unlocked}/${stats.total} unlock · ${stats.played} played`}
               {tsvMtime > 0 && (
@@ -2281,6 +2325,8 @@ export default function App() {
                   setScrollTarget(target);
                 }}
               />
+            ) : tab === 'plays' ? (
+              <RecentPlays iidxId={profile.iidxId} />
             ) : tab === 'playdata' ? (
               <PlayData
                 rows={rows}

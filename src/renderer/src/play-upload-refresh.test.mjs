@@ -80,3 +80,207 @@ test('CSV refresh precedes pending save and upload, using current app version', 
   assert.deepEqual(h.events.filter(x => typeof x === 'string'), ['read', 'save', 'upload']);
   assert.equal(h.saved[0].appVersion, 'current-app');
 });
+
+const recentSource = read('./Recent.tsx');
+const recentPlaysSource = recentSource.slice(recentSource.indexOf('export function RecentPlays('), recentSource.indexOf('\nexport default function Recent('));
+const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
+const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const recentDetail = recentSource.slice(recentSource.indexOf('function detailSideHidden('), recentSource.indexOf('\nexport function RecentPlays('));
+const recentDetailCode = ts.transpileModule(`${recentDetail}; ({ renderPlayDetail })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const recentCss = read('./index.css');
+const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
+const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
+const recentFn = recentSource.slice(recentStart, recentEnd);
+const recentCode = ts.transpileModule(`${recentFn}; subscribeRecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+function recentHarness({ readPlayCsv, onPlayAppend } = {}) {
+  const updates = []; const listeners = new Set(); const unsubscriptions = [];
+  const subscribe = vm.runInNewContext(recentCode, {
+    window: { infohsorry: { upload: { readPlayCsv, onPlayAppend: cb => { listeners.add(cb); const off = () => { listeners.delete(cb); unsubscriptions.push(true); }; return off; } } } },
+    buildUploadPlays: result => result.rows,
+  });
+  return { subscribe, updates, listeners, unsubscriptions };
+}
+function detailTree(detail, play = {}) {
+  const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
+  const { renderPlayDetail } = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {} });
+  return renderPlayDetail(detail, play);
+}
+function flatten(node, result = []) {
+  if (node == null || typeof node === 'boolean') return result;
+  if (Array.isArray(node)) { for (const child of node) flatten(child, result); return result; }
+  if (typeof node === 'object') { result.push(node); flatten(node.props?.children, result); }
+  return result;
+}
+const recentRow = timestamp => ({ timestamp });
+
+test('Recent has no play history section or subscription', () => {
+  const recentOnly = recentSource.slice(recentSource.indexOf('export default function Recent('));
+  assert.doesNotMatch(recentOnly, /subscribeRecentPlays|__uprofile_recentplays|최근 플레이/);
+});
+
+test('RecentPlays distinguishes empty history from read failure', () => {
+  assert.match(recentPlaysSource, /playReadError \? \(/);
+  assert.match(recentPlaysSource, /recentPlays\.length === 0 \? \(/);
+});
+
+test('Recent subscribes and retains at most 100 rows', async () => {
+  const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: Array.from({ length: 105 }, (_, i) => recentRow(String(i))) }) });
+  const stop = h.subscribe('A123', (rows, error) => h.updates.push({ rows, error }));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.updates[0].rows.length, 100);
+  assert.equal(h.updates[0].rows[0].timestamp, '5');
+  assert.equal(h.updates[0].error, null);
+  stop();
+});
+
+test('Recent refreshes after same-account append', async () => {
+  let reads = 0;
+  const h = recentHarness({ readPlayCsv: async () => ({ ok: true, rows: [recentRow(String(++reads))] }) });
+  h.subscribe('A123', (rows, error) => h.updates.push({ rows, error }));
+  await new Promise(resolve => setImmediate(resolve));
+  [...h.listeners][0]({ iidxId: 'A123' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 2);
+  assert.equal(h.updates[1].rows[0].timestamp, '2');
+});
+
+test('Recent account switch ignores late A response and unsubscribes A listener', async () => {
+  let resolveA;
+  const h = recentHarness({ readPlayCsv: id => id === 'A123'
+    ? new Promise(resolve => { resolveA = resolve; })
+    : Promise.resolve({ ok: true, rows: [recentRow('B')] }) });
+  const stopA = h.subscribe('A123', (rows, error) => h.updates.push({ account: 'A', rows, error }));
+  const listenerA = [...h.listeners][0];
+  stopA();
+  h.subscribe('B456', (rows, error) => h.updates.push({ account: 'B', rows, error }));
+  resolveA({ ok: true, rows: [recentRow('late-A')] });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.unsubscriptions.length, 1);
+  assert.deepEqual(h.updates.map(update => update.account), ['B']);
+  assert.equal(h.updates[0].rows[0].timestamp, 'B');
+  assert.equal(h.listeners.has(listenerA), false);
+});
+
+test('RecentPlays display reverses chronological rows and formats KST timestamps', () => {
+  const format = vm.runInNewContext(recentViewCode, {}).recentPlayTime;
+  const rows = ['2026-11-01T00:00:00Z', '2026-11-01T01:00:00Z'];
+  assert.deepEqual(rows.map(format), ['11-01 09:00', '11-01 10:00']);
+  assert.match(recentPlaysSource, /\[\.\.\.recentPlays\]\.reverse\(\)/);
+});
+
+test('RecentPlays preserves repeated songs and four-column row format', () => {
+  const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('{[...recentPlays].reverse().map('));
+  assert.match(snippet, /map\(\(play, index\)/);
+  assert.match(snippet, /key=\{`\$\{play\.timestamp\}-\$\{index\}`\}/);
+  assert.match(snippet, /play\.title/);
+  assert.match(snippet, /play\.difficulty/);
+  assert.match(snippet, /play\.ex_score/);
+  assert.match(snippet, /play\.detail != null \?/);
+  assert.match(snippet, /renderPlayDetail\(play\.detail, play\)/);
+  assert.match(recentCss, /\.\_\_uprofile_recentplays_row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
+});
+
+test('RecentPlays error row shows code -11 in one cell', () => {
+  const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('isPlayErrorRow(play) ?'));
+  assert.match(snippet, /기록 오류 \(코드 \{play\.song_id\}\)/);
+  assert.match(recentCss, /\.\_\_uprofile_recentplays_error\s*\{\s*grid-template-columns:\s*1fr;/);
+});
+
+test('App places PLAY LOG after RECENT and passes profile ID while retaining playdata defaults and stats exclusion', () => {
+  const appSource = read('./App.tsx');
+  const buttons = appSource.slice(appSource.indexOf("onClick={() => setTab('recent')}") - 100, appSource.indexOf("onClick={() => setTab('playdata')}") + 120);
+  assert.ok(buttons.indexOf('RECENT') < buttons.indexOf('PLAY LOG'));
+  assert.ok(buttons.indexOf('PLAY LOG') < buttons.indexOf('PLAYDATA'));
+  assert.match(appSource, /<RecentPlays iidxId=\{profile\.iidxId\} \/>/);
+  assert.match(appSource, /useState<Tab>\('playdata'\)/);
+  assert.match(appSource, /tab === 'recent' \|\| tab === 'plays' \|\| tab === 'analysis' \|\| tab === 'playdata'/);
+});
+
+test('Recent distinguishes empty history from read failure and keeps chart list code', () => {
+  assert.match(recentSource, /playReadError \? \(/);
+  assert.match(recentSource, /recentPlays\.length === 0 \? \(/);
+  assert.match(recentSource, /sortRows\(computeTodayCharts\(rows, latestIdx\)\)/);
+});
+
+test('RecentPlays renders play detail only when detail exists and is non-null', () => {
+  assert.match(recentPlaysSource, /play\.detail != null \?/);
+  assert.match(recentPlaysSource, /renderPlayDetail\(play\.detail, play\)/);
+  assert.match(recentSource, /function renderPlayDetail\(detail: PlayDetail, play: PlayCsvRow\)/);
+});
+
+test('Recent detail aggregation, badges, and lane table use current DOM', () => {
+  assert.match(recentDetail, /const aggregate = \(index: number\)/);
+  assert.match(recentDetail, /values\.every\(valid\) \? values\.reduce/);
+  assert.match(recentDetail, /FAST\/SLOW 기록 없음/);
+  assert.match(recentDetail, /!detail\.complete && <span className="__uprofile_playdetail_badge">부분 기록/);
+  assert.match(recentDetail, /side\.fs_ok === false/);
+  assert.match(recentDetail, /FAST\/SLOW 검증 불일치/);
+  assert.match(recentDetail, /side\.lanes_ok === false/);
+  assert.match(recentDetail, /레인 검증 불일치/);
+  assert.match(recentDetail, /Array\.from\(\{ length: 8 \}, \(_, lane\)/);
+  assert.match(recentDetail, /\['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'\]/);
+  assert.match(recentDetail, /side\.lane_fs == null \? '—' : fmt\(side\.lane_fs\[lane\]\?\.\[col\]\)/);
+});
+
+test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and hidden lane rows', () => {
+  const lanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]); lanes[0] = [284, 172, 121, 5, 14, 2];
+  const laneFs = Array.from({ length: 8 }, () => [0, 0, 0, 0]); laneFs[0] = [3, 4, 0, 0];
+  const fs = { fast_good: 172, fast_great: 284, slow_great: 121, slow_good: 0 };
+  const p2 = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]);
+  const nodes = flatten(detailTree({ complete: false, p1: { lanes, lane_fs: laneFs, lane_fs_unresolved: 0, fs, fs_unresolved: 0, fs_ok: false, lanes_ok: false }, p2: { lanes: p2, lane_fs: null, fs: { fast_good: 0, fast_great: 0, slow_great: 0, slow_good: 0 }, fs_unresolved: 0, lane_fs_unresolved: 0 } }, { judge_16: '0 0 0 0 0 0 0 0 0 0 3 4 0 0 0 0' }));
+  const rendered = JSON.stringify(nodes);
+
+  assert.match(rendered, /부분 기록/);
+  assert.ok(rendered.includes('FAST/SLOW 검증 불일치'));
+  assert.match(rendered, /레인 검증 불일치/);
+  assert.match(rendered, /48%/);
+
+  assert.match(rendered, /__uprofile_playdetail_fill/);
+  assert.match(rendered, /"type":"input"/);
+  assert.ok(recentCss.includes(".__uprofile_playdetail_lanes[hidden]"));
+
+});
+
+test('Recent detail summary shows both visible sides combo break total', () => {
+  const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
+  const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
+  const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33' }));
+  const summary = nodes.find(node => node.props?.className === '__uprofile_playdetail_summary' || node.props?.className?.includes('__uprofile_playdetail_summary'));
+  assert.ok(summary);
+  assert.ok(JSON.stringify(summary.props.children).includes('7'));
+});
+
+test('Recent detail summary shows only P1 combo break total for hidden P2', () => {
+  const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
+  const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
+  const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33', difficulty: 'SPN' }));
+  const summary = nodes.find(node => node.props?.className === '__uprofile_playdetail_summary' || node.props?.className?.includes('__uprofile_playdetail_summary'));
+  assert.ok(summary);
+  assert.ok(JSON.stringify(summary.props.children).includes('3'));
+});
+
+test('Recent detail without FS produces GREAT PG GOOD rows and no rating for empty POOR or CB', () => {
+  const lanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]); lanes[0] = [3, 4, 5, 0, 0, 0];
+  const nodes = flatten(detailTree({ complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), lane_fs: null, fs: null, lane_fs_unresolved: 0 } }));
+  const rows = nodes.filter(node => /^__uprofile_playdetail_barrow /.test(node.props?.className ?? ''));
+  assert.deepEqual(rows.map(node => node.props.className.split(' ').at(-1)), ['k-great', 'k-pg', 'k-good', 'k-bad', 'k-poor', 'k-empty', 'k-cb']);
+  assert.ok(JSON.stringify(nodes).includes('FAST/SLOW 기록 없음'));
+
+});
+test('Recent judge colors use fixed mockup palette', () => {
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_tag\.t-fast \{ color: #3f8cff/);
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_tag\.t-slow \{ color: #ff4b4b/);
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_lab \{ color: #a6f3ff/);
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_fill \{ background: #62e2c4/);
+});
+
+test('Recent judge details remain separate from Recent chart listing', () => {
+  const recentOnly = recentSource.slice(recentSource.indexOf('export default function Recent('));
+  assert.doesNotMatch(recentOnly, /renderPlayDetail|judge_16|__uprofile_playdetail/);
+});
+
+test('Recent hides a side only when every lane count and FS count is zero or FS is null', () => {
+  assert.match(recentSource, /function detailSideHidden\(side: SideDetail \| null \| undefined\)/);
+  assert.match(recentSource, /lane\.some\(\(value\) => typeof value !== 'number' \|\| value !== 0\)/);
+  assert.match(recentSource, /side\.fs === null \|\| \(side\.fs != null && \[side\.fs\.fast_great, side\.fs\.fast_good, side\.fs\.slow_great, side\.fs\.slow_good\]\.every\(\(value\) => typeof value === 'number' && value === 0\)\)/);
+});

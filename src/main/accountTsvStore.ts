@@ -7,6 +7,7 @@ import { mergeAccountMeta, type AccountMeta, type AccountSnapshotRequest, type A
 import type { InfinitasSessionState } from '../shared/session';
 import type { TsvReadResult } from '../shared/types';
 import type { PlayCsvReadResult } from '../shared/uploadSnapshot';
+import type { PlayDetail } from '../shared/uploadSnapshot';
 
 const IIDX_RE = /^[A-Z]\d{12}$/;
 // 기존 스냅샷 대비 허용하는 최소 행 수 비율
@@ -100,10 +101,48 @@ export function accountPlayCsvPath(iidxId: string): string | null {
 export function accountPlayDetailPath(iidxId: string): string | null {
   return IIDX_RE.test(iidxId) ? join(accountDir(iidxId), 'plays_detail.jsonl') : null;
 }
+
+function isPlayDetail(value: unknown): value is PlayDetail {
+  if (!value || typeof value !== 'object') return false;
+  const d = value as Record<string, unknown>;
+  const count = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0;
+  const counts = (v: unknown, length: number): v is number[] => Array.isArray(v) && v.length === length && v.every(count);
+  const side = (v: unknown): boolean => {
+    if (!v || typeof v !== 'object') return false;
+    const s = v as Record<string, unknown>;
+    const fs = s.fs === null || (s.fs !== null && typeof s.fs === 'object'
+      && ['fast_great', 'fast_good', 'slow_great', 'slow_good'].every(k => count((s.fs as Record<string, unknown>)[k])));
+    const lanes = Array.isArray(s.lanes) && s.lanes.length === 8 && s.lanes.every(row => counts(row, 6));
+    const laneFs = s.lane_fs === null || (Array.isArray(s.lane_fs) && s.lane_fs.length === 8 && s.lane_fs.every(row => counts(row, 4)));
+    if (typeof s.fs_ok !== 'boolean' || typeof s.lanes_ok !== 'boolean' || !count(s.fs_unresolved)
+      || !count(s.lane_fs_unresolved) || !lanes || !fs || !laneFs) return false;
+    return d.complete !== false || (s.fs === null && s.lane_fs === null);
+  };
+  return d.v === 1 && typeof d.timestamp === 'string' && typeof d.complete === 'boolean'
+    && count(d.samples) && typeof d.dt_ms === 'number' && Number.isFinite(d.dt_ms) && d.dt_ms >= 0
+    && side(d.p1) && side(d.p2);
+}
+
 export async function readAccountPlayCsv(iidxId: string): Promise<PlayCsvReadResult> {
   const path = accountPlayCsvPath(iidxId);
   if (!path) return { ok: false, error: 'invalid id' };
-  try { return { ok: true, csv: await fsp.readFile(path, 'utf8') }; }
+  try {
+    const csv = await fsp.readFile(path, 'utf8');
+    const detailsPath = accountPlayDetailPath(iidxId)!;
+    let details: PlayDetail[] = [];
+    try {
+      const text = await fsp.readFile(detailsPath, 'utf8');
+      const byTimestamp = new Map<string, PlayDetail>();
+      for (const line of text.split(/\r?\n/)) {
+        try {
+          const value: unknown = JSON.parse(line);
+          if (isPlayDetail(value)) byTimestamp.set(value.timestamp, value);
+        } catch { /* invalid or incomplete JSONL line */ }
+      }
+      details = [...byTimestamp.values()];
+    } catch { /* detail data is optional and must not affect CSV reads */ }
+    return details.length > 0 ? { ok: true, csv, details } : { ok: true, csv };
+  }
   catch (e) {
     if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { ok: true, found: false, csv: '' };
     return { ok: false, error: (e as Error).message };

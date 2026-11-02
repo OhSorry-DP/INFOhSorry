@@ -42,6 +42,12 @@ export function composeV3Profile(remote: AnyRecord, cdn: AnyRecord | null, songI
     if (remote[from] !== null && remote[from] !== undefined) out.user[to] = remote[from];
   }
   if (out.user.iidx_id == null) out.user.iidx_id = remote.iidx_id ?? null;
+  const normalizeUserId = (value: unknown): string => String(value ?? '').replace(/-/g, '').trim().toUpperCase();
+  const responseId = normalizeUserId(out.user.iidx_id);
+  const remoteId = normalizeUserId(remote.iidx_id);
+  out.user.plays = responseId && remoteId && responseId === remoteId && Array.isArray(remote.plays)
+    ? remote.plays.slice(-10)
+    : [];
   let matched = 0;
   let unmatched = 0;
 
@@ -70,7 +76,7 @@ export function composeV3Profile(remote: AnyRecord, cdn: AnyRecord | null, songI
   apply('dp', Array.isArray(remote.charts_json) ? remote.charts_json : []);
   apply('sp', Array.isArray(remote.sp_charts_json) ? remote.sp_charts_json : []);
   out._remote = { matched, unmatched, cdn: cdn ? 'ok' : 'notfound' };
-  const normalizedId = String(remote.iidx_id ?? '').replace(/-/g, '').trim().toUpperCase();
+  const normalizedId = remoteId;
   const cdnOwner = String(cdn?.user?.iidx_id ?? '').replace(/-/g, '').trim().toUpperCase();
   const ownerMatches = !cdn || !cdnOwner || cdnOwner === normalizedId;
   out.remote_recent = { iidx_id: normalizedId, date_kst: new Date(Date.parse(nowIso) + 9 * 3600000).toISOString().slice(0, 10), cdn_revision: ownerMatches && cdn?._v != null ? String(cdn._v) : null, rows: ownerMatches && songIndex ? buildRemoteRecentRows(mappedRows, cdn, nowIso) : [] };
