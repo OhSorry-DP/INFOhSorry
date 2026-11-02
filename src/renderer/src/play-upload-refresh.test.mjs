@@ -191,7 +191,7 @@ test('App places PLAY LOG after RECENT and passes profile ID while retaining pla
   const buttons = appSource.slice(appSource.indexOf("onClick={() => setTab('recent')}") - 100, appSource.indexOf("onClick={() => setTab('playdata')}") + 120);
   assert.ok(buttons.indexOf('RECENT') < buttons.indexOf('PLAY LOG'));
   assert.ok(buttons.indexOf('PLAY LOG') < buttons.indexOf('PLAYDATA'));
-  assert.match(appSource, /<RecentPlays iidxId=\{profile\.iidxId\} \/>/);
+  assert.match(appSource, /<RecentPlays iidxId=\{cardId\} \/>/);
   assert.match(appSource, /useState<Tab>\('playdata'\)/);
   assert.match(appSource, /tab === 'recent' \|\| tab === 'plays' \|\| tab === 'analysis' \|\| tab === 'playdata'/);
 });

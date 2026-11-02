@@ -2326,7 +2326,7 @@ export default function App() {
                 }}
               />
             ) : tab === 'plays' ? (
-              <RecentPlays iidxId={profile.iidxId} />
+              <RecentPlays iidxId={cardId} />
             ) : tab === 'playdata' ? (
               <PlayData
                 rows={rows}
