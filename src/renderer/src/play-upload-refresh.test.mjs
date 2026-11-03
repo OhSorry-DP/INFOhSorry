@@ -760,3 +760,15 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
   assert.equal(missing.filter(node => node.type === 'button' && node.props.className === '__uprofile_play_inactive').length, 8);
   assert.ok(missingBadges.filter(node => !node.props.className.split(' ').includes('__uprofile_play_rank_inactive')).every(node => node.props.children === '—'));
 });
+
+test('Recent lane rating keeps side names and omits unresolved lane counts for missing, zero, and positive values', () => {
+  for (const value of [undefined, 0, 3]) {
+    const detail = value === undefined ? { complete: true, p1: {}, p2: {} } : { complete: true, p1: { lane_fs_unresolved: value }, p2: { lane_fs_unresolved: value } };
+    const headings = flatten(detailTree(detail)).filter(node => node.type === 'h5').map(node => node.props.children.flat().join(''));
+    assert.deepEqual(headings, ['PLAYER1', 'PLAYER2']);
+    assert.doesNotMatch(headings.join(' '), /레인 미확정/);
+  }
+  const missingHeadings = flatten(detailTree(null)).filter(node => node.type === 'h5').map(node => node.props.children.flat().join(''));
+  assert.deepEqual(missingHeadings, ['PLAYER1', 'PLAYER2']);
+  assert.doesNotMatch(missingHeadings.join(' '), /레인 미확정/);
+});
