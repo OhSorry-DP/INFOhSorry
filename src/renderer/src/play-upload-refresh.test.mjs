@@ -86,8 +86,12 @@ const recentPlaysSource = recentSource.slice(recentSource.indexOf('export functi
 const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentDetail = recentSource.slice(recentSource.indexOf('function detailSideHidden('), recentSource.indexOf('\nexport function RecentPlays('));
+const lampStyleSource = read('./lampStyle.ts');
+const lampStyleCode = ts.transpileModule(`${lampStyleSource.slice(lampStyleSource.indexOf('function lampStyle('), lampStyleSource.indexOf('\n// lampNum')).replace('export function lampStyle(', 'function lampStyle(')}; lampStyle`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const lampStyleFn = vm.runInNewContext(lampStyleCode, {});
 const recentControllerSource = recentSource.slice(recentSource.indexOf('function laneCounterIndex('), recentSource.indexOf('\nfunction renderPlayDetail('));
-const recentDetailCode = ts.transpileModule(`${recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction recentPlayTime('))}; ${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation, laneKeyEvaluation })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const recentDisplaySource = recentSource.slice(recentSource.indexOf('function playLampLabel('), recentSource.indexOf('\nfunction playScoreInfo('));
+const recentDetailCode = ts.transpileModule(`${recentDisplaySource}; ${recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction playLampLabel('))}; ${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation, laneKeyEvaluation, playLampLabel, playMissLabel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
@@ -107,14 +111,15 @@ function detailTree(detail, play = {}) {
   const React = { createElement: (type, props, ...children) => type === PlayLaneController || type === PlayLaneDetail
     ? type(props)
     : ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
-  const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: {}, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; }, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
+  const module = vm.runInNewContext(recentDetailCode, { React, LAMP_NUM_TO_ABBR: { 0: 'NP', 1: 'F', 2: 'AC', 3: 'EC', 4: 'NC', 5: 'HC', 6: 'EX', 7: 'FC' }, lampStyle: lampStyleFn, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; }, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
   PlayLaneController = module.PlayLaneController;
   PlayLaneDetail = module.PlayLaneDetail;
   const { renderPlayDetail } = module;
-  return renderPlayDetail(detail, play);
+  return renderPlayDetail(detail, play, 12, 'SPH');
 }
-function recentCalculations() {
-  return vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) }, LAMP_NUM_TO_ABBR: {}, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; } });
+function recentCalculations(lampStyleDependency = lampStyleFn) {
+  const module = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) }, LAMP_NUM_TO_ABBR: { 0: 'NP', 1: 'F', 2: 'AC', 3: 'EC', 4: 'NC', 5: 'HC', 6: 'EX', 7: 'FC' }, lampStyle: lampStyleDependency, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; } });
+  return module;
 }
 function flatten(node, result = []) {
   if (node == null || typeof node === 'boolean') return result;
@@ -256,6 +261,38 @@ test('RecentPlays renders missing detail and one-column section structure', () =
   assert.match(recentDetail, /if \(!detail\) return/);
   assert.match(recentDetail, /SCORE <b>\{play\.ex_score === '' \? '—' : play\.ex_score\}/);
   assert.doesNotMatch(recentDetail, /play\.detail \? 0|detail \? 0/);
+});
+
+test('RecentPlays summary has five cells and detail headers and display values match for both branches', () => {
+  const summarySource = recentSource.slice(recentSource.indexOf('export function RecentPlays('), recentSource.indexOf('\nexport default function Recent('));
+  const transpiled = ts.transpileModule(`${summarySource.replace('export function RecentPlays(', 'function RecentPlays(')}; RecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+  const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
+  let stateCall = 0;
+  const RecentPlays = vm.runInNewContext(transpiled, { React, useState: initial => [stateCall++ === 0 ? [{ timestamp: 't', title: 'Song', difficulty: 'SPH', ex_score: '1' }] : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update([{ timestamp: 't', title: 'Song', difficulty: 'SPH', ex_score: '1' }], null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: () => 12, playScoreInfo: () => ({ rank: 'A', rate: '50%', next: 'AA-0001' }), recentPlayTime: () => 'time', renderPlayDetail: () => null, norm: value => value, DP_SLOTS: [] });
+  const tree = RecentPlays({ iidxId: 'id' });
+  const summary = flatten(tree).find(node => node.type === 'summary');
+  assert.equal(summary.props.children.length, 5);
+  assert.deepEqual(summary.props.children.map(node => node.props.className), [undefined, undefined, undefined, undefined, '__uprofile_recentplays_chev']);
+  assert.doesNotMatch(JSON.stringify(summary), /AA-0001|50%|12 ·/);
+
+  const play = { title: 'Song', clear_lamp: '1', miss_count: '0', ex_score: '10', notes: '10', settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0', difficulty: 'SPH' };
+  for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
+    const nodes = flatten(detailTree(detail, play));
+    const header = nodes.find(node => node.props?.className === '__uprofile_play_head');
+    const parts = header.props.children;
+    assert.deepEqual(parts.map(node => node.props.className), ['__uprofile_play_head_level', '__uprofile_play_head_title', '__uprofile_play_head_chart', '__uprofile_play_head_options']);
+    assert.deepEqual(parts.map(node => node.props.children), [12, 'Song', 'SPH', 'OFF / OFF']);
+    const values = nodes.filter(node => node.type === 'b').map(node => node.props.children);
+    assert.ok(values.includes('FAILED'));
+    assert.ok(values.includes('0'));
+  }
+  const { playLampLabel, playMissLabel } = recentCalculations(lampStyleFn);
+  assert.equal(playLampLabel('0'), 'NO PLAY');
+  assert.equal(playLampLabel('1'), 'FAILED');
+  assert.equal(playLampLabel('7'), 'F-COMBO');
+  for (const value of ['', '-1', '1.5', '8', 'nope']) assert.equal(playLampLabel(value), '—');
+  for (const value of ['', '-1', 'nope', '1.5']) assert.equal(playMissLabel(value), '—');
+  assert.equal(playMissLabel('0'), '0');
 });
 
 test('Recent detail aggregation, badges, and per-key detail use current DOM', () => {
