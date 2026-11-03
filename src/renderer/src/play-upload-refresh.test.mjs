@@ -476,6 +476,27 @@ test('Recent display lane order validates permutation and hides S-RAN or missing
   assert.equal(displayLaneOrder('0035641', 'P1', play), '—');
 });
 
+test('Recent renders seven ordered lane tiles for both detail states with position colors and inactive SP side', () => {
+  const play = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', lane_order_p1: '3456120', lane_order_p2: undefined, settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0' };
+  for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
+    const nodes = flatten(detailTree(detail, play));
+    const rows = nodes.filter(node => node.props?.className?.startsWith('__uprofile_play_pattern_row'));
+    assert.equal(rows.length, 2);
+    assert.ok(rows[0].props.className.includes('__uprofile_play_inactive') === false);
+    assert.ok(rows[1].props.className.includes('__uprofile_play_inactive'));
+    const tiles = nodes.filter(node => node.props?.className?.split(' ').includes('__uprofile_play_pattern_tile'));
+    assert.equal(tiles.length, 7);
+    assert.deepEqual(tiles.map(node => node.props.children.props.children), ['4', '5', '6', '7', '2', '3', '1']);
+    assert.deepEqual(tiles.map(node => node.props.className.includes('__uprofile_play_pattern_tile_white')), [true, false, true, false, true, false, true]);
+    assert.ok(nodes.filter(node => node.props?.className === '__uprofile_play_pattern_digit').length === 7);
+    assert.ok(nodes.some(node => node.type === 'span' && node.props?.children === '—'));
+  }
+  const { displayLaneOrder } = recentCalculations();
+  const inactiveOrder = { ...play, settings_p1_11: '3 0 0 0 0 0 0 0 0 0 0' };
+  assert.equal(displayLaneOrder('3456120', 'P1', inactiveOrder), '—');
+  assert.equal(displayLaneOrder(undefined, 'P1', play), '—');
+});
+
 test('Recent lane counter indices keep key order and scratch at seven', () => {
   const { laneCounterIndex } = recentCalculations();
   assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map(laneCounterIndex), [0, 1, 2, 3, 4, 5, 6]);
