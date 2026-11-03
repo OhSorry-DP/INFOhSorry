@@ -395,35 +395,35 @@ test('Recent hides a side only when every lane count and FS count is zero or FS 
 
 test('Recent controller and key detail CSS positions keys and keeps detail bounded, scrollable, and keyboard visible', () => {
   assert.match(recentCss, /\.\_\_uprofile_play_panel_scroll\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_panel\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;[^}]*gap:\s*16px;[^}]*width:\s*max-content;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*8px;[^}]*width:\s*max-content;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_keyboard\s*\{[^}]*position:\s*relative;[^}]*width:\s*136px;[^}]*height:\s*150px;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_panel\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;[^}]*gap:\s*calc\(16 \* var\(--u\)\);[^}]*width:\s*max-content;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*calc\(8 \* var\(--u\)\);[^}]*width:\s*max-content;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_keyboard\s*\{[^}]*position:\s*relative;[^}]*width:\s*calc\(136 \* var\(--u\)\);[^}]*height:\s*calc\(150 \* var\(--u\)\);/s);
   for (const [key, left] of [[1, 0], [3, 34], [5, 68], [7, 102], [2, 22], [4, 56], [6, 90]]) {
-    assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\][\\s\\S]*?\\{\\s*left:\\s*${left}px;`));
+    assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{\\s*left:\\s*calc\\(${left} \\* var\\(--u\\)\\);`));
   }
-  for (const key of [1, 3, 5, 7]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\][\\s\\S]*?\\{[^}]*width:\\s*34px;`));
-  for (const key of [2, 4, 6]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\][\\s\\S]*?\\{[^}]*width:\\s*24px;[^}]*z-index:\\s*1;`));
-  assert.match(recentCss, /\.\_\_uprofile_play_unit_white\s*\{\s*top:\s*66px;/);
+  for (const key of [1, 3, 5, 7]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{[^}]*width:\\s*calc\\(34 \\* var\\(--u\\)\\)`));
+  for (const key of [2, 4, 6]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{[^}]*width:\\s*calc\\(24 \\* var\\(--u\\)\\);[^}]*z-index:\\s*1;`));
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_white\s*\{\s*top:\s*calc\(66 \* var\(--u\)\);/);
   assert.match(recentCss, /\.\_\_uprofile_play_unit_black\s*\{\s*top:\s*0;/);
-  assert.match(recentCss, /\.\_\_uprofile_play_unit_scratch\s*\{[^}]*width:\s*104px;[^}]*height:\s*104px;[^}]*border-radius:\s*50%;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_white\s*\{[^}]*height:\s*64px/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_black\s*\{[^}]*height:\s*44px/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_scratch\s*\{[^}]*width:\s*calc\(104 \* var\(--u\)\);[^}]*height:\s*calc\(104 \* var\(--u\)\);[^}]*border-radius:\s*50%;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_white\s*\{[^}]*height:\s*calc\(64 \* var\(--u\)\)/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_black\s*\{[^}]*height:\s*calc\(44 \* var\(--u\)\)/s);
   assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*nth-of-type/);
   assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*transform:\s*translate/);
   for (const [variant, declarations] of [
-    ['scratch', 'border:\\s*2px solid #e33b3b;[^}]*background:\\s*#17191e;[^}]*color:\\s*#fff'],
-    ['black', 'background:\\s*#174b94;[^}]*border:\\s*1px solid #3985df;[^}]*color:\\s*#fff'],
-    ['white', 'background:\\s*#f3f3f3;[^}]*border:\\s*1px solid #b8b8b8;[^}]*color:\\s*#222'],
+    ['scratch', 'border:\\s*calc\\(2 \\* var\\(--u\\)\\) solid #e33b3b;[^}]*background:\\s*#17191e;[^}]*color:\\s*#fff'],
+    ['black', 'background:\\s*#174b94;[^}]*border:\\s*calc\\(1 \\* var\\(--u\\)\\) solid #3985df;[^}]*color:\\s*#fff'],
+    ['white', 'background:\\s*#f3f3f3;[^}]*border:\\s*calc\\(1 \\* var\\(--u\\)\\) solid #b8b8b8;[^}]*color:\\s*#222'],
   ]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_rank_${variant}\\s*\\{[^}]*${declarations}`, 's'));
   assert.match(recentCss, /\.\_\_uprofile_play_rank_inactive\s*\{[^}]*background:\s*#555;[^}]*border-color:\s*#777;[^}]*color:\s*transparent;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_inactive\s*\{[^}]*opacity:\s*\.45;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_pattern_row\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*align-items:\s*center;[^}]*gap:\s*4px;[^}]*flex:\s*none;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_row\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*align-items:\s*center;[^}]*gap:\s*calc\(4 \* var\(--u\)\);[^}]*flex:\s*none;/s);
   assert.doesNotMatch(recentCss, /\.\_\_uprofile_play_pattern_row \+ \.\_\_uprofile_play_pattern_row\s*\{/);
-  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tiles\s*\{[^}]*display:\s*flex;[^}]*gap:\s*3px;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile\s*\{[^}]*width:\s*30px;[^}]*height:\s*42px;[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*border:\s*1px solid #555;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tiles\s*\{[^}]*display:\s*flex;[^}]*gap:\s*calc\(3 \* var\(--u\)\);/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile\s*\{[^}]*width:\s*calc\(30 \* var\(--u\)\);[^}]*height:\s*calc\(42 \* var\(--u\)\);[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*border:\s*calc\(1 \* var\(--u\)\) solid #555;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile_white\s*\{\s*background:\s*#f3f3f3;/);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile_black\s*\{\s*background:\s*#181a1f;/);
-  assert.match(recentCss, /\.\_\_uprofile_play_pattern_digit\s*\{[^}]*color:\s*#ff8a00;[^}]*font-weight:\s*700;[^}]*font-size:\s*18px;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_digit\s*\{[^}]*color:\s*#ff8a00;[^}]*font-weight:\s*700;[^}]*font-size:\s*calc\(18 \* var\(--u\)\);/s);
   assert.match(recentCss, /\.\_\_uprofile_play_inactive\s*\{\s*color:\s*var\(--text-secondary\);\s*opacity:\s*\.82;/);
   assert.match(recentCss, /\.\_\_uprofile_play_controller button:focus-visible\s*\{\s*outline:\s*2px solid var\(--text-primary\);\s*outline-offset:\s*2px;/);
   assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_fill \{ background: #62e2c4; \}/);
@@ -547,7 +547,7 @@ test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, 
     const p1 = rows[0].props.children[0].props.children;
     const p2 = rows[1].props.children[0].props.children;
     assert.deepEqual(Array.from(p1, tile => tile.props.children.props.children), ['4', '5', '6', '7', '2', '3', '1']);
-    assert.deepEqual(Array.from(p1, tile => exact(tile, '__uprofile_play_pattern_tile_white')), [true, false, true, false, true, false, true]);
+    assert.deepEqual(Array.from(p1, tile => exact(tile, '__uprofile_play_pattern_tile_white') ? 'white' : 'black'), ['black', 'white', 'black', 'white', 'black', 'white', 'white']);
     assert.deepEqual(Array.from(p2, tile => tile.props.children.props.children), ['', '', '', '', '', '', '']);
     assert.ok(exact(rows[1], '__uprofile_play_pattern_inactive'));
     assert.equal(p2.length, 7);
@@ -572,6 +572,8 @@ test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, 
       ['4', '5', '6', '7', '2', '3', '1'], ['1', '2', '3', '4', '5', '6', '7'],
     ]);
   }
+  const ascending = inspect({ complete: true, p1: {}, p2: {} }, { ...activeSp, lane_order_p1: '0123456' }).rows[0].props.children[0].props.children;
+  assert.deepEqual(Array.from(ascending, tile => exact(tile, '__uprofile_play_pattern_tile_white') ? 'white' : 'black'), ['white', 'black', 'white', 'black', 'white', 'black', 'white']);
   for (const play of [
     { ...activeSp, settings_p1_11: '3 0 0 0 0 0 0 0 0 0 0' },
     { ...activeSp, lane_order_p1: '0035641' },
@@ -582,10 +584,22 @@ test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, 
   }
   const cssRule = selector => recentCss.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
   const declaration = (body, property) => body.match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`))?.[1]?.trim();
-  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'overflow-x'), 'auto');
+  assert.match(declaration(cssRule('\\.__uprofile_play_pattern'), 'container-type'), /inline-size/);
+  assert.match(declaration(cssRule('\\.__uprofile_play_rating'), 'container-type'), /inline-size/);
+  for (const selector of ['\\.__uprofile_play_pattern_scroll', '\\.__uprofile_play_panel_scroll']) {
+    const body = cssRule(selector);
+    assert.match(declaration(body, '--u'), /clamp\(0\.5px, calc\(100cqi \/ 540\), 1px\)/);
+    assert.equal(declaration(body, 'max-width'), '100%');
+    assert.equal(declaration(body, 'min-width'), '0');
+    assert.equal(declaration(body, 'overflow-x'), 'auto');
+    assert.equal(Math.max(.5, Math.min(1, 540 / 540)), 1);
+    assert.equal(Math.max(.5, Math.min(1, 270 / 540)), .5);
+    assert.equal(270 * Math.max(.5, Math.min(1, 270 / 540)), 135);
+    assert.equal(269 * Math.max(.5, Math.min(1, 269 / 540)), 134.5);
+  }
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'max-width'), '100%');
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'min-width'), '0');
-  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'gap'), '16px');
+  assert.match(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'gap'), /calc\(16 \* var\(--u\)\)/);
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'flex-wrap'), 'nowrap');
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_tile_white'), 'background'), '#f3f3f3');
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_tile_black'), 'background'), '#181a1f');
