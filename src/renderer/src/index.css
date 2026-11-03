@@ -3204,7 +3204,8 @@ body {
 .__uprofile_play_pattern b { color: var(--text-primary); font-weight: 600; }
 .__uprofile_play_pattern,
 .__uprofile_play_rating { display: grid; gap: 8px; min-width: 0; color: var(--text-secondary); font-size: 12px; }
-.__uprofile_play_pattern > div { overflow-wrap: anywhere; }
+.__uprofile_play_pattern_scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
+.__uprofile_play_pattern_groups { display: flex; flex-wrap: nowrap; gap: 16px; width: max-content; }
 .__uprofile_play_rating > div { display: grid; gap: 6px; min-width: 0; }
 .__uprofile_play_rating h5 { margin: 0; color: var(--text-secondary); font-size: 12px; font-weight: 600; }
 .__uprofile_play_panel_scroll { max-width: 100%; overflow-x: auto; }
@@ -3234,13 +3235,15 @@ body {
 .__uprofile_play_rank_black { background: #174b94; border: 1px solid #3985df; color: #fff; }
 .__uprofile_play_rank_white { background: #f3f3f3; border: 1px solid #b8b8b8; color: #222; }
 .__uprofile_play_rank_inactive { background: #555; border-color: #777; color: transparent; }
-.__uprofile_play_pattern_row { display: flex; align-items: center; gap: 8px; }
-.__uprofile_play_pattern_row + .__uprofile_play_pattern_row { margin-top: 8px; }
+.__uprofile_play_pattern_row { display: flex; flex-direction: column; align-items: center; gap: 4px; flex: none; }
+.__uprofile_play_pattern_label { font-size: 10px; color: var(--text-muted); text-align: center; white-space: nowrap; }
 .__uprofile_play_pattern_tiles { display: flex; gap: 3px; }
 .__uprofile_play_pattern_tile { width: 30px; height: 42px; display: flex; align-items: center; justify-content: center; border: 1px solid #555; }
 .__uprofile_play_pattern_tile_white { background: #f3f3f3; }
 .__uprofile_play_pattern_tile_black { background: #181a1f; }
 .__uprofile_play_pattern_digit { color: #ff8a00; font-weight: 700; font-size: 18px; }
+.__uprofile_play_pattern_inactive .__uprofile_play_pattern_tile { background: #3a3f47; border-color: #4b5563; opacity: .45; }
+.__uprofile_play_pattern_inactive .__uprofile_play_pattern_label { opacity: .45; }
 .__uprofile_play_keydetail { display: grid; gap: 3px; width: 100%; min-width: 0; }
 .__uprofile_play_keydetail_row { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px 4px; min-width: 0; font-size: 10px; font-variant-numeric: tabular-nums; }
 .__uprofile_play_keydetail_row > * { min-width: 0; overflow-wrap: anywhere; }

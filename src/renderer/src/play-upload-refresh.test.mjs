@@ -417,8 +417,8 @@ test('Recent controller and key detail CSS positions keys and keeps detail bound
   ]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_rank_${variant}\\s*\\{[^}]*${declarations}`, 's'));
   assert.match(recentCss, /\.\_\_uprofile_play_rank_inactive\s*\{[^}]*background:\s*#555;[^}]*border-color:\s*#777;[^}]*color:\s*transparent;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_inactive\s*\{[^}]*opacity:\s*\.45;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_pattern_row\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*8px;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_pattern_row \+ \.\_\_uprofile_play_pattern_row\s*\{\s*margin-top:\s*8px;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_row\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*align-items:\s*center;[^}]*gap:\s*4px;[^}]*flex:\s*none;/s);
+  assert.doesNotMatch(recentCss, /\.\_\_uprofile_play_pattern_row \+ \.\_\_uprofile_play_pattern_row\s*\{/);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_tiles\s*\{[^}]*display:\s*flex;[^}]*gap:\s*3px;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile\s*\{[^}]*width:\s*30px;[^}]*height:\s*42px;[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*border:\s*1px solid #555;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile_white\s*\{\s*background:\s*#f3f3f3;/);
@@ -502,25 +502,87 @@ test('Recent display lane order validates permutation and hides S-RAN or missing
   assert.equal(displayLaneOrder('0035641', 'P1', play), '—');
 });
 
-test('Recent renders seven ordered lane tiles for both detail states with position colors and inactive SP side', () => {
-  const play = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', lane_order_p1: '3456120', lane_order_p2: undefined, settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0' };
-  for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
+test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, and missing side data', () => {
+  const exact = (node, name) => node?.props?.className?.split(' ').includes(name) === true;
+  const textContent = value => Array.isArray(value) ? value.map(textContent).join('') : value && typeof value === 'object' ? textContent(value.props?.children) : value ?? '';
+  const inspect = (detail, play) => {
     const nodes = flatten(detailTree(detail, play));
-    const rows = nodes.filter(node => node.props?.className?.startsWith('__uprofile_play_pattern_row'));
-    assert.equal(rows.length, 2);
-    assert.ok(rows[0].props.className.includes('__uprofile_play_inactive') === false);
-    assert.ok(rows[1].props.className.includes('__uprofile_play_inactive'));
-    const tiles = nodes.filter(node => node.props?.className?.split(' ').includes('__uprofile_play_pattern_tile'));
-    assert.equal(tiles.length, 7);
-    assert.deepEqual(tiles.map(node => node.props.children.props.children), ['4', '5', '6', '7', '2', '3', '1']);
-    assert.deepEqual(tiles.map(node => node.props.className.includes('__uprofile_play_pattern_tile_white')), [true, false, true, false, true, false, true]);
-    assert.ok(nodes.filter(node => node.props?.className === '__uprofile_play_pattern_digit').length === 7);
-    assert.ok(nodes.some(node => node.type === 'span' && node.props?.children === '—'));
+    const groups = nodes.filter(node => exact(node, '__uprofile_play_pattern_groups'));
+    assert.equal(groups.length, 1);
+    const rows = groups[0].props.children;
+    assert.deepEqual(Array.from(rows, row => textContent(row.props.children[1])), ['PLAYER 1 LANE', 'PLAYER 2 LANE']);
+    for (const [index, label] of ['PLAYER 1 LANE', 'PLAYER 2 LANE'].entries()) {
+      const row = rows[index];
+      assert.ok(exact(row, '__uprofile_play_pattern_row'));
+      const [tileContainer, rowLabel] = row.props.children;
+      assert.ok(exact(tileContainer, '__uprofile_play_pattern_tiles'));
+      assert.ok(exact(rowLabel, '__uprofile_play_pattern_label'));
+      assert.equal(textContent(rowLabel), label);
+      assert.equal(row.props.children.length, 2);
+      const tiles = tileContainer.props.children;
+      if (Array.isArray(tiles)) {
+        assert.equal(tiles.length, 7);
+        assert.ok(tiles.every(tile => exact(tile, '__uprofile_play_pattern_tile')));
+      }
+    }
+    assert.equal(nodes.filter(node => exact(node, '__uprofile_play_pattern_label')).length, 2);
+    assert.equal(nodes.filter(node => node.type === 'span' && node.props?.children === 'PLAYER 1 LANE' && exact(node, '__uprofile_play_pattern_tiles')).length, 0);
+    return { nodes, rows };
+  };
+  const activeSp = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0', lane_order_p1: '3456120', lane_order_p2: undefined, settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0' };
+  for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
+    const { rows } = inspect(detail, activeSp);
+    const p1 = rows[0].props.children[0].props.children;
+    const p2 = rows[1].props.children[0].props.children;
+    assert.deepEqual(Array.from(p1, tile => tile.props.children.props.children), ['4', '5', '6', '7', '2', '3', '1']);
+    assert.deepEqual(Array.from(p1, tile => exact(tile, '__uprofile_play_pattern_tile_white')), [true, false, true, false, true, false, true]);
+    assert.deepEqual(Array.from(p2, tile => tile.props.children.props.children), ['', '', '', '', '', '', '']);
+    assert.ok(exact(rows[1], '__uprofile_play_pattern_inactive'));
+    assert.equal(p2.length, 7);
   }
-  const { displayLaneOrder } = recentCalculations();
-  const inactiveOrder = { ...play, settings_p1_11: '3 0 0 0 0 0 0 0 0 0 0' };
-  assert.equal(displayLaneOrder('3456120', 'P1', inactiveOrder), '—');
-  assert.equal(displayLaneOrder(undefined, 'P1', play), '—');
+  for (const extra of [{ lane_order_p2: '0123456' }, { lane_order_p2: '0123456', settings_p2_11: '3 0 0 0 0 0 0 0 0 0 0' }]) {
+    const { rows } = inspect(null, { ...activeSp, ...extra });
+    assert.deepEqual(Array.from(rows[1].props.children[0].props.children, tile => tile.props.children.props.children), ['', '', '', '', '', '', '']);
+  }
+  const p2Sp = { ...activeSp, judge_16: '0 0 0 0 0 0 1 0 0 0 0 0 0 0 0 0', lane_order_p1: '0123456', lane_order_p2: '6543210' };
+  for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
+    const { rows } = inspect(detail, p2Sp);
+    assert.deepEqual(Array.from(rows[0].props.children[0].props.children, tile => tile.props.children.props.children), ['', '', '', '', '', '', '']);
+    assert.deepEqual(Array.from(rows[1].props.children[0].props.children, tile => tile.props.children.props.children), ['7', '6', '5', '4', '3', '2', '1']);
+    assert.ok(exact(rows[0], '__uprofile_play_pattern_inactive'));
+  }
+  for (const play of [
+    { ...activeSp, difficulty: 'DPN', lane_order_p2: '0123456', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0' },
+    { ...activeSp, difficulty: 'SPN', battle_flag: '1', lane_order_p2: '0123456', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0' },
+  ]) {
+    const { rows } = inspect({ complete: true, p1: {}, p2: {} }, play);
+    assert.deepEqual(Array.from(rows, row => Array.from(row.props.children[0].props.children, tile => tile.props.children.props.children)), [
+      ['4', '5', '6', '7', '2', '3', '1'], ['1', '2', '3', '4', '5', '6', '7'],
+    ]);
+  }
+  for (const play of [
+    { ...activeSp, settings_p1_11: '3 0 0 0 0 0 0 0 0 0 0' },
+    { ...activeSp, lane_order_p1: '0035641' },
+    { ...activeSp, judge_16: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' },
+  ]) {
+    const { rows } = inspect(null, play);
+    assert.equal(rows[0].props.children[0].props.children, '—');
+  }
+  const cssRule = selector => recentCss.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
+  const declaration = (body, property) => body.match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`))?.[1]?.trim();
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'overflow-x'), 'auto');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'max-width'), '100%');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'min-width'), '0');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'gap'), '16px');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'flex-wrap'), 'nowrap');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_tile_white'), 'background'), '#f3f3f3');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_tile_black'), 'background'), '#181a1f');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_digit'), 'color'), '#ff8a00');
+  const inactiveTile = cssRule('\\.__uprofile_play_pattern_inactive\\s+\\.__uprofile_play_pattern_tile');
+  assert.equal(declaration(inactiveTile, 'background'), '#3a3f47');
+  assert.equal(declaration(inactiveTile, 'border-color'), '#4b5563');
+  assert.equal(declaration(inactiveTile, 'opacity'), '.45');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_inactive\\s+\\.__uprofile_play_pattern_label'), 'opacity'), '.45');
 });
 
 test('Recent lane counter indices keep key order and scratch at seven', () => {
