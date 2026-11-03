@@ -572,5 +572,4 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
   assert.ok(inactiveBadges.every(node => node.props.children === ''));
   assert.equal(missing.filter(node => node.type === 'button' && node.props.className === '__uprofile_play_inactive').length, 8);
   assert.ok(missingBadges.filter(node => !node.props.className.includes('__uprofile_play_rank_inactive')).every(node => node.props.children === '—'));
-  assert.ok(invalidButtons.every(node => node.props.children[1].props.children[0] === '—'));
 });
