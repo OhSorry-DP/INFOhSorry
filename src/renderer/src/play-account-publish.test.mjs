@@ -85,6 +85,35 @@ test('append 이벤트는 CSV를 다시 읽어 remote plays를 갱신', () => {
   assert.match(appSource, /await readPlayCsv\(iidxId\)/);
 });
 
+test('append 한 번으로 플레이 결과와 무관하게 동일 판 DBR 저장을 실행', async () => {
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.match(append, /await uploadAutomaticDbr\(plays, iidxId, gameRecognized\)/);
+  const calls = []; const diagnostics = [];
+  const globals = {
+    APP_VERSION: 'test', refreshRemotePlays: async () => {}, sessionRef: { current: { generation: 1 } },
+    window: { infohsorry: {
+      upload: { readPlayCsv: async id => ({ ok: true, csv: '80121,Fixture Song,SPA,3,1,99,1\n', appVersion: 'test', gameVersion: 'fixture' }) },
+      session: { getState: async () => ({ pid: 5 }) },
+    } },
+    buildUploadPlays: () => [{ song_id: '80121', title: 'Fixture Song', difficulty: 'SPA' }],
+    readIidxIdFresh: async () => ({ iidxId: 'C123456789012', processMissing: false }),
+    uploadAutomaticPlays: async (...args) => { calls.push(['plays', ...args]); return { ok: true }; },
+    uploadAutomaticDbr: async (...args) => { calls.push(['dbr', ...args]); return { ok: true }; },
+    addDiagLine: line => diagnostics.push(line), console: { warn() {} },
+  };
+  const code = ts.transpileModule(`export function setup() { const playsChainByAccount = new Map(); ${append} return handlePlaysAppend; }`,
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const exports = {};
+  vm.runInNewContext(code, { exports, ...globals });
+  exports.setup()({ iidxId: 'C123456789012' });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(calls.map(call => call[0]), ['plays', 'dbr']);
+  assert.equal(calls[0][1], calls[1][1]);
+  assert.equal(calls[0][2], 'C123456789012'); assert.equal(calls[1][2], 'C123456789012');
+  assert.equal(await calls[1][3](), true);
+  assert.deepEqual(diagnostics, []);
+});
+
 test('remote plays 갱신은 자동 전송 성공이나 Bearer 유무에 의존하지 않음', () => {
   const refresh = appSource.slice(appSource.indexOf('const refreshRemotePlays'), appSource.indexOf('function uploadIdentityOk'));
   assert.match(refresh, /remotePlaysRef\.current = \{ iidxId, plays \}/);

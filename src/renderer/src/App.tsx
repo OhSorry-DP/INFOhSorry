@@ -1678,7 +1678,16 @@ export default function App() {
           const normalize = (id: string) => id.trim().replace(/-/g, '').toUpperCase();
           return !fresh.processMissing && normalize(fresh.iidxId ?? '') === normalize(iidxId);
         };
-        await uploadAutomaticPlays(plays, iidxId, gameRecognized);
+        try {
+          await uploadAutomaticPlays(plays, iidxId, gameRecognized);
+        } catch {
+          addDiagLine('플레이 기록 업로드 실패');
+        }
+        try {
+          await uploadAutomaticDbr(plays, iidxId, gameRecognized);
+        } catch {
+          addDiagLine('DBR 자동 저장 실패');
+        }
       }).catch((error: unknown) => { console.warn(`[upload] automatic plays append failed id=${iidxId}:`, error); });
       playsChainByAccount.set(iidxId, next);
       void next.finally(() => { if (playsChainByAccount.get(iidxId) === next) playsChainByAccount.delete(iidxId); }).catch(() => {});
