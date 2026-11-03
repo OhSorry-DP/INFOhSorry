@@ -528,34 +528,49 @@ test('per-key evaluation and detail preserve one lane values, rank, rate, and un
   assert.match(invalid, /"EX% ",\{"type":"b","props":\{"children":"—"\}\}/);
 });
 
-test('Recent lane controllers render both seven-key sides, oriented scratch, ranks, unresolved counts, and activity dimming', () => {
+test('Recent lane controllers render one two-side panel with oriented units, badges, and preserved controls', () => {
   const lanes = Array.from({ length: 8 }, (_, lane) => [lane + 1, 0, 0, 0, 0, 0]);
   const side = { lanes_ok: true, lanes, lane_fs_unresolved: 3, fs: null };
-  const p1Activity = { difficulty: 'SPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
   const controllerHarness = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }) }, LAMP_NUM_TO_ABBR: {}, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; }, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
   const React = { createElement: (type, props, ...children) => type === controllerHarness.PlayLaneController ? type(props) : ({ type, props: { ...(props ?? {}), children } }) };
-  const component = { type: 'section', props: { children: [
-    controllerHarness.PlayLaneController({ side, player: 'P1', activity: 'P1' }),
-    controllerHarness.PlayLaneController({ side, player: 'P2', activity: 'P1' }),
-  ] } };
-  const p1Tree = component.props.children[0];
-  const p2Tree = component.props.children[1];
-  const nodes = flatten([p1Tree, p2Tree, controllerHarness.PlayLaneController({ side, player: 'P1', activity: 'P1' }), controllerHarness.PlayLaneController({ side, player: 'P2', activity: 'P1' })]);
+  const play = { difficulty: 'DPN', battle_flag: '0', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
+  const nodes = flatten(detailTree({ complete: true, p1: side, p2: side }, play));
+  assert.equal(nodes.filter(node => node.props?.className === '__uprofile_play_panel').length, 1);
   const controllers = nodes.filter(node => node.props?.className === '__uprofile_play_controller');
-  assert.equal(controllers.length, 4);
-  const buttons = nodes.filter(node => ['__uprofile_play_scratch', '__uprofile_play_key __uprofile_play_key_white', '__uprofile_play_key __uprofile_play_key_black'].includes(node.props?.className) && node.type === 'button');
+  assert.equal(controllers.length, 2);
+  const buttons = nodes.filter(node => node.type === 'button' && node.props?.['aria-label']);
   assert.equal(buttons.length, 16, JSON.stringify(buttons.map(node => ({ type: node.type, className: node.props.className }))));
-  assert.equal(buttons.filter(node => node.props.className === '__uprofile_play_scratch').length, 2);
-  assert.equal(buttons.filter(node => node.props.className.includes('__uprofile_play_key_white')).length, 8);
-  assert.equal(buttons.filter(node => node.props.className.includes('__uprofile_play_key_black')).length, 6);
-  assert.equal(buttons.filter(node => node.props.className.startsWith('__uprofile_play_key ')).length, 14);
-  assert.equal(buttons[0].props.className, '__uprofile_play_scratch');
-  assert.equal(buttons[8].props.className, '__uprofile_play_scratch');
-  assert.equal(buttons[15].props.className, '__uprofile_play_key __uprofile_play_key_white');
-  assert.deepEqual(buttons.slice(0, 8).map(node => node.props.children[1].props.children[0]), ['AAA', 'AAA', 'AAA', 'AAA', 'AAA', 'AAA', 'AAA', 'AAA']);
-  assert.ok(nodes.filter(node => node.type === 'button' && node.props?.className?.includes('__uprofile_play_inactive')).length >= 7);
-  const invalid = flatten(controllerHarness.PlayLaneController({ side: { ...side, lanes_ok: false }, player: 'P1', activity: 'P1' }));
-  const invalidButtons = invalid.filter(node => node.type === 'button' && (node.props?.className === '__uprofile_play_scratch' || node.props?.className?.startsWith('__uprofile_play_key ')));
-  assert.equal(invalidButtons.length, 8);
+  assert.equal(buttons.length, 16);
+  const p1Units = flatten(controllers[0]).filter(node => node.props?.className?.includes('__uprofile_play_unit'));
+  const p2Units = flatten(controllers[1]).filter(node => node.props?.className?.includes('__uprofile_play_unit'));
+  assert.equal(p1Units.length, 8);
+  assert.equal(p2Units.length, 8);
+  assert.equal(p1Units[0].props.className, '__uprofile_play_unit __uprofile_play_unit_scratch');
+  assert.deepEqual(p1Units.filter(node => node.props['data-key'] != null).map(node => node.props['data-key']), [1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(p2Units.at(-1).props.className, '__uprofile_play_unit __uprofile_play_unit_scratch');
+  assert.deepEqual(p2Units.filter(node => node.props['data-key'] != null).map(node => node.props['data-key']), [1, 2, 3, 4, 5, 6, 7]);
+  const badges = nodes.filter(node => node.props?.className?.includes('__uprofile_play_rank_'));
+  assert.equal(badges.length, 16);
+  assert.deepEqual([...new Set(badges.map(node => node.props.className.match(/__uprofile_play_rank_(scratch|black|white)/)?.[1]))].sort(), ['black', 'scratch', 'white']);
+  assert.ok(badges.every(node => node.props['aria-hidden'] === 'true' && node.props.tabIndex === -1));
+  assert.equal(badges.filter(node => node.props.className.includes('__uprofile_play_rank_white')).length, 8);
+  assert.equal(badges.filter(node => node.props.className.includes('__uprofile_play_rank_black')).length, 6);
+  assert.equal(badges.filter(node => node.props.className.includes('__uprofile_play_rank_scratch')).length, 2);
+  assert.equal(nodes.filter(node => node.props?.className === '__uprofile_play_keyboard').length, 2);
+  for (const button of buttons) {
+    assert.match(button.props['aria-label'], /^(1P|2P) /);
+    assert.equal(button.props['aria-expanded'], false);
+    assert.equal(button.props['aria-describedby'], undefined);
+    assert.equal(typeof button.props.onMouseEnter, 'function');
+    assert.equal(typeof button.props.onFocus, 'function');
+    assert.equal(typeof button.props.onClick, 'function');
+  }
+  const missing = flatten(detailTree(null, { ...play, difficulty: 'SPN', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' }));
+  const missingBadges = missing.filter(node => node.props?.className?.includes('__uprofile_play_rank_'));
+  const inactiveBadges = missingBadges.filter(node => node.props.className.includes('__uprofile_play_rank_inactive'));
+  assert.equal(inactiveBadges.length, 8);
+  assert.ok(inactiveBadges.every(node => node.props.children === ''));
+  assert.equal(missing.filter(node => node.type === 'button' && node.props.className === '__uprofile_play_inactive').length, 8);
+  assert.ok(missingBadges.filter(node => !node.props.className.includes('__uprofile_play_rank_inactive')).every(node => node.props.children === '—'));
   assert.ok(invalidButtons.every(node => node.props.children[1].props.children[0] === '—'));
 });
