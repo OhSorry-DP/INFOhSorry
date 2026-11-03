@@ -3172,7 +3172,7 @@ body {
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
-.__uprofile_recentplays_row > :nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.__uprofile_recentplays_row > :nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .__uprofile_recentplays_row > :last-child { text-align: right; }
 .__uprofile_recentplays_item > summary { list-style: none; cursor: pointer; }
 .__uprofile_recentplays_item > summary::-webkit-details-marker { display: none; }
@@ -3189,7 +3189,11 @@ body {
 .__uprofile_play_pattern,
 .__uprofile_play_rating,
 .__uprofile_play_tiles { min-width: 0; }
-.__uprofile_play_head { overflow-wrap: anywhere; color: var(--text-secondary); font-size: 12px; line-height: 1.5; }
+.__uprofile_play_head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; line-height: 1.5; }
+.__uprofile_play_head_level { font-size: 11px; color: var(--text-secondary); }
+.__uprofile_play_head_title { font-size: 14px; font-weight: 700; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
+.__uprofile_play_head_chart { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border-secondary); border-radius: 3px; }
+.__uprofile_play_head_options { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .__uprofile_play_score { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 6px 12px; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
 .__uprofile_play_score h4 { grid-column: 1 / -1; }
 .__uprofile_play_score h4,

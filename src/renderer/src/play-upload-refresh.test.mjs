@@ -368,6 +368,20 @@ test('Recent judge colors use fixed mockup palette', () => {
   assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_fill \{ background: #62e2c4/);
 });
 
+test('Recent list and play header CSS preserve responsive layout and wrapping', () => {
+  assert.match(recentCss, /\.__uprofile_recentplays_row\s*\{[^}]*grid-template-columns:\s*96px minmax\(0, 1fr\) 52px 54px 16px;[^}]*gap:\s*8px;[^}]*padding:\s*7px 8px;/s);
+  assert.match(recentCss, /\.__uprofile_recentplays_row\s*>\s*:nth-child\(2\)\s*\{[^}]*min-width:\s*0;[^}]*overflow:\s*hidden;[^}]*text-overflow:\s*ellipsis;[^}]*white-space:\s*nowrap;/s);
+  assert.match(recentCss, /@media\s*\(max-width:\s*768px\)\s*\{\s*\.__uprofile_recentplays_row\s*\{\s*grid-template-columns:\s*92px minmax\(0, 1fr\) 48px 60px 16px;\s*gap:\s*5px;\s*padding:\s*7px 6px;/);
+  assert.match(recentCss, /\.__uprofile_play_head\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;[^}]*align-items:\s*center;[^}]*gap:\s*4px 8px;[^}]*min-width:\s*0;/s);
+  assert.match(recentCss, /\.__uprofile_play_head_level\s*\{[^}]*font-size:\s*11px;[^}]*color:\s*var\(--text-secondary\);/s);
+  assert.match(recentCss, /\.__uprofile_play_head_title\s*\{[^}]*font-size:\s*14px;[^}]*font-weight:\s*700;[^}]*color:\s*var\(--text-primary\);[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s);
+  assert.match(recentCss, /\.__uprofile_play_head_chart\s*\{[^}]*font-size:\s*11px;[^}]*padding:\s*2px 6px;[^}]*border:\s*1px solid var\(--border-secondary\);[^}]*border-radius:\s*3px;/s);
+  assert.match(recentCss, /\.__uprofile_play_head_options\s*\{[^}]*font-size:\s*12px;[^}]*color:\s*var\(--text-secondary\);[^}]*overflow-wrap:\s*anywhere;/s);
+  for (const kind of ['pg', 'great', 'good', 'bad', 'poor', 'empty', 'cb']) assert.match(recentCss, new RegExp(`\\.__uprofile_playdetail_barrow\\.k-${kind} \\. __uprofile_playdetail_lab`.replace('\\. ', '\\.')));
+  assert.match(recentCss, /\.__uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_lab \{ color: #a6f3ff/);
+  assert.match(recentCss, /\.__uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_fill \{ background: #62e2c4/);
+});
+
 test('Recent judge details remain separate from Recent chart listing', () => {
   const recentOnly = recentSource.slice(recentSource.indexOf('export default function Recent('));
   assert.doesNotMatch(recentOnly, /renderPlayDetail|judge_16|__uprofile_playdetail/);
