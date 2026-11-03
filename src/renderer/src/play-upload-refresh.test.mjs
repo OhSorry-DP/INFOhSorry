@@ -92,6 +92,9 @@ const lampStyleFn = vm.runInNewContext(lampStyleCode, {});
 const recentControllerSource = recentSource.slice(recentSource.indexOf('function laneCounterIndex('), recentSource.indexOf('\nfunction renderPlayDetail('));
 const recentDisplaySource = recentSource.slice(recentSource.indexOf('function playLampLabel('), recentSource.indexOf('\n// diff'));
 const recentDetailCode = ts.transpileModule(`${recentDisplaySource}; ${recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction playLampLabel('))}; ${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playOptionDisplay, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation, laneKeyEvaluation, playLampLabel, playMissLabel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const playChartLevelSource = recentSource.slice(recentSource.indexOf('function playChartLevel('), recentSource.indexOf('\nfunction playOptionInfo('));
+const playChartLevelCode = ts.transpileModule(`${playChartLevelSource}; playChartLevel`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+const getPlayChartLevel = vm.runInNewContext(playChartLevelCode, { norm: value => value.trim().toLowerCase(), ensureTextageMeta: async () => null });
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
@@ -105,7 +108,7 @@ function recentHarness({ readPlayCsv, onPlayAppend } = {}) {
   });
   return { subscribe, updates, listeners, unsubscriptions };
 }
-function detailTree(detail, play = {}) {
+function detailTree(detail, play = {}, level = 12) {
   let PlayLaneController;
   let PlayLaneDetail;
   const React = { createElement: (type, props, ...children) => type === PlayLaneController || type === PlayLaneDetail
@@ -115,7 +118,7 @@ function detailTree(detail, play = {}) {
   PlayLaneController = module.PlayLaneController;
   PlayLaneDetail = module.PlayLaneDetail;
   const { renderPlayDetail } = module;
-  return renderPlayDetail(detail, play, 12, play.difficulty || '—');
+  return renderPlayDetail(detail, play, level);
 }
 function recentCalculations(lampStyleDependency = lampStyleFn) {
   const module = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) }, LAMP_NUM_TO_ABBR: { 0: 'NP', 1: 'F', 2: 'AC', 3: 'EC', 4: 'NC', 5: 'HC', 6: 'EX', 7: 'FC' }, lampStyle: lampStyleDependency, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; } });
@@ -135,9 +138,7 @@ function flatten(node, result = []) {
 const recentRow = timestamp => ({ timestamp });
 
 test('play chart level selects unique SP and DP metadata by mode, difficulty, and normalized title', () => {
-  const source = recentSource.slice(recentSource.indexOf('function playChartLevel('), recentSource.indexOf('\nfunction playOptionInfo('));
-  const code = ts.transpileModule(`${source}; ({ playChartLevel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const { playChartLevel } = vm.runInNewContext(code, { norm: value => value.trim().toLowerCase(), ensureTextageMeta: async () => null });
+  const playChartLevel = getPlayChartLevel;
   const rows = [{ title: 'Song', charts: { SPH: { level: 10 }, DPH: { level: 11 } } }];
   assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, rows, null), 10);
   assert.equal(playChartLevel({ title: 'Song', difficulty: 'DPH' }, rows, null), 11);
@@ -276,7 +277,8 @@ test('Recent distinguishes empty history from read failure and keeps chart list 
 test('RecentPlays renders missing detail and one-column section structure', () => {
   assert.match(recentPlaysSource, /renderPlayDetail\(play\.detail, play,/);
   assert.match(recentSource, /function renderPlayDetail\(detail: PlayDetail \| null \| undefined/);
-  for (const heading of ['판정 상세', '랜덤 레인 패턴', '레인별 평가']) assert.ok(recentDetail.includes(heading));
+  assert.doesNotMatch(recentDetail, /<h4>판정 상세<\/h4>/);
+  for (const heading of ['랜덤 레인 패턴', '레인별 평가']) assert.ok(recentDetail.includes(heading));
   for (const className of ['__uprofile_play_sections', '__uprofile_play_head', '__uprofile_play_pattern', '__uprofile_play_rating', '__uprofile_play_tiles', '__uprofile_play_inactive']) assert.ok(recentSource.includes(className));
   assert.doesNotMatch(recentDetail, /스코어 정보|__uprofile_play_score/);
   assert.match(recentDetail, /if \(!detail\) return/);
@@ -287,24 +289,68 @@ test('RecentPlays summary has five cells and detail headers and display values m
   const summarySource = recentSource.slice(recentSource.indexOf('export function RecentPlays('), recentSource.indexOf('\nexport default function Recent('));
   const transpiled = ts.transpileModule(`${summarySource.replace('export function RecentPlays(', 'function RecentPlays(')}; RecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
-  let stateCall = 0; let detailArgs;
-  const listPlay = { timestamp: 't', title: 'Song', difficulty: 'DPH', ex_score: '1' };
-  const RecentPlays = vm.runInNewContext(transpiled, { React, useState: initial => [stateCall++ === 0 ? [listPlay] : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update([listPlay], null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: () => 12, recentPlayTime: () => 'time', renderPlayDetail: (...args) => { detailArgs = args; return null; }, norm: value => value, DP_SLOTS: [] });
+  let stateCall = 0;
+  const plays = [
+    { timestamp: 't1', song_id: 'game-42-dp', title: '未完成ノ蒸氣驅動乙女', difficulty: 'DPH', ex_score: '1684', notes: '2000', settings_p1_11: '0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0', battle_flag: '0' },
+    { timestamp: 't2', song_id: 'game-42-sp', title: '未完成ノ蒸氣驅動乙女', difficulty: 'SPA', ex_score: '1684', notes: '2000', settings_p1_11: '0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0', battle_flag: '0' },
+  ];
+  const seenLevels = [];
+  const actualTextage = { songs: { gameSong42: { title: '未完成ノ蒸氣驅動乙女', levels: { DH: 11, SA: 12 } } } };
+  const RecentPlays = vm.runInNewContext(transpiled, { React, useState: initial => [Array.isArray(initial) ? plays : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update(plays, null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: getPlayChartLevel, recentPlayTime: () => 'time', renderPlayDetail: (...args) => { seenLevels.push(args[2]); return null; }, norm: value => value, DP_SLOTS: [] });
+  const loadingTree = RecentPlays({ iidxId: 'id' });
+  assert.deepEqual(seenLevels, [null, null]);
+  seenLevels.length = 0;
   const tree = RecentPlays({ iidxId: 'id' });
   const summary = flatten(tree).find(node => node.type === 'summary');
-  assert.equal(detailArgs[1], listPlay);
-  assert.equal(detailArgs[3], 'DPH');
   assert.equal(summary.props.children.length, 5);
   assert.deepEqual(summary.props.children.map(node => node.props.className), [undefined, undefined, undefined, undefined, '__uprofile_recentplays_chev']);
   assert.doesNotMatch(JSON.stringify(summary), /AA-0001|50%|12 ·/);
+
+  assert.ok(flatten(loadingTree).some(node => node.type === 'summary'));
+  const levels = plays.map(play => getPlayChartLevel(play, [], actualTextage));
+  assert.deepEqual(levels, [11, 12]);
+  const levelHarness = vm.runInNewContext(transpiled, { React, useState: initial => [Array.isArray(initial) ? plays : initial === null && initial !== undefined ? actualTextage : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update(plays, null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: (play, rows) => getPlayChartLevel(play, rows, actualTextage), recentPlayTime: () => 'time', renderPlayDetail: (...args) => { seenLevels.push(args[2]); return null; }, norm: value => value, DP_SLOTS: [] });
+  levelHarness({ iidxId: 'id' });
+  assert.deepEqual(seenLevels, [null, null]);
+  seenLevels.length = 0;
+  assert.notEqual(plays[0].song_id, 'gameSong42');
+  assert.notEqual(plays[1].song_id, 'gameSong42');
+  const details = [null, { complete: true, p1: {}, p2: {} }];
+  for (const play of plays) for (const detail of details) {
+    const nodes = flatten(detailTree(detail, play, getPlayChartLevel(play, [], actualTextage)));
+    const header = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_play_head'));
+    const head = header.props.children;
+    assert.equal(head.length, 2);
+    assert.deepEqual(head.map(node => node.props.className), ['__uprofile_play_head_level', '__uprofile_play_head_options']);
+    const expected = getPlayChartLevel(play, [], actualTextage);
+    assert.equal(head[0].props.children, expected);
+    if (detail === null) assert.equal(JSON.stringify(nodes).includes(play.title), false);
+    assert.ok(head[1].props.children);
+  }
+  const absent = plays.map(play => getPlayChartLevel(play, [], null));
+  assert.deepEqual(absent, [null, null]);
+  for (const [play, level] of plays.map((play, index) => [play, levels[index]])) {
+    const loadingHead = flatten(detailTree(null, play, null)).find(node => node.props?.className?.split(' ').includes('__uprofile_play_head'));
+    assert.equal(loadingHead.props.children[0].props.children, '—');
+    const resolved = getPlayChartLevel(play, [], actualTextage);
+    assert.equal(resolved, level);
+    const detailTreeWithLevel = flatten(detailTree(null, play, resolved));
+    assert.equal(detailTreeWithLevel.find(node => node.props?.className?.split(' ').includes('__uprofile_play_head')).props.children[0].props.children, level);
+  }
+  const duplicateMeta = { songs: { a: { title: plays[0].title, levels: { DH: 11 } }, b: { title: ` ${plays[0].title} `, levels: { DH: 13 } } } };
+  assert.equal(getPlayChartLevel(plays[0], [], duplicateMeta), null);
+  assert.equal(getPlayChartLevel(plays[0], [], { songs: { only: { title: plays[0].title, levels: { DH: 0 } } } }), 0);
+  assert.equal(getPlayChartLevel(plays[1], [], { songs: { only: { title: plays[1].title, levels: { DH: 11 } } } }), null);
 
   const play = { title: 'Song', clear_lamp: '1', miss_count: '-1', ex_score: '0', dj_rate_pct: '0', dj_rank: 'A', notes: '10', settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0', difficulty: 'DPH', judge_16: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
   for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
     const nodes = flatten(detailTree(detail, play));
     const header = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_play_head'));
     const parts = header.props.children;
-    assert.deepEqual(parts.map(node => node.props.className), ['__uprofile_play_head_level', '__uprofile_play_head_title', '__uprofile_play_head_chart', '__uprofile_play_head_options']);
-    assert.deepEqual(parts.map(node => node.props.children), [12, 'Song', 'DPH', 'OFF / OFF']);
+    assert.deepEqual(parts.map(node => node.props.className), ['__uprofile_play_head_level', '__uprofile_play_head_options']);
+    assert.deepEqual(parts.map(node => node.props.children), [12, 'OFF / OFF']);
+    assert.equal(nodes.some(node => ['__uprofile_play_head_title', '__uprofile_play_head_chart'].some(className => node.props?.className?.split(' ').includes(className))), false);
+    if (!detail) assert.equal(JSON.stringify(nodes).includes('Song'), false);
     const summaryNode = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_playdetail_summary'));
     const summaryText = JSON.stringify(summaryNode);
     for (const value of ['램프', 'EX 스코어', 'Rate', 'DJ LEVEL', 'BP', 'FAILED', '0%', 'A', '—']) assert.ok(summaryText.includes(value));
@@ -314,11 +360,17 @@ test('RecentPlays summary has five cells and detail headers and display values m
     });
     assert.deepEqual(entries, [['램프', 'FAILED'], ['EX 스코어', '0'], ['Rate', '0%'], ['DJ LEVEL', 'A'], ['BP', '—']]);
     assert.doesNotMatch(summaryText, /콤보 브레이크|P1\+P2 합산/);
-    assert.ok(nodes.some(node => node.props?.className?.split(' ').includes('__uprofile_play_head_chart') && node.props.children === 'DPH'));
+    assert.equal(nodes.filter(node => node.type === 'h4' && node.props.children === '판정 상세').length, 0);
+    for (const heading of ['랜덤 레인 패턴', '레인별 평가']) assert.ok(nodes.some(node => node.type === 'h4' && node.props.children === heading));
     if (!detail) assert.ok(JSON.stringify(nodes).includes('상세 기록 없음'));
     else assert.ok(JSON.stringify(nodes).includes('FAST/SLOW 검증 불일치') === false);
     if (detail) assert.ok(nodes.some(node => node.props?.className?.split(' ').includes('k-cb')));
   }
+  const judgmentRows = flatten(detailTree({ complete: true, p1: { lanes: Array.from({ length: 8 }, () => [1, 2, 3, 4, 5, 6]), fs: { fast_great: 7, fast_good: 8, slow_great: 9, slow_good: 10 } }, p2: { lanes: Array.from({ length: 8 }, () => [1, 1, 1, 1, 1, 1]), fs: { fast_great: 2, fast_good: 3, slow_great: 4, slow_good: 5 } } }, { judge_16: '0 0 0 0 0 0 0 0 0 0 2 3 0 0 0 0' })).filter(node => node.props?.className?.split(' ').includes('__uprofile_playdetail_barrow'));
+  assert.deepEqual(judgmentRows.map(node => [node.props.className.split(' ').at(-1), node.props.children[0].props.children.at(-1), node.props.children[1].props.children]), [
+    ['k-good', 'GOOD', '11'], ['k-great', 'GREAT', '9'], ['k-pg', 'PERFECT GREAT', '16'], ['k-great', 'GREAT', '13'], ['k-good', 'GOOD', '15'],
+    ['k-bad', 'BAD', '40'], ['k-poor', 'POOR', '48'], ['k-empty', '空POOR', '56'], ['k-cb', 'COMBO BREAK', '5'],
+  ]);
   const blankSummaryNodes = flatten(detailTree(null, { ...play, clear_lamp: '', miss_count: '', ex_score: '', dj_rate_pct: '', dj_rank: '' }));
   const blankSummary = blankSummaryNodes.find(node => node.props?.className?.split(' ').includes('__uprofile_playdetail_summary'));
   assert.deepEqual(blankSummary.props.children.map(entry => flatten(entry).find(node => node.type === 'b')?.props.children), ['—', '—', '—', '—', '—']);
@@ -335,6 +387,8 @@ test('Recent detail aggregation, badges, and per-key detail use current DOM', ()
   assert.match(recentDetail, /const aggregate = \(index: number\)/);
   assert.match(recentDetail, /values\.every\(valid\) \? values\.reduce/);
   assert.match(recentDetail, /FAST\/SLOW 기록 없음/);
+  assert.doesNotMatch(recentDetail, /FAST\/SLOW 미확정|fs_unresolved/);
+  assert.match(recentDetail, /!hasFs && <small className="__uprofile_playdetail_foot">FAST\/SLOW 기록 없음/);
   assert.doesNotMatch(recentDetail, /P1\+P2 합산/);
   assert.match(recentDetail, /!detail\.complete && <span className="__uprofile_playdetail_badge">부분 기록/);
   assert.match(recentDetail, /side\.fs_ok === false/);
@@ -365,6 +419,7 @@ test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and key detai
   assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
 
   assert.match(rendered, /__uprofile_playdetail_fill/);
+  assert.doesNotMatch(rendered, /FAST\/SLOW 미확정/);
 
 });
 
@@ -411,8 +466,7 @@ test('Recent list and play header CSS preserve responsive layout and wrapping', 
   assert.match(recentCss, /@media\s*\(max-width:\s*768px\)\s*\{\s*\.__uprofile_recentplays_row\s*\{\s*grid-template-columns:\s*92px minmax\(0, 1fr\) 48px 60px 16px;\s*gap:\s*5px;\s*padding:\s*7px 6px;/);
   assert.match(recentCss, /\.__uprofile_play_head\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*wrap;[^}]*align-items:\s*center;[^}]*gap:\s*4px 8px;[^}]*min-width:\s*0;/s);
   assert.match(recentCss, /\.__uprofile_play_head_level\s*\{[^}]*font-size:\s*11px;[^}]*color:\s*var\(--text-secondary\);/s);
-  assert.match(recentCss, /\.__uprofile_play_head_title\s*\{[^}]*font-size:\s*14px;[^}]*font-weight:\s*700;[^}]*color:\s*var\(--text-primary\);[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;/s);
-  assert.match(recentCss, /\.__uprofile_play_head_chart\s*\{[^}]*font-size:\s*11px;[^}]*padding:\s*2px 6px;[^}]*border:\s*1px solid var\(--border-secondary\);[^}]*border-radius:\s*3px;/s);
+  assert.doesNotMatch(recentCss, /\.__uprofile_play_head_(?:title|chart)\s*\{/);
   assert.match(recentCss, /\.__uprofile_play_head_options\s*\{[^}]*font-size:\s*12px;[^}]*color:\s*var\(--text-secondary\);[^}]*overflow-wrap:\s*anywhere;/s);
   for (const kind of ['pg', 'great', 'good', 'bad', 'poor', 'empty', 'cb']) assert.match(recentCss, new RegExp(`\\.__uprofile_playdetail_barrow\\.k-${kind} \\. __uprofile_playdetail_lab`.replace('\\. ', '\\.')));
   assert.match(recentCss, /\.__uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_lab \{ color: #a6f3ff/);
@@ -529,6 +583,34 @@ test('Recent option labels cover all values, P2 SP settings, and battle flip ord
   assert.equal(playOptionDisplay({ ...play, battle_flag: '1', settings_p1_11: '1 0 0 1 0 1 0 0 0 0 0' }), 'BATTLE, FLIP, RAN / RAN');
   assert.equal(playOptionDisplay(p1('0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0')), 'RAN / MIR');
   assert.equal(playOptionDisplay(p1('1 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0')), 'RAN / MIR');
+});
+
+test('Recent detail omits unresolved FAST/SLOW notice for present counts and retains missing-data guidance', () => {
+  const lanes = Array.from({ length: 8 }, () => [1, 1, 0, 0, 0, 0]);
+  const fs = { fast_great: 1, fast_good: 1, slow_great: 0, slow_good: 0 };
+  for (const unresolved of [0, 4, undefined]) {
+    const side = { lanes, fs, ...(unresolved === undefined ? {} : { fs_unresolved: unresolved }) };
+    const nodes = flatten(detailTree({ complete: true, p1: side, p2: { ...side } }));
+    const rendered = JSON.stringify(nodes);
+    assert.doesNotMatch(rendered, /FAST\/SLOW 미확정/);
+    assert.doesNotMatch(rendered, /짝짓지 못한 수/);
+  }
+  const noFs = flatten(detailTree({ complete: true, p1: { lanes, fs: null }, p2: { lanes, fs: null } }));
+  assert.ok(JSON.stringify(noFs).includes('FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'));
+});
+
+test('Recent detail omits unresolved FAST/SLOW notice for present counts and retains missing-data guidance', () => {
+  const lanes = Array.from({ length: 8 }, () => [1, 1, 0, 0, 0, 0]);
+  const fs = { fast_great: 1, fast_good: 1, slow_great: 0, slow_good: 0 };
+  for (const unresolved of [0, 4, undefined]) {
+    const side = { lanes, fs, ...(unresolved === undefined ? {} : { fs_unresolved: unresolved }) };
+    const nodes = flatten(detailTree({ complete: true, p1: side, p2: { ...side } }));
+    const rendered = JSON.stringify(nodes);
+    assert.doesNotMatch(rendered, /FAST\/SLOW 미확정/);
+    assert.doesNotMatch(rendered, /짝짓지 못한 수/);
+  }
+  const noFs = flatten(detailTree({ complete: true, p1: { lanes, fs: null }, p2: { lanes, fs: null } }));
+  assert.ok(JSON.stringify(noFs).includes('FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'));
 });
 
 test('Recent side activity resolves P1, P2, both, and zero sides', () => {

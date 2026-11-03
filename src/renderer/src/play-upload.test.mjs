@@ -34,7 +34,7 @@ const plain = x => JSON.parse(JSON.stringify(x));
 test('Recent play detail layout stays in one column and wraps narrow content', () => {
   const css = read('./index.css');
   assert.match(css, /\.__uprofile_play_sections\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
-  assert.match(css, /\.__uprofile_play_head_title\s*\{[^}]*overflow-wrap:\s*anywhere/s);
+  assert.doesNotMatch(css, /\.__uprofile_play_head_(?:title|chart)\s*\{/);
   assert.match(css, /\.__uprofile_playdetail_summary\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/s);
   assert.match(css, /\.__uprofile_playdetail_summary > span\s*\{[^}]*display:\s*inline-flex[^}]*gap:\s*4px/s);
   assert.doesNotMatch(css, /__uprofile_play_score/);

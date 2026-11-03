@@ -3190,8 +3190,6 @@ body {
 .__uprofile_play_tiles { min-width: 0; }
 .__uprofile_play_head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; line-height: 1.5; }
 .__uprofile_play_head_level { font-size: 11px; color: var(--text-secondary); }
-.__uprofile_play_head_title { font-size: 14px; font-weight: 700; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
-.__uprofile_play_head_chart { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border-secondary); border-radius: 3px; }
 .__uprofile_play_head_options { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
 .__uprofile_play_pattern h4,
 .__uprofile_play_rating h4 { margin: 0; color: var(--text-primary); font-size: 13px; }

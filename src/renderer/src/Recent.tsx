@@ -454,8 +454,8 @@ function PlayLaneDetail({ side, index }: { side: SideDetail | null | undefined; 
   </div>;
 }
 
-function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, chartCode: string, accountKey?: string | null): JSX.Element {
-  const head = <div className="__uprofile_play_head"><span className="__uprofile_play_head_level">{level ?? '—'}</span><span className="__uprofile_play_head_title">{play.title || '—'}</span><span className="__uprofile_play_head_chart">{chartCode}</span><span className="__uprofile_play_head_options">{playOptionDisplay(play)}</span></div>;
+function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, accountKey?: string | null): JSX.Element {
+  const head = <div className="__uprofile_play_head"><span className="__uprofile_play_head_level">{level ?? '—'}</span><span className="__uprofile_play_head_options">{playOptionDisplay(play)}</span></div>;
   const renderLanePattern = (side: 'P1' | 'P2') => {
     const order = displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play);
     const activity = playSideActivity(play);
@@ -471,7 +471,7 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
     <span><span>DJ LEVEL</span> <b>{play.dj_rank == null || play.dj_rank === '' ? '—' : play.dj_rank}</b></span>
     <span><span>BP</span> <b>{playMissLabel(play.miss_count)}</b></span>
   </div>;
-  if (!detail) return <div className="__uprofile_play_sections">{head}{summary}<section className="__uprofile_playdetail_judge __uprofile_play_inactive"><h4>판정 상세</h4><p>상세 기록 없음</p></section><div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'}</h5><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} /></div>)}</div></div></div></section></div></div>;
+  if (!detail) return <div className="__uprofile_play_sections">{head}{summary}<section className="__uprofile_playdetail_judge __uprofile_play_inactive"><p>상세 기록 없음</p></section><div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'}</h5><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} /></div>)}</div></div></div></section></div></div>;
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const aggregate = (index: number) => {
@@ -481,7 +481,6 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
   const fsValues = sides.map(([, side]) => side.fs);
   const hasFs = fsValues.every((fs) => fs != null && [fs.fast_great, fs.fast_good, fs.slow_great, fs.slow_good].every(valid));
   const sumFs = (key: 'fast_great' | 'fast_good' | 'slow_great' | 'slow_good') => hasFs ? fsValues.reduce((sum, fs) => sum + (fs?.[key] ?? 0), 0) : null;
-  const unresolved = sides.every(([, side]) => valid(side.fs_unresolved)) ? sides.reduce((sum, [, side]) => sum + side.fs_unresolved, 0) : null;
   const values = [aggregate(0), aggregate(1), aggregate(2), aggregate(3), aggregate(4), aggregate(5)] as const;
   const scoreValues = values.slice(0, 5);
   const total = scoreValues.every(valid) ? scoreValues.reduce<number>((sum, value) => sum + (valid(value) ? value : 0), 0) : null;
@@ -502,7 +501,7 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
   return <div className="__uprofile_play_sections">
     {head}
     {summary}
-    <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><h4>판정 상세</h4><div className="__uprofile_playdetail_summary">{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div><small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small></section>
+    <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><div className="__uprofile_playdetail_summary">{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>{!hasFs && <small className="__uprofile_playdetail_foot">FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판</small>}</section>
     <div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section>
     <section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => { const sideDetail = detail[side === 'P1' ? 'p1' : 'p2']; return <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'}</h5><PlayLaneController side={sideDetail} player={side} activity={playSideActivity(play)} accountKey={accountKey} /></div>; })}</div></div></div></section></div>
   </div>;
@@ -552,7 +551,7 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
               <span>{play.ex_score === '' ? '—' : play.ex_score}</span>
               <span className="__uprofile_recentplays_chev">›</span>
             </summary>
-            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), play.difficulty || '—', normalizedId)}
+            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), normalizedId)}
           </details>
         ))}
       </div>
