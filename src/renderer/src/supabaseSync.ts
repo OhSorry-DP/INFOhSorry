@@ -1413,28 +1413,35 @@ export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecogni
 // DBR 후보 조건과 옵션 값은 사용자 지정 명세를 따른다.
 export const GAUGE_COLUMN = 'gauge_p2_w78';
 export interface BattleRandomScore { diff: number; lamp: number; ex_score: number }
-export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
-  if (isPlayErrorRow(row) || !isNormalSpeedPlay(row)) return null;
+type BattleRandomDecode = { score: BattleRandomScore; reason: null } | { score: null; reason: 'auto_scratch' | 'speed' | 'format' | 'gauge' | null };
+function decodeBattleRandomPlayResult(row: PlayCsvRow): BattleRandomDecode {
+  if (isPlayErrorRow(row) || row.battle_flag !== '1') return { score: null, reason: null };
   const p1 = row.settings_p1_11.split(' ').map(Number);
-  if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
-    || row.battle_flag !== '1' || p1[0] !== 1 || p1[5] !== 1 || p1[2] !== 1) return null;
+  if (p1.length !== 11 || p1.some(value => !Number.isInteger(value)) || p1[0] !== 1 || p1[5] !== 1) return { score: null, reason: null };
+  if (p1[2] !== 1) return { score: null, reason: 'auto_scratch' };
+  if (!isNormalSpeedPlay(row)) return { score: null, reason: 'speed' };
   const diffs: Record<string, number> = { SPB: 0, SPN: 1, SPH: 2, SPA: 3, SPL: 4 };
   if (!row.song_id.trim() || !/^\d+(?:\.\d+)?$/.test(row.song_id) || !row.ex_score.trim()
-    || !row.notes.trim() || !row[GAUGE_COLUMN].trim()) return null;
+    || !row.notes.trim()) return { score: null, reason: 'format' };
   const songId = Number(row.song_id); const diff = diffs[row.difficulty];
-  const exScore = Number(row.ex_score); const notes = Number(row.notes); const gauge = Number(row[GAUGE_COLUMN]);
+  const exScore = Number(row.ex_score); const notes = Number(row.notes);
   if (!Number.isSafeInteger(songId) || songId < 0 || !Number.isInteger(diff)
-    || !Number.isFinite(exScore) || exScore < 0 || !Number.isFinite(notes) || notes <= 0
-    || !Number.isFinite(gauge) || gauge < 0) return null;
+    || !Number.isFinite(exScore) || exScore < 0 || !Number.isFinite(notes) || notes <= 0) return { score: null, reason: 'format' };
+  if (!row[GAUGE_COLUMN].trim()) return { score: null, reason: 'gauge' };
+  const gauge = Number(row[GAUGE_COLUMN]);
+  if (!Number.isFinite(gauge) || gauge < 0) return { score: null, reason: 'gauge' };
   let lamp: number;
   switch (p1[1]) {
     case 1: case 2: lamp = gauge >= 80 ? 3 : gauge >= 60 ? 2 : 1; break;
     case 0: lamp = gauge >= 80 ? 4 : 1; break;
     case 3: lamp = gauge > 0 ? 5 : 1; break;
     case 4: lamp = gauge > 0 ? 6 : 1; break;
-    default: return null;
+    default: return { score: null, reason: 'gauge' };
   }
-  return { diff, lamp, ex_score: exScore };
+  return { score: { diff, lamp, ex_score: exScore }, reason: null };
+}
+export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
+  return decodeBattleRandomPlayResult(row).score;
 }
 function matchAutomaticSong(songs: Map<string, SongEntry[]>, title: string, diff: number):
   { songId: number } | { skipped: 'song_not_found' | 'ambiguous_song' } {
@@ -1517,20 +1524,49 @@ export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, ga
   while (dbrSending) await dbrSending;
   let finish!: () => void;
   dbrSending = new Promise<void>(resolve => { finish = resolve; });
+  const diag = (reason: string, row?: PlayCsvRow, score?: BattleRandomScore, extra = '') => {
+    const clean = (value: unknown, max: number) => String(value ?? '').replace(/[\x00-\x1f\x7f]/g, '').replace(/(?:bearer|token|cookie|password|passwd|authorization|secret)[^\s]*/gi, '[redacted]').slice(0, max);
+    const parts = ['[dbr-upload]', `reason=${reason}`];
+    if (row) parts.push(`timestamp=${clean(row.timestamp, 40)}`, `title=${clean(row.title, 80)}`, `game_song_id=${clean(row.song_id, 24)}`);
+    if (score) parts.push(`diff=${score.diff}`, `lamp=${score.lamp}`, `ex_score=${score.ex_score}`);
+    if (extra) parts.push(extra);
+    try { addDiagLine(parts.join(' ')); } catch {}
+  };
   try {
-    const candidates = plays.map(row => ({ row, score: decode(row) })).filter((item): item is { row: PlayCsvRow; score: BattleRandomScore } => item.score !== null);
-    if (!candidates.length || !await gameRecognized()) return;
+    const candidates: Array<{ row: PlayCsvRow; score: BattleRandomScore }> = [];
+    for (const row of plays) {
+      try {
+        const result = decode === decodeBattleRandomPlay ? decodeBattleRandomPlayResult(row) : { score: decode(row), reason: null };
+        if (result.score) candidates.push({ row, score: result.score });
+        else if (result.reason) diag(result.reason, row);
+      } catch { diag('candidate_exception', row); }
+    }
+    if (!candidates.length) return;
+    if (!await gameRecognized()) { diag('game_unrecognized'); return; }
     const token = await bearer(iidxId);
-    if (!token) return;
-    const songMap = await songs();
+    if (!token) { diag('bearer_missing'); return; }
+    let songMap: Map<string, SongEntry[]>;
+    try { songMap = await songs(); } catch { for (const { row } of candidates) diag('candidate_exception', row); return; }
     for (const { row, score } of candidates) {
-      const match = matchAutomaticSong(songMap, row.title, score.diff);
-      if ('skipped' in match) continue;
-      if (!await gameRecognized()) return;
-      const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ song_id: match.songId, diff: score.diff, lamp: score.lamp, ex_score: score.ex_score, improvements_only: true }) });
-      if (!response.ok) throw new Error(`DBR HTTP ${response.status}`);
+      try {
+        const match = matchAutomaticSong(songMap, row.title, score.diff);
+        if ('skipped' in match) { diag(match.skipped, row, score); continue; }
+        if (!await gameRecognized()) { diag('game_unrecognized', row, score); return; }
+        const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ song_id: match.songId, diff: score.diff, lamp: score.lamp, ex_score: score.ex_score, improvements_only: true }) });
+        let body: unknown;
+        try { body = await response.json(); } catch { body = null; }
+        if (!response.ok) {
+          const code = body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+            && ['method_not_allowed', 'bad_request', 'service_unavailable', 'unauthorized', 'no_user', 'needs_setup'].includes(body.error) ? body.error : 'unknown';
+          diag('http_failure', row, score, `status=${Number.isInteger(response.status) ? response.status : 0} code=${code}`);
+          continue;
+        }
+        if (body && typeof body === 'object' && 'unchanged' in body && body.unchanged === true) diag('unchanged', row, score, `internal_song_id=${match.songId}`);
+        else if (body && typeof body === 'object' && !('unchanged' in body) && ('scores' in body || 'updatedAt' in body)) diag('saved', row, score, `internal_song_id=${match.songId}`);
+        else diag('unknown', row, score, `internal_song_id=${match.songId}`);
+      } catch { diag('candidate_exception', row, score); }
     }
   } finally { dbrSending = null; finish(); }
 }
