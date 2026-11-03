@@ -394,16 +394,42 @@ test('Recent hides a side only when every lane count and FS count is zero or FS 
 });
 
 test('Recent controller and key detail CSS positions keys and keeps detail bounded, scrollable, and keyboard visible', () => {
-  assert.match(recentCss, /data-player="P1"\]\s*>\s*\.\_\_uprofile_play_scratch\s*\{\s*grid-column:\s*1;/);
-  assert.match(recentCss, /data-player="P2"\]\s*>\s*\.\_\_uprofile_play_scratch\s*\{\s*grid-column:\s*7;/);
-  assert.match(recentCss, /\.\_\_uprofile_play_key_white\s*\{[^}]*height:\s*48px/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_key_black\s*\{[^}]*height:\s*30px/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(2\)/);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(4\)/);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(6\)/);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller > \.\_\_uprofile_play_key_black:nth-of-type\(8\)/);
+  assert.match(recentCss, /\.\_\_uprofile_play_panel_scroll\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_panel\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;[^}]*gap:\s*16px;[^}]*width:\s*max-content;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*8px;[^}]*width:\s*max-content;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_keyboard\s*\{[^}]*position:\s*relative;[^}]*width:\s*136px;[^}]*height:\s*150px;/s);
+  for (const [key, left] of [[1, 0], [3, 34], [5, 68], [7, 102], [2, 22], [4, 56], [6, 90]]) {
+    assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\][\\s\\S]*?\\{\\s*left:\\s*${left}px;`));
+  }
+  for (const key of [1, 3, 5, 7]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\][\\s\\S]*?\\{[^}]*width:\\s*34px;`));
+  for (const key of [2, 4, 6]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\][\\s\\S]*?\\{[^}]*width:\\s*24px;[^}]*z-index:\\s*1;`));
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_white\s*\{\s*top:\s*66px;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_black\s*\{\s*top:\s*0;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_scratch\s*\{[^}]*width:\s*104px;[^}]*height:\s*104px;[^}]*border-radius:\s*50%;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_white\s*\{[^}]*height:\s*64px/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_black\s*\{[^}]*height:\s*44px/s);
+  assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*nth-of-type/);
+  assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*transform:\s*translate/);
+  for (const [variant, declarations] of [
+    ['scratch', 'border:\\s*2px solid #e33b3b;[^}]*background:\\s*#17191e;[^}]*color:\\s*#fff'],
+    ['black', 'background:\\s*#174b94;[^}]*border:\\s*1px solid #3985df;[^}]*color:\\s*#fff'],
+    ['white', 'background:\\s*#f3f3f3;[^}]*border:\\s*1px solid #b8b8b8;[^}]*color:\\s*#222'],
+  ]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_rank_${variant}\\s*\\{[^}]*${declarations}`, 's'));
+  assert.match(recentCss, /\.\_\_uprofile_play_rank_inactive\s*\{[^}]*background:\s*#555;[^}]*border-color:\s*#777;[^}]*color:\s*transparent;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_inactive\s*\{[^}]*opacity:\s*\.45;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_row\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*8px;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_row \+ \.\_\_uprofile_play_pattern_row\s*\{\s*margin-top:\s*8px;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tiles\s*\{[^}]*display:\s*flex;[^}]*gap:\s*3px;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile\s*\{[^}]*width:\s*30px;[^}]*height:\s*42px;[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;[^}]*border:\s*1px solid #555;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile_white\s*\{\s*background:\s*#f3f3f3;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_tile_black\s*\{\s*background:\s*#181a1f;/);
+  assert.match(recentCss, /\.\_\_uprofile_play_pattern_digit\s*\{[^}]*color:\s*#ff8a00;[^}]*font-weight:\s*700;[^}]*font-size:\s*18px;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_inactive\s*\{\s*color:\s*var\(--text-secondary\);\s*opacity:\s*\.82;/);
   assert.match(recentCss, /\.\_\_uprofile_play_controller button:focus-visible\s*\{\s*outline:\s*2px solid var\(--text-primary\);\s*outline-offset:\s*2px;/);
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-pg \.\_\_uprofile_playdetail_fill \{ background: #62e2c4; \}/);
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-great \.\_\_uprofile_playdetail_fill \{ background: #ffe63c; \}/);
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-bad \.\_\_uprofile_playdetail_fill \{ background: #ff6a3a; \}/);
+  assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-poor \.\_\_uprofile_playdetail_fill \{ background: #ff4a34; \}/);
   assert.match(recentCss, /\.\_\_uprofile_play_keydetail\s*\{[^}]*max-width:\s*min\(100%, 560px\);[^}]*max-height:\s*min\(52vh, 360px\);[^}]*overflow:\s*auto;/s);
   assert.doesNotMatch(recentCss, /__uprofile_playdetail_(?:toggle|lanes|tablebox|lanetable)|\[hidden\]/);
 });
