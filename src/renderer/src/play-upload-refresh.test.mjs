@@ -8,12 +8,12 @@ const read = relative => readFileSync(new URL(relative, import.meta.url), 'utf8'
 const app = read('./App.tsx');
 const start = app.indexOf('  const uploadSnapshot = useCallback(async (snapshot: UploadSnapshot, trigger: string)');
 const end = app.indexOf('\n  // IIDX ID 전환은', start);
-const fn = app.slice(start, end).replace('  const uploadSnapshot = useCallback(', '').replace(/, \[\]\);\s*$/, '');
+const fn = app.slice(start, end).replace('  const uploadSnapshot = useCallback(', '').replace(/, \[onDbrSaved\]\);\s*$/, '');
 const callbackCode = ts.transpileModule(`(${fn})`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const row = (timestamp, title) => ({ timestamp, song_id: '1', title, difficulty: 'SPN', notes: '10', ex_score: '5', pgreat: '1', great: '1', miss_count: '0', clear_lamp: '1', dj_rate_pct: '50', dj_rank: 'A', judge_16: '1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1', settings_p1_11: '', settings_p2_11: '', battle_flag: '0', gauge_p1_w77: '', gauge_p2_w78: '', source: 'playdata', app_version: 'old', game_version: 'old' });
 const csv = (...rows) => ['timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version', ...rows.map(r => Object.values(r).map(v => `"${v}"`).join(','))].join('\n');
-function setup({ readPlayCsv, gameStates = [true], profileResult = { ok: true }, plays = [row('pending', 'old')] } = {}) {
-  const events = []; const saved = [];
+function setup({ readPlayCsv, gameStates = [true], profileResult = { ok: true }, plays = [row('pending', 'old')], dbrResult = 'saved' } = {}) {
+  const events = []; const saved = []; const savedIds = [];
   const snapshot = { iidxId: 'C123456789012', appVersion: 'old-pending', capturedAt: 123, plays, profile: {} };
   // Evaluate the extracted callback with its closed-over renderer dependencies.
   const callback = vm.runInNewContext(callbackCode, {
@@ -25,12 +25,14 @@ function setup({ readPlayCsv, gameStates = [true], profileResult = { ok: true },
     readIidxIdFresh: async () => ({ processMissing: false }),
     gameRecognized: undefined,
     APP_VERSION: 'current-app',
+    onDbrSaved: id => events.push(['saved', id]),
     buildUploadPlays: result => result.ok && result.found !== false ? [row('current', 'fresh')] : [{ ...row('2026-01-01T00:00:00.000Z', ''), ...Object.fromEntries(['song_id','title','difficulty','notes','ex_score','pgreat','great','miss_count','clear_lamp','dj_rate_pct','dj_rank','judge_16','settings_p1_11','settings_p2_11','battle_flag','gauge_p1_w77','gauge_p2_w78','source'].map(k => [k, result.ok ? '-8' : '-11'])), app_version: result.appVersion ?? '', game_version: result.gameVersion ?? '' }],
     playsForGame: (p, recognized) => recognized ? p : undefined,
     uploadProfile: async input => { events.push('upload'); events.push({ uploadedPlays: input.plays }); return profileResult; },
-    uploadAutomaticDbr: async () => {}, addDiagLine() {}, writeLastUploadAt() {}, Date,
+    uploadAutomaticDbr: async (...args) => { events.push(['dbr', ...args]); }, addDiagLine() {}, writeLastUploadAt() {}, Date,
   });
-  return { callback, snapshot, events, saved, readPlayCsv };
+  const wrappedCallback = async (...args) => callback(...args);
+  return { callback: wrappedCallback, snapshot, events, saved, savedIds, readPlayCsv };
 }
 
 // BuildUploadPlays is exercised through the callback's dependency mock; the upload callback body remains the production source.
@@ -79,6 +81,29 @@ test('CSV refresh precedes pending save and upload, using current app version', 
   await h.callback(h.snapshot, 'auto');
   assert.deepEqual(h.events.filter(x => typeof x === 'string'), ['read', 'save', 'upload']);
   assert.equal(h.saved[0].appVersion, 'current-app');
+});
+
+test('auto/initial DBR는 마지막 onSaved 인자로 저장 완료만 한 번 통지', async () => {
+  for (const trigger of ['auto', 'initial']) {
+    const h = setup();
+    await h.callback(h.snapshot, trigger);
+    const dbr = h.events.find(event => Array.isArray(event) && event[0] === 'dbr');
+    assert.equal(typeof dbr[8], 'function');
+    dbr[8](dbr[1]);
+    assert.equal(dbr[8] instanceof Function, true);
+    assert.deepEqual(h.events.filter(event => typeof event === 'string'), ['save', 'upload']);
+    assert.equal(h.events.filter(event => Array.isArray(event) && event[0] === 'dbr').length, 1);
+  }
+});
+
+test('auto/initial unchanged와 미확정 DBR 응답은 완료 통지를 발생시키지 않음', async () => {
+  for (const dbrResult of ['unchanged', 'unknown', 'failure']) {
+    const h = setup({ dbrResult });
+    await h.callback(h.snapshot, 'auto');
+    const dbr = h.events.find(event => Array.isArray(event) && event[0] === 'dbr');
+    assert.equal(typeof dbr[8], 'function');
+    assert.deepEqual(h.events.filter(event => typeof event === 'string'), ['save', 'upload']);
+  }
 });
 
 const recentSource = read('./Recent.tsx');

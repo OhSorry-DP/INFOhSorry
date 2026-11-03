@@ -87,30 +87,34 @@ test('append 이벤트는 CSV를 다시 읽어 remote plays를 갱신', () => {
 
 test('append 한 번으로 플레이 결과와 무관하게 동일 판 DBR 저장을 실행', async () => {
   const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
-  assert.match(append, /await uploadAutomaticDbr\(plays, iidxId, gameRecognized\)/);
-  const calls = []; const diagnostics = [];
+  assert.match(append, /await uploadAutomaticDbr\(plays, iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved\)/);
+  const calls = []; const diagnostics = []; const savedIds = [];
   const globals = {
     APP_VERSION: 'test', refreshRemotePlays: async () => {}, sessionRef: { current: { generation: 1 } },
     window: { infohsorry: {
       upload: { readPlayCsv: async id => ({ ok: true, csv: '80121,Fixture Song,SPA,3,1,99,1\n', appVersion: 'test', gameVersion: 'fixture' }) },
       session: { getState: async () => ({ pid: 5 }) },
     } },
-    buildUploadPlays: () => [{ song_id: '80121', title: 'Fixture Song', difficulty: 'SPA' }],
+    buildUploadPlays: () => [{ timestamp: '2026-01-01T00:00:00.000Z', song_id: '80121', title: 'Fixture Song', difficulty: 'SPA', notes: '10', ex_score: '5' }],
     readIidxIdFresh: async () => ({ iidxId: 'C123456789012', processMissing: false }),
     uploadAutomaticPlays: async (...args) => { calls.push(['plays', ...args]); return { ok: true }; },
-    uploadAutomaticDbr: async (...args) => { calls.push(['dbr', ...args]); return { ok: true }; },
+    uploadAutomaticDbr: async (...args) => { calls.push(['dbr', ...args]); args[7]?.(args[1]); return { ok: true }; },
+    onDbrSaved: id => savedIds.push(id),
     addDiagLine: line => diagnostics.push(line), console: { warn() {} },
   };
-  const code = ts.transpileModule(`export function setup() { const playsChainByAccount = new Map(); ${append} return handlePlaysAppend; }`,
+  const code = ts.transpileModule(`export function setup() { const playsChainByAccount = new Map(); const revisions = {}; const onDbrSaved = id => { revisions[id] = (revisions[id] ?? 0) + 1; }; ${append} return { handlePlaysAppend, revisions }; }`,
     { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
   const exports = {};
   vm.runInNewContext(code, { exports, ...globals });
-  exports.setup()({ iidxId: 'C123456789012' });
+  const h = exports.setup();
+  h.handlePlaysAppend({ iidxId: 'C123456789012' });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls.map(call => call[0]), ['plays', 'dbr']);
   assert.equal(calls[0][1], calls[1][1]);
   assert.equal(calls[0][2], 'C123456789012'); assert.equal(calls[1][2], 'C123456789012');
   assert.equal(await calls[1][3](), true);
+  assert.equal(h.revisions['C123456789012'], 1);
+  assert.equal(h.revisions['A123456789012'], undefined);
   assert.deepEqual(diagnostics, []);
 });
 
@@ -141,10 +145,39 @@ test('mismatched account publishes empty plays', () => {
 test('new play timestamp changes signature and republishes', () => {
   assert.match(appSource, /setRemotePlaysSig\(JSON\.stringify\(\{ iidxId, plays \}\)\)/);
   assert.match(appSource, /remotePlaysSig,[\s\S]*?\]\.join\('\|'\)/);
-  assert.match(appSource, /textageByTitle, remotePlaysSig\]/);
+  assert.match(appSource, /textageByTitle, remotePlaysSig, dbrSavedRevisionByAccount\]/);
 });
 
 test('identical plays preserve signature and deduplicate publish', () => {
   assert.match(appSource, /if \(sig === lastRemoteSigRef\.current\) return/);
   assert.match(appSource, /remotePlaysSig/);
+});
+
+test('DBR saved 완료는 해당 계정 revision만 올리고 현재 gate 계정 push 서명에만 포함', () => {
+  assert.match(appSource, /setDbrSavedRevisionByAccount\(\(current\) => \(\{ \.\.\.current, \[iidxId\]: \(current\[iidxId\] \?\? 0\) \+ 1 \}\)\)/);
+  assert.match(appSource, /dbrSavedRevisionByAccount\[gate\.id\] \?\? 0/);
+  assert.match(appSource, /remotePlays\?\.iidxId === gate\.id \? remotePlays\.plays : \[\]/);
+  assert.match(appSource, /Object\.assign\(remoteUser, \{ plays \}\)/);
+  assert.doesNotMatch(appSource.slice(appSource.indexOf('const remoteUser = buildRemoteUser'), appSource.indexOf('void window.infohsorry.remote.setUser')), /dbrSavedRevisionByAccount|dbrRevision/);
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.match(append, /uploadAutomaticDbr\(plays, iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved\)/);
+  assert.equal((append.match(/onDbrSaved\)/g) ?? []).length, 1);
+});
+
+test('saved revision은 동일 plays payload publish를 한 번 재실행하고 unchanged와 다른 계정은 제외', () => {
+  const publish = (revision, last, account = 'C123456789012') => {
+    const sig = ['same-profile', 'same-plays', revision[account] ?? 0].join('|');
+    if (sig === last.sig) return { calls: last.calls, sig };
+    return { calls: [...last.calls, { account, plays: [{ timestamp: '2026-01-01T00:00:00.000Z', song_id: '80121', ex_score: '5' }] }], sig };
+  };
+  const initial = publish({}, { sig: '', calls: [] });
+  const aSaved = publish({ 'C123456789012': 1 }, initial);
+  const duplicate = publish({ 'C123456789012': 1 }, aSaved);
+  const bOnly = publish({ 'C123456789012': 1, D123456789012: 1 }, duplicate);
+  assert.equal(initial.calls.length, 1);
+  assert.equal(aSaved.calls.length, 2);
+  assert.equal(duplicate.calls.length, 2);
+  assert.equal(bOnly.calls.length, 2);
+  assert.deepEqual(aSaved.calls[1].plays, initial.calls[0].plays);
+  assert.deepEqual(Object.keys(aSaved.calls[1]), ['account', 'plays']);
 });
