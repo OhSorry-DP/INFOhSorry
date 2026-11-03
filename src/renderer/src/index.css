@@ -3185,7 +3185,6 @@ body {
 .__uprofile_recentplays_error { grid-template-columns: 1fr; color: var(--text-muted); }
 .__uprofile_play_sections { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .__uprofile_play_head,
-.__uprofile_play_score,
 .__uprofile_play_pattern,
 .__uprofile_play_rating,
 .__uprofile_play_tiles { min-width: 0; }
@@ -3194,13 +3193,11 @@ body {
 .__uprofile_play_head_title { font-size: 14px; font-weight: 700; color: var(--text-primary); min-width: 0; overflow-wrap: anywhere; }
 .__uprofile_play_head_chart { font-size: 11px; padding: 2px 6px; border: 1px solid var(--border-secondary); border-radius: 3px; }
 .__uprofile_play_head_options { font-size: 12px; color: var(--text-secondary); overflow-wrap: anywhere; }
-.__uprofile_play_score { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 6px 12px; color: var(--text-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
-.__uprofile_play_score h4 { grid-column: 1 / -1; }
-.__uprofile_play_score h4,
 .__uprofile_play_pattern h4,
 .__uprofile_play_rating h4 { margin: 0; color: var(--text-primary); font-size: 13px; }
-.__uprofile_play_score > div { min-width: 0; overflow-wrap: anywhere; }
-.__uprofile_play_score b,
+.__uprofile_playdetail_summary { display: flex; flex-wrap: wrap; gap: 6px 14px; font-variant-numeric: tabular-nums; }
+.__uprofile_playdetail_summary > span { display: inline-flex; gap: 4px; }
+.__uprofile_playdetail_summary b,
 .__uprofile_play_pattern b { color: var(--text-primary); font-weight: 600; }
 .__uprofile_play_pattern { display: grid; gap: 8px; min-width: 0; color: var(--text-secondary); font-size: 12px; container-type: inline-size; }
 .__uprofile_play_rating { display: grid; gap: 8px; min-width: 0; color: var(--text-secondary); font-size: 12px; container-type: inline-size; }
@@ -3253,8 +3250,6 @@ body {
 .__uprofile_playdetail_judge { padding: 4px 4px 12px; display: grid; gap: 10px; color: var(--text-secondary); font-size: 12px; }
 .__uprofile_play_keydetail { max-width: min(100%, 560px); max-height: min(52vh, 360px); overflow: auto; overscroll-behavior: contain; background: var(--bg-card); border: 1px solid var(--border-secondary); color: var(--text-primary); }
 .__uprofile_play_keydetail_row { grid-template-columns: repeat(7, minmax(0, 1fr)); }
-.__uprofile_playdetail_summary { display: flex; flex-wrap: wrap; gap: 6px 14px; font-variant-numeric: tabular-nums; }
-.__uprofile_playdetail_summary b { color: var(--text-primary); font-weight: 600; }
 .__uprofile_playdetail_badge { display: inline-block; padding: 0 6px; border-radius: 4px; border: 1px solid var(--text-muted); color: var(--text-muted); font-size: 11px; }
 .__uprofile_playdetail_bars { display: grid; grid-template-columns: 104px 40px 40px minmax(0, 1fr); gap: 3px 8px; align-items: center; font-variant-numeric: tabular-nums; }
 .__uprofile_playdetail_barrow { display: contents; }
@@ -3279,7 +3274,6 @@ body {
   .__uprofile_recentplays_row { grid-template-columns: 92px minmax(0, 1fr) 48px 60px 16px; gap: 5px; padding: 7px 6px; }
   .__uprofile_playdetail_bars { grid-template-columns: 104px 40px 40px minmax(0, 1fr); gap: 3px 6px; }
   .__uprofile_play_head { line-height: 1.55; }
-  .__uprofile_play_score { grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); }
 }
 
 /* 모바일 — 두 줄 분리. INFOhSorry 의 모바일 breakpoint (768px) 와 통일. */

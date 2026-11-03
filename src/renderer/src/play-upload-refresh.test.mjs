@@ -90,7 +90,7 @@ const lampStyleSource = read('./lampStyle.ts');
 const lampStyleCode = ts.transpileModule(`${lampStyleSource.slice(lampStyleSource.indexOf('function lampStyle('), lampStyleSource.indexOf('\n// lampNum')).replace('export function lampStyle(', 'function lampStyle(')}; lampStyle`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const lampStyleFn = vm.runInNewContext(lampStyleCode, {});
 const recentControllerSource = recentSource.slice(recentSource.indexOf('function laneCounterIndex('), recentSource.indexOf('\nfunction renderPlayDetail('));
-const recentDisplaySource = recentSource.slice(recentSource.indexOf('function playLampLabel('), recentSource.indexOf('\nfunction playScoreInfo('));
+const recentDisplaySource = recentSource.slice(recentSource.indexOf('function playLampLabel('), recentSource.indexOf('\n// diff'));
 const recentDetailCode = ts.transpileModule(`${recentDisplaySource}; ${recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction playLampLabel('))}; ${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playOptionDisplay, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation, laneKeyEvaluation, playLampLabel, playMissLabel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
@@ -115,7 +115,7 @@ function detailTree(detail, play = {}) {
   PlayLaneController = module.PlayLaneController;
   PlayLaneDetail = module.PlayLaneDetail;
   const { renderPlayDetail } = module;
-  return renderPlayDetail(detail, play, 12, 'SPH');
+  return renderPlayDetail(detail, play, 12, play.difficulty || '—');
 }
 function recentCalculations(lampStyleDependency = lampStyleFn) {
   const module = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) }, LAMP_NUM_TO_ABBR: { 0: 'NP', 1: 'F', 2: 'AC', 3: 'EC', 4: 'NC', 5: 'HC', 6: 'EX', 7: 'FC' }, lampStyle: lampStyleDependency, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; } });
@@ -134,20 +134,22 @@ function flatten(node, result = []) {
 }
 const recentRow = timestamp => ({ timestamp });
 
-test('play score calculations cover zero, thresholds, MAX, invalid inputs, and chart matching', () => {
-  const source = recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction recentPlayTime(')) + recentSource.slice(recentSource.indexOf('\nfunction detailSideHidden('), recentSource.indexOf('\nfunction playOptionInfo('));
-  const code = ts.transpileModule(`${source}; ({ playScoreInfo, playChartLevel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const { playScoreInfo, playChartLevel } = vm.runInNewContext(code, { norm: value => value.trim().toLowerCase(), ensureTextageMeta: async () => null });
-  assert.deepEqual({ ...playScoreInfo(0, 9) }, { rank: 'F', rate: '0.00%', next: 'E-0004' });
-  assert.deepEqual({ ...playScoreInfo(14, 9) }, { rank: 'AA', rate: '77.78%', next: 'AAA-0002' });
-  assert.deepEqual({ ...playScoreInfo(18, 9) }, { rank: 'AAA', rate: '100.00%', next: 'MAX-0000' });
-  for (const value of [null, -1, 18.5, 19]) assert.equal(playScoreInfo(value, 9).rate, '—');
-  assert.equal(playScoreInfo(1, 0).rank, '—');
+test('play chart level selects unique SP and DP metadata by mode, difficulty, and normalized title', () => {
+  const source = recentSource.slice(recentSource.indexOf('function playChartLevel('), recentSource.indexOf('\nfunction playOptionInfo('));
+  const code = ts.transpileModule(`${source}; ({ playChartLevel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const { playChartLevel } = vm.runInNewContext(code, { norm: value => value.trim().toLowerCase(), ensureTextageMeta: async () => null });
   const rows = [{ title: 'Song', charts: { SPH: { level: 10 }, DPH: { level: 11 } } }];
   assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, rows, null), 10);
   assert.equal(playChartLevel({ title: 'Song', difficulty: 'DPH' }, rows, null), 11);
   assert.equal(playChartLevel({ title: 'Other', difficulty: 'SPH' }, rows, null), null);
   assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, rows.concat(rows), null), null);
+  const textage = { songs: { one: { title: 'Song', levels: { SH: 10, DH: 11 } } } };
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, [], textage), 10);
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'DPH' }, [], textage), 11);
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, [], null), null);
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, [], { songs: { a: { title: 'Song', levels: { SH: 10 } }, b: { title: ' Song ', levels: { SH: 12 } } } }), null);
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, [], textage), 10);
+  assert.equal(playChartLevel({ title: 'Song', difficulty: 'SPH' }, [{ title: 'Song', charts: {} }, rows[0]], textage), null);
 });
 
 test('RecentPlays discards prior account metadata results after account switch cleanup', async () => {
@@ -219,7 +221,7 @@ test('RecentPlays display reverses chronological rows and formats KST timestamps
   assert.match(recentPlaysSource, /\[\.\.\.recentPlays\]\.reverse\(\)/);
 });
 
-test('RecentPlays preserves repeated songs and opens all normal rows', () => {
+test('RecentPlays preserves repeated songs and initializes only latest normal row open', () => {
   const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('{[...recentPlays].reverse().map('));
   assert.match(snippet, /map\(\(play, index\)/);
   assert.match(snippet, /key=\{`\$\{normalizedId\}-\$\{play\.timestamp\}-\$\{index\}`\}/);
@@ -227,8 +229,26 @@ test('RecentPlays preserves repeated songs and opens all normal rows', () => {
   assert.match(snippet, /play\.difficulty/);
   assert.match(snippet, /play\.ex_score/);
   assert.match(snippet, /<details className="__uprofile_recentplays_item"/);
+  assert.match(snippet, /open=\{openPlay ===/);
+  assert.match(snippet, /setOpenPlay/);
+  assert.match(recentPlaysSource, /setOpenPlay\(\(current\) => current \|\| latestNormalPlayKey\(nextRows, normalizedId\)\)/);
+  assert.match(recentPlaysSource, /useEffect\(\(\) => \{\s*setOpenPlay\(null\);/);
+  assert.match(snippet, /onToggle=\{\(event\) => \{ if \(event\.currentTarget\.open\) setOpenPlay\(/);
+  assert.match(snippet, /current === `\$\{normalizedId\}-\$\{play\.timestamp\}-\$\{recentPlays\.length - 1 - index\}` \? null : current/);
   assert.match(snippet, /renderPlayDetail\(play\.detail, play,/);
   assert.match(recentCss, /\.\_\_uprofile_recentplays_row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
+});
+
+test('latest normal play opens once in a ten-row fixture, skips newest error, and leaves all-error lists closed', () => {
+  const source = recentSource.slice(recentSource.indexOf('function latestNormalPlayKey('), recentSource.indexOf('\nfunction playOptionDisplay('));
+  const code = ts.transpileModule(`${source}; latestNormalPlayKey`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+  const latestNormalPlayKey = vm.runInNewContext(code, { isPlayErrorRow: play => play.error === true });
+  const rows = Array.from({ length: 8 }, (_, index) => ({ timestamp: `t${index}` }));
+  rows.push({ timestamp: 'error', error: true });
+  const key = latestNormalPlayKey(rows, 'account');
+  assert.equal(key, 'account-t7-1');
+  assert.equal(rows.filter((play, index) => key === `account-${play.timestamp}-${rows.length - 1 - index}`).length, 1);
+  assert.equal(latestNormalPlayKey(rows.slice(-1), 'account'), null);
 });
 
 test('RecentPlays error row shows code -11 in one cell', () => {
@@ -256,10 +276,10 @@ test('Recent distinguishes empty history from read failure and keeps chart list 
 test('RecentPlays renders missing detail and one-column section structure', () => {
   assert.match(recentPlaysSource, /renderPlayDetail\(play\.detail, play,/);
   assert.match(recentSource, /function renderPlayDetail\(detail: PlayDetail \| null \| undefined/);
-  for (const heading of ['스코어 정보', '판정 상세', '랜덤 레인 패턴', '레인별 평가']) assert.ok(recentDetail.includes(heading));
-  for (const className of ['__uprofile_play_sections', '__uprofile_play_head', '__uprofile_play_score', '__uprofile_play_pattern', '__uprofile_play_rating', '__uprofile_play_tiles', '__uprofile_play_inactive']) assert.ok(recentSource.includes(className));
+  for (const heading of ['판정 상세', '랜덤 레인 패턴', '레인별 평가']) assert.ok(recentDetail.includes(heading));
+  for (const className of ['__uprofile_play_sections', '__uprofile_play_head', '__uprofile_play_pattern', '__uprofile_play_rating', '__uprofile_play_tiles', '__uprofile_play_inactive']) assert.ok(recentSource.includes(className));
+  assert.doesNotMatch(recentDetail, /스코어 정보|__uprofile_play_score/);
   assert.match(recentDetail, /if \(!detail\) return/);
-  assert.match(recentDetail, /SCORE <b>\{play\.ex_score === '' \? '—' : play\.ex_score\}/);
   assert.doesNotMatch(recentDetail, /play\.detail \? 0|detail \? 0/);
 });
 
@@ -267,25 +287,41 @@ test('RecentPlays summary has five cells and detail headers and display values m
   const summarySource = recentSource.slice(recentSource.indexOf('export function RecentPlays('), recentSource.indexOf('\nexport default function Recent('));
   const transpiled = ts.transpileModule(`${summarySource.replace('export function RecentPlays(', 'function RecentPlays(')}; RecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
-  let stateCall = 0;
-  const RecentPlays = vm.runInNewContext(transpiled, { React, useState: initial => [stateCall++ === 0 ? [{ timestamp: 't', title: 'Song', difficulty: 'SPH', ex_score: '1' }] : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update([{ timestamp: 't', title: 'Song', difficulty: 'SPH', ex_score: '1' }], null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: () => 12, playScoreInfo: () => ({ rank: 'A', rate: '50%', next: 'AA-0001' }), recentPlayTime: () => 'time', renderPlayDetail: () => null, norm: value => value, DP_SLOTS: [] });
+  let stateCall = 0; let detailArgs;
+  const listPlay = { timestamp: 't', title: 'Song', difficulty: 'DPH', ex_score: '1' };
+  const RecentPlays = vm.runInNewContext(transpiled, { React, useState: initial => [stateCall++ === 0 ? [listPlay] : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update([listPlay], null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: () => 12, recentPlayTime: () => 'time', renderPlayDetail: (...args) => { detailArgs = args; return null; }, norm: value => value, DP_SLOTS: [] });
   const tree = RecentPlays({ iidxId: 'id' });
   const summary = flatten(tree).find(node => node.type === 'summary');
+  assert.equal(detailArgs[1], listPlay);
+  assert.equal(detailArgs[3], 'DPH');
   assert.equal(summary.props.children.length, 5);
   assert.deepEqual(summary.props.children.map(node => node.props.className), [undefined, undefined, undefined, undefined, '__uprofile_recentplays_chev']);
   assert.doesNotMatch(JSON.stringify(summary), /AA-0001|50%|12 ·/);
 
-  const play = { title: 'Song', clear_lamp: '1', miss_count: '0', ex_score: '10', notes: '10', settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0', difficulty: 'SPH', judge_16: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
+  const play = { title: 'Song', clear_lamp: '1', miss_count: '-1', ex_score: '0', dj_rate_pct: '0', dj_rank: 'A', notes: '10', settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0', difficulty: 'DPH', judge_16: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
   for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
     const nodes = flatten(detailTree(detail, play));
     const header = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_play_head'));
     const parts = header.props.children;
     assert.deepEqual(parts.map(node => node.props.className), ['__uprofile_play_head_level', '__uprofile_play_head_title', '__uprofile_play_head_chart', '__uprofile_play_head_options']);
-    assert.deepEqual(parts.map(node => node.props.children), [12, 'Song', 'SPH', 'OFF / OFF']);
-    const values = nodes.filter(node => node.type === 'b').map(node => node.props.children);
-    assert.ok(values.includes('FAILED'));
-    assert.ok(values.includes('0'));
+    assert.deepEqual(parts.map(node => node.props.children), [12, 'Song', 'DPH', 'OFF / OFF']);
+    const summaryNode = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_playdetail_summary'));
+    const summaryText = JSON.stringify(summaryNode);
+    for (const value of ['램프', 'EX 스코어', 'Rate', 'DJ LEVEL', 'BP', 'FAILED', '0%', 'A', '—']) assert.ok(summaryText.includes(value));
+    const entries = summaryNode.props.children.map(entry => {
+      const descendants = flatten(entry);
+      return [descendants.find(node => node.type === 'span' && typeof node.props.children === 'string')?.props.children, descendants.find(node => node.type === 'b')?.props.children];
+    });
+    assert.deepEqual(entries, [['램프', 'FAILED'], ['EX 스코어', '0'], ['Rate', '0%'], ['DJ LEVEL', 'A'], ['BP', '—']]);
+    assert.doesNotMatch(summaryText, /콤보 브레이크|P1\+P2 합산/);
+    assert.ok(nodes.some(node => node.props?.className?.split(' ').includes('__uprofile_play_head_chart') && node.props.children === 'DPH'));
+    if (!detail) assert.ok(JSON.stringify(nodes).includes('상세 기록 없음'));
+    else assert.ok(JSON.stringify(nodes).includes('FAST/SLOW 검증 불일치') === false);
+    if (detail) assert.ok(nodes.some(node => node.props?.className?.split(' ').includes('k-cb')));
   }
+  const blankSummaryNodes = flatten(detailTree(null, { ...play, clear_lamp: '', miss_count: '', ex_score: '', dj_rate_pct: '', dj_rank: '' }));
+  const blankSummary = blankSummaryNodes.find(node => node.props?.className?.split(' ').includes('__uprofile_playdetail_summary'));
+  assert.deepEqual(blankSummary.props.children.map(entry => flatten(entry).find(node => node.type === 'b')?.props.children), ['—', '—', '—', '—', '—']);
   const { playLampLabel, playMissLabel } = recentCalculations(lampStyleFn);
   assert.equal(playLampLabel('0'), 'NO PLAY');
   assert.equal(playLampLabel('1'), 'FAILED');
@@ -299,6 +335,7 @@ test('Recent detail aggregation, badges, and per-key detail use current DOM', ()
   assert.match(recentDetail, /const aggregate = \(index: number\)/);
   assert.match(recentDetail, /values\.every\(valid\) \? values\.reduce/);
   assert.match(recentDetail, /FAST\/SLOW 기록 없음/);
+  assert.doesNotMatch(recentDetail, /P1\+P2 합산/);
   assert.match(recentDetail, /!detail\.complete && <span className="__uprofile_playdetail_badge">부분 기록/);
   assert.match(recentDetail, /side\.fs_ok === false/);
   assert.match(recentDetail, /FAST\/SLOW 검증 불일치/);
@@ -335,10 +372,10 @@ test('Recent detail shows combined combo break once for both visible sides', () 
   const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
   const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
   const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33' }));
-  const comboBreak = nodes.find(node => node.props?.className?.endsWith('k-cb'));
+  const comboBreak = nodes.find(node => node.props?.className?.split(' ').includes('k-cb'));
   assert.ok(comboBreak);
   assert.ok(JSON.stringify(comboBreak.props.children).includes('7'));
-  const summary = nodes.find(node => node.props?.className?.includes('__uprofile_playdetail_summary'));
+  const summary = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_playdetail_summary'));
   assert.doesNotMatch(JSON.stringify(summary?.props.children), /COMBO BREAK/);
 });
 
@@ -346,10 +383,10 @@ test('Recent detail shows only P1 combo break for hidden P2', () => {
   const lanes = Array.from({ length: 8 }, (_, i) => [i === 0 ? 1 : 0, 0, 0, 0, 0, 0]);
   const detail = { complete: true, p1: { lanes, lane_fs: null, fs: null, lane_fs_unresolved: 0 }, p2: { lanes: Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]), lane_fs: null, fs: null, lane_fs_unresolved: 0 } };
   const nodes = flatten(detailTree(detail, { judge_16: '10 20 3 1 2 11 21 4 0 1 3 4 30 31 32 33', difficulty: 'SPN' }));
-  const comboBreak = nodes.find(node => node.props?.className?.endsWith('k-cb'));
+  const comboBreak = nodes.find(node => node.props?.className?.split(' ').includes('k-cb'));
   assert.ok(comboBreak);
   assert.ok(JSON.stringify(comboBreak.props.children).includes('3'));
-  const summary = nodes.find(node => node.props?.className?.includes('__uprofile_playdetail_summary'));
+  const summary = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_playdetail_summary'));
   assert.doesNotMatch(JSON.stringify(summary?.props.children), /COMBO BREAK/);
 });
 
@@ -676,21 +713,21 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
   const buttons = nodes.filter(node => node.type === 'button' && node.props?.['aria-label']);
   assert.equal(buttons.length, 16, JSON.stringify(buttons.map(node => ({ type: node.type, className: node.props.className }))));
   assert.equal(buttons.length, 16);
-  const p1Units = flatten(controllers[0]).filter(node => node.props?.className?.includes('__uprofile_play_unit'));
-  const p2Units = flatten(controllers[1]).filter(node => node.props?.className?.includes('__uprofile_play_unit'));
+  const p1Units = flatten(controllers[0]).filter(node => node.props?.className?.split(' ').includes('__uprofile_play_unit'));
+  const p2Units = flatten(controllers[1]).filter(node => node.props?.className?.split(' ').includes('__uprofile_play_unit'));
   assert.equal(p1Units.length, 8);
   assert.equal(p2Units.length, 8);
   assert.equal(p1Units[0].props.className, '__uprofile_play_unit __uprofile_play_unit_scratch');
   assert.deepEqual(p1Units.filter(node => node.props['data-key'] != null).map(node => node.props['data-key']), [1, 2, 3, 4, 5, 6, 7]);
   assert.equal(p2Units.at(-1).props.className, '__uprofile_play_unit __uprofile_play_unit_scratch');
   assert.deepEqual(p2Units.filter(node => node.props['data-key'] != null).map(node => node.props['data-key']), [1, 2, 3, 4, 5, 6, 7]);
-  const badges = nodes.filter(node => node.props?.className?.includes('__uprofile_play_rank_'));
+  const badges = nodes.filter(node => ['__uprofile_play_rank_white', '__uprofile_play_rank_black', '__uprofile_play_rank_scratch'].some(name => node.props?.className?.split(' ').includes(name)));
   assert.equal(badges.length, 16);
-  assert.deepEqual([...new Set(badges.map(node => node.props.className.match(/__uprofile_play_rank_(scratch|black|white)/)?.[1]))].sort(), ['black', 'scratch', 'white']);
+  assert.deepEqual([...new Set(badges.map(node => node.props.className.split(' ').find(token => ['__uprofile_play_rank_scratch', '__uprofile_play_rank_black', '__uprofile_play_rank_white'].includes(token))?.replace('__uprofile_play_rank_', '')))].sort(), ['black', 'scratch', 'white']);
   assert.ok(badges.every(node => node.props['aria-hidden'] === 'true' && node.props.tabIndex === -1));
-  assert.equal(badges.filter(node => node.props.className.includes('__uprofile_play_rank_white')).length, 8);
-  assert.equal(badges.filter(node => node.props.className.includes('__uprofile_play_rank_black')).length, 6);
-  assert.equal(badges.filter(node => node.props.className.includes('__uprofile_play_rank_scratch')).length, 2);
+  assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_white')).length, 8);
+  assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_black')).length, 6);
+  assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_scratch')).length, 2);
   assert.equal(nodes.filter(node => node.props?.className === '__uprofile_play_keyboard').length, 2);
   for (const button of buttons) {
     assert.match(button.props['aria-label'], /^(1P|2P) /);
@@ -701,10 +738,10 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
     assert.equal(typeof button.props.onClick, 'function');
   }
   const missing = flatten(detailTree(null, { ...play, difficulty: 'SPN', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' }));
-  const missingBadges = missing.filter(node => node.props?.className?.includes('__uprofile_play_rank_'));
-  const inactiveBadges = missingBadges.filter(node => node.props.className.includes('__uprofile_play_rank_inactive'));
+  const missingBadges = missing.filter(node => ['__uprofile_play_rank_white', '__uprofile_play_rank_black', '__uprofile_play_rank_scratch'].some(name => node.props?.className?.split(' ').includes(name)));
+  const inactiveBadges = missingBadges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_inactive'));
   assert.equal(inactiveBadges.length, 8);
   assert.ok(inactiveBadges.every(node => node.props.children === ''));
   assert.equal(missing.filter(node => node.type === 'button' && node.props.className === '__uprofile_play_inactive').length, 8);
-  assert.ok(missingBadges.filter(node => !node.props.className.includes('__uprofile_play_rank_inactive')).every(node => node.props.children === '—'));
+  assert.ok(missingBadges.filter(node => !node.props.className.split(' ').includes('__uprofile_play_rank_inactive')).every(node => node.props.children === '—'));
 });

@@ -292,26 +292,21 @@ function detailSideHidden(side: SideDetail | null | undefined): boolean {
   return side.fs === null || (side.fs != null && [side.fs.fast_great, side.fs.fast_good, side.fs.slow_great, side.fs.slow_good].every((value) => typeof value === 'number' && value === 0));
 }
 
-function playScoreInfo(exScore: unknown, noteCount: unknown): { rank: string; rate: string; next: string } {
-  if (!Number.isInteger(exScore) || !Number.isInteger(noteCount) || (noteCount as number) <= 0 || (exScore as number) < 0 || (exScore as number) > 2 * (noteCount as number)) return { rank: '—', rate: '—', next: '—' };
-  const ex = exScore as number;
-  const notes = noteCount as number;
-  const max = notes * 2;
-  const rank = ex === 0 ? 'F' : djLevelFromScore(ex, notes) || '—';
-  const next = DJ_NEXT[rank];
-  const cut = next === 'MAX' ? max : next ? Math.ceil(max * DJ_CUT_NUM[next] / 9) : max;
-  return { rank, rate: `${(ex / max * 100).toFixed(2)}%`, next: `${next || 'MAX'}-${String(Math.max(0, cut - ex)).padStart(4, '0')}` };
-}
-
 function playChartLevel(play: PlayCsvRow, rows: SongRow[], textage: Awaited<ReturnType<typeof ensureTextageMeta>>): number | null {
   const diff = play.difficulty?.replace(/^(SP|DP)/, '');
-  const slot = diff ? `${play.difficulty?.startsWith('DP') ? 'DP' : 'SP'}${diff}` as ChartSlot : null;
+  const mode = play.difficulty?.startsWith('DP') ? 'DP' : 'SP';
+  const slot = diff ? `${mode}${diff}` as ChartSlot : null;
   const title = norm(play.title || '');
   if (!slot || !title) return null;
-  const matches = rows.filter((row) => norm(row.title) === title).map((row) => row.charts[slot]?.level).filter((level): level is number => typeof level === 'number' && Number.isFinite(level));
-  if (matches.length === 1) return matches[0];
+  const matches = rows.filter((row) => norm(row.title) === title);
+  if (matches.length === 1) {
+    const level = matches[0].charts[slot]?.level;
+    if (typeof level === 'number' && Number.isFinite(level)) return level;
+  }
   if (matches.length > 1) return null;
-  const key: Record<string, string> = { B: 'DB', N: 'DN', H: 'DH', A: 'DA', L: 'DX' };
+  const key: Record<string, string> = mode === 'DP'
+    ? { N: 'DN', H: 'DH', A: 'DA', L: 'DX' }
+    : { N: 'SN', H: 'SH', A: 'SA', L: 'SX' };
   const metaKey = key[diff || ''];
   if (!metaKey || !textage?.songs) return null;
   const songs = Object.values(textage.songs).filter((song) => norm(song.title || '') === title);
@@ -335,6 +330,13 @@ function playOptionInfo(play: PlayCsvRow): string {
   if (battle || dp) items.push(`${label(p1?.[0])} / ${label(p1?.[5])}`);
   else items.push(`${label(p1?.[0])} / ${label(p2?.[0])}`);
   return items.join(', ');
+}
+
+function latestNormalPlayKey(rows: PlayCsvRow[], normalizedId: string): string | null {
+  const index = [...rows].reverse().findIndex((play) => !isPlayErrorRow(play));
+  if (index < 0) return null;
+  const play = rows[rows.length - 1 - index];
+  return `${normalizedId}-${play.timestamp}-${index}`;
 }
 
 function playOptionDisplay(play: PlayCsvRow): string {
@@ -461,7 +463,14 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
     return <div key={side} className={`__uprofile_play_pattern_row${inactive ? ' __uprofile_play_pattern_inactive' : ''}`}><span className="__uprofile_play_pattern_tiles">{tiles === null ? '—' : tiles.map((digit, index) => <span key={index} className={`__uprofile_play_pattern_tile ${digit === '' ? (index % 2 === 0 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black') : Number(digit) % 2 === 1 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black'}`}><span className="__uprofile_play_pattern_digit">{digit}</span></span>)}</span><span className="__uprofile_play_pattern_label">PLAYER {side === 'P1' ? '1' : '2'} LANE</span></div>;
   };
   const renderLanePatternGroup = () => <div className="__uprofile_play_pattern_scroll"><div className="__uprofile_play_pattern_groups">{(['P1', 'P2'] as const).map(renderLanePattern)}</div></div>;
-  if (!detail) return <div className="__uprofile_play_sections">{head}<section className="__uprofile_play_score"><h4>스코어 정보</h4><div>CLEAR TYPE <b>{playLampLabel(play.clear_lamp)}</b></div><div>SCORE <b>{play.ex_score === '' ? '—' : play.ex_score} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rank} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).rate} · {playScoreInfo(Number(play.ex_score), Number(play.notes)).next}</b></div><div>MISS COUNT <b>{playMissLabel(play.miss_count)}</b></div></section><section className="__uprofile_playdetail_judge __uprofile_play_inactive"><h4>판정 상세</h4><p>상세 기록 없음</p></section><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'} · 레인 미확정 —</h5><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} /></div>)}</div></div></section></div>;
+  const summary = <div className="__uprofile_playdetail_summary">
+    <span><span>램프</span> <b>{playLampLabel(play.clear_lamp)}</b></span>
+    <span><span>EX 스코어</span> <b>{play.ex_score == null || play.ex_score === '' ? '—' : play.ex_score}</b></span>
+    <span><span>Rate</span> <b>{play.dj_rate_pct == null || play.dj_rate_pct === '' ? '—' : `${play.dj_rate_pct}%`}</b></span>
+    <span><span>DJ LEVEL</span> <b>{play.dj_rank == null || play.dj_rank === '' ? '—' : play.dj_rank}</b></span>
+    <span><span>BP</span> <b>{playMissLabel(play.miss_count)}</b></span>
+  </div>;
+  if (!detail) return <div className="__uprofile_play_sections">{head}{summary}<section className="__uprofile_playdetail_judge __uprofile_play_inactive"><h4>판정 상세</h4><p>상세 기록 없음</p></section><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'} · 레인 미확정 —</h5><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} /></div>)}</div></div></section></div>;
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const aggregate = (index: number) => {
@@ -479,7 +488,6 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
   const cbParts = (play.judge_16 || '').trim().split(/\s+/);
   const cb = sides.length > 0 && cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
     ? sides.reduce((sum, [label]) => sum + Number(cbParts[label === 'P1' ? 10 : 11]), 0) : null;
-  const lamp = playLampLabel(play.clear_lamp);
   const fmt = (value: unknown) => valid(value) ? String(value) : '—';
   const rows: { kind: string; tag?: string; name: string; value: number | null; pct?: boolean; bar?: boolean }[] = [];
   const add = (kind: string, name: string, value: number | null, tag?: string, pct = true, bar = true) => rows.push({ kind, tag, name, value, pct, bar });
@@ -490,11 +498,10 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
   rows.push({ kind: 'sep', name: '', value: null });
   add('k-bad', 'BAD', values[3]); add('k-poor', 'POOR', values[4]); add('k-empty', '空POOR', values[5], undefined, false); add('k-cb', 'COMBO BREAK', cb, undefined, false, false);
   const percent = (value: number | null) => total != null && total > 0 && valid(value) ? `${Math.round(value / total * 100)}%` : '—';
-  const score = playScoreInfo(Number(play.ex_score), Number(play.notes));
   return <div className="__uprofile_play_sections">
     {head}
-    <section className="__uprofile_play_score"><h4>스코어 정보</h4><div>CLEAR TYPE <b>{lamp}</b></div><div>SCORE <b>{play.ex_score === '' ? '—' : play.ex_score} · {score.rank} · {score.rate} · {score.next}</b></div><div>MISS COUNT <b>{playMissLabel(play.miss_count)}</b></div></section>
-    <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><h4>판정 상세</h4><div className="__uprofile_playdetail_summary">{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div><small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small></section>
+    {summary}
+    <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><h4>판정 상세</h4><div className="__uprofile_playdetail_summary">{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div><small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small></section>
     <section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section>
     <section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => { const sideDetail = detail[side === 'P1' ? 'p1' : 'p2']; const count = valid(sideDetail?.lane_fs_unresolved) ? String(sideDetail.lane_fs_unresolved) : '—'; return <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'} · 레인 미확정 {count}</h5><PlayLaneController side={sideDetail} player={side} activity={playSideActivity(play)} accountKey={accountKey} /></div>; })}</div></div></section>
   </div>;
@@ -504,9 +511,11 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
   const [recentPlays, setRecentPlays] = useState<PlayCsvRow[]>([]);
   const [playReadError, setPlayReadError] = useState<string | null>(null);
   const [textage, setTextage] = useState<Awaited<ReturnType<typeof ensureTextageMeta>>>(null);
+  const [openPlay, setOpenPlay] = useState<string | null>(null);
   const normalizedId = useMemo(() => iidxId?.replace(/-/g, '').trim() || '', [iidxId]);
 
   useEffect(() => {
+    setOpenPlay(null);
     setRecentPlays([]);
     setPlayReadError(null);
     setTextage(null);
@@ -516,6 +525,7 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
     const unsubscribe = subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
       setRecentPlays(nextRows);
       setPlayReadError(nextError);
+      setOpenPlay((current) => current || latestNormalPlayKey(nextRows, normalizedId));
     });
     return () => { active = false; unsubscribe(); };
   }, [normalizedId]);
@@ -533,7 +543,7 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
             기록 오류 (코드 {play.song_id})
           </div>
         ) : (
-          <details className="__uprofile_recentplays_item" key={`${normalizedId}-${play.timestamp}-${index}`}>
+          <details className="__uprofile_recentplays_item" key={`${normalizedId}-${play.timestamp}-${index}`} open={openPlay === `${normalizedId}-${play.timestamp}-${recentPlays.length - 1 - index}`} onToggle={(event) => { if (event.currentTarget.open) setOpenPlay(`${normalizedId}-${play.timestamp}-${recentPlays.length - 1 - index}`); else setOpenPlay((current) => current === `${normalizedId}-${play.timestamp}-${recentPlays.length - 1 - index}` ? null : current); }}>
             <summary className="__uprofile_recentplays_row">
               <span>{recentPlayTime(play.timestamp)}</span>
               <span title={play.title}>{play.title || '—'}</span>
