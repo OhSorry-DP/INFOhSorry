@@ -1520,10 +1520,12 @@ let dbrSending: Promise<void> | null = null;
 export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
   decode: (row: PlayCsvRow) => BattleRandomScore | null = decodeBattleRandomPlay,
   bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
-  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache): Promise<void> {
+  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache,
+  onSaved?: (iidxId: string) => void): Promise<void> {
   while (dbrSending) await dbrSending;
   let finish!: () => void;
   dbrSending = new Promise<void>(resolve => { finish = resolve; });
+  let saved = false;
   const diag = (reason: string, row?: PlayCsvRow, score?: BattleRandomScore, extra = '') => {
     const clean = (value: unknown, max: number) => String(value ?? '').replace(/[\x00-\x1f\x7f]/g, '').replace(/(?:bearer|token|cookie|password|passwd|authorization|secret)[^\s]*/gi, '[redacted]').slice(0, max);
     const parts = ['[dbr-upload]', `reason=${reason}`];
@@ -1564,11 +1566,15 @@ export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, ga
           continue;
         }
         if (body && typeof body === 'object' && 'unchanged' in body && body.unchanged === true) diag('unchanged', row, score, `internal_song_id=${match.songId}`);
-        else if (body && typeof body === 'object' && !('unchanged' in body) && ('scores' in body || 'updatedAt' in body)) diag('saved', row, score, `internal_song_id=${match.songId}`);
+        else if (body && typeof body === 'object' && !('unchanged' in body) && ('scores' in body || 'updatedAt' in body)) { saved = true; diag('saved', row, score, `internal_song_id=${match.songId}`); }
         else diag('unknown', row, score, `internal_song_id=${match.songId}`);
       } catch { diag('candidate_exception', row, score); }
     }
-  } finally { dbrSending = null; finish(); }
+  } finally {
+    dbrSending = null;
+    finish();
+    if (saved) { try { onSaved?.(iidxId); } catch {} }
+  }
 }
 
 // 자동 배열은 현재 완주 행 하나만 원격 배열로 upsert한다. 애매한 곡명은 전송하지 않는다.
