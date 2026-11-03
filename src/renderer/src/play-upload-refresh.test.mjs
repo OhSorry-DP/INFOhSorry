@@ -91,7 +91,7 @@ const lampStyleCode = ts.transpileModule(`${lampStyleSource.slice(lampStyleSourc
 const lampStyleFn = vm.runInNewContext(lampStyleCode, {});
 const recentControllerSource = recentSource.slice(recentSource.indexOf('function laneCounterIndex('), recentSource.indexOf('\nfunction renderPlayDetail('));
 const recentDisplaySource = recentSource.slice(recentSource.indexOf('function playLampLabel('), recentSource.indexOf('\nfunction playScoreInfo('));
-const recentDetailCode = ts.transpileModule(`${recentDisplaySource}; ${recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction playLampLabel('))}; ${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation, laneKeyEvaluation, playLampLabel, playMissLabel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+const recentDetailCode = ts.transpileModule(`${recentDisplaySource}; ${recentSource.slice(recentSource.indexOf('const DJ_CUT_NUM:'), recentSource.indexOf('\nfunction playLampLabel('))}; ${recentDetail}; ({ renderPlayDetail, PlayLaneController, PlayLaneDetail, playOptionInfo, playOptionDisplay, playSideActivity, displayLaneOrder, laneCounterIndex, laneEvaluation, laneKeyEvaluation, playLampLabel, playMissLabel })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
 const recentCss = read('./index.css');
 const recentStart = recentSource.indexOf('function subscribeRecentPlays(');
 const recentEnd = recentSource.indexOf('\nfunction recentPlayTime(', recentStart);
@@ -275,10 +275,10 @@ test('RecentPlays summary has five cells and detail headers and display values m
   assert.deepEqual(summary.props.children.map(node => node.props.className), [undefined, undefined, undefined, undefined, '__uprofile_recentplays_chev']);
   assert.doesNotMatch(JSON.stringify(summary), /AA-0001|50%|12 ·/);
 
-  const play = { title: 'Song', clear_lamp: '1', miss_count: '0', ex_score: '10', notes: '10', settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0', difficulty: 'SPH' };
+  const play = { title: 'Song', clear_lamp: '1', miss_count: '0', ex_score: '10', notes: '10', settings_p1_11: '0 0 0 0 0 0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0 0 0 0 0 0', difficulty: 'SPH', judge_16: '0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' };
   for (const detail of [null, { complete: true, p1: {}, p2: {} }]) {
     const nodes = flatten(detailTree(detail, play));
-    const header = nodes.find(node => node.props?.className === '__uprofile_play_head');
+    const header = nodes.find(node => node.props?.className?.split(' ').includes('__uprofile_play_head'));
     const parts = header.props.children;
     assert.deepEqual(parts.map(node => node.props.className), ['__uprofile_play_head_level', '__uprofile_play_head_title', '__uprofile_play_head_chart', '__uprofile_play_head_options']);
     assert.deepEqual(parts.map(node => node.props.children), [12, 'Song', 'SPH', 'OFF / OFF']);
@@ -476,13 +476,25 @@ test('lane detail closes on collapse, account change, scroll and resize, and cle
 });
 
 test('Recent option labels cover all values, P2 SP settings, and battle flip ordering', () => {
-  const { playOptionInfo } = recentCalculations();
+  const { playOptionInfo, playOptionDisplay } = recentCalculations();
   const play = { settings_p1_11: '0 0 0 0 0 5 0 0 0 0 0', settings_p2_11: '6 0 0 0 0 0 0 0 0 0 0', battle_flag: '0', difficulty: 'SPN' };
   assert.equal(playOptionInfo(play), 'OFF / SYMMETRY RANDOM');
   assert.equal(playOptionInfo({ ...play, settings_p1_11: '0 0 1 1 0 2 0 0 0 0 0', battle_flag: '1' }), 'BATTLE, FLIP, OFF / R-RAN');
   assert.equal(playOptionInfo({ ...play, settings_p1_11: '0 0 0 0 0 6 0 0 0 0 0', settings_p2_11: '1 0 0 0 0 0 0 0 0 0 0' }), 'OFF / RAN');
   for (let value = 0; value <= 6; value++) assert.ok(playOptionInfo({ ...play, settings_p1_11: `${value} 0 0 0 0 0 0 0 0 0 0` }).length > 0);
   assert.ok(playOptionInfo({ ...play, settings_p1_11: '7 0 0 0 0 0 0 0 0 0 0' }).includes('—'));
+  const labels = ['OFF', 'RANDOM', 'R-RANDOM', 'S-RANDOM', 'MIRROR', 'SYNCHRONIZE RANDOM', 'SYMMETRY RANDOM'];
+  const p1 = judge_16 => ({ ...play, judge_16, settings_p1_11: '1 0 0 0 0 0 0 0 0 0 0', settings_p2_11: '4 0 0 0 0 0 0 0 0 0 0' });
+  const p2Judge = '0 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0';
+  assert.equal(playOptionDisplay(p1('1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0')), 'RANDOM');
+  assert.equal(playOptionDisplay({ ...p1(p2Judge), settings_p2_11: '4 0 0 0 0 0 0 0 0 0 0' }), 'MIRROR');
+  for (let value = 0; value <= 6; value++) assert.equal(playOptionDisplay({ ...p1('1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'), settings_p1_11: `${value} 0 0 0 0 0 0 0 0 0 0` }), labels[value]);
+  for (const raw of [undefined, '', 'bad', '7 0 0 0 0 0 0 0 0 0 0']) assert.equal(playOptionDisplay({ ...p1('1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'), settings_p1_11: raw }), '—');
+  assert.equal(playOptionDisplay({ ...p1('1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0'), settings_p1_11: '3 0 0 0 0 0 0 0 0 0 0', lane_order_p1: '2035641' }), 'S-RANDOM');
+  assert.equal(playOptionDisplay({ ...play, difficulty: 'DPN', settings_p1_11: '1 0 0 0 0 1 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 1 0 0 0 0 0' }), 'RAN / RAN');
+  assert.equal(playOptionDisplay({ ...play, battle_flag: '1', settings_p1_11: '1 0 0 1 0 1 0 0 0 0 0' }), 'BATTLE, FLIP, RAN / RAN');
+  assert.equal(playOptionDisplay(p1('0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0')), 'RAN / MIR');
+  assert.equal(playOptionDisplay(p1('1 0 0 0 0 1 0 0 0 0 0 0 0 0 0 0')), 'RAN / MIR');
 });
 
 test('Recent side activity resolves P1, P2, both, and zero sides', () => {

@@ -337,6 +337,18 @@ function playOptionInfo(play: PlayCsvRow): string {
   return items.join(', ');
 }
 
+function playOptionDisplay(play: PlayCsvRow): string {
+  if (play.battle_flag === '1' || play.difficulty?.startsWith('DP')) return playOptionInfo(play);
+  const side = playSideActivity(play);
+  if (side !== 'P1' && side !== 'P2') return playOptionInfo(play);
+  const raw = side === 'P1' ? play.settings_p1_11 : play.settings_p2_11;
+  if (!raw || !/^\s*\d+(?:\s+\d+)*\s*$/.test(raw)) return '—';
+  const value = Number(raw.trim().split(/\s+/)[0]);
+  return Number.isInteger(value) && value >= 0 && value <= 6
+    ? ['OFF', 'RANDOM', 'R-RANDOM', 'S-RANDOM', 'MIRROR', 'SYNCHRONIZE RANDOM', 'SYMMETRY RANDOM'][value]
+    : '—';
+}
+
 function playSideActivity(play: PlayCsvRow): 'P1' | 'P2' | 'BOTH' | null {
   if (play.battle_flag === '1' || play.difficulty?.startsWith('DP')) return 'BOTH';
   const parts = play.judge_16?.trim().split(/\s+/) ?? [];
@@ -440,7 +452,7 @@ function PlayLaneDetail({ side, index }: { side: SideDetail | null | undefined; 
 }
 
 function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, chartCode: string, accountKey?: string | null): JSX.Element {
-  const head = <div className="__uprofile_play_head"><span className="__uprofile_play_head_level">{level ?? '—'}</span><span className="__uprofile_play_head_title">{play.title || '—'}</span><span className="__uprofile_play_head_chart">{chartCode}</span><span className="__uprofile_play_head_options">{playOptionInfo(play)}</span></div>;
+  const head = <div className="__uprofile_play_head"><span className="__uprofile_play_head_level">{level ?? '—'}</span><span className="__uprofile_play_head_title">{play.title || '—'}</span><span className="__uprofile_play_head_chart">{chartCode}</span><span className="__uprofile_play_head_options">{playOptionDisplay(play)}</span></div>;
   const renderLanePattern = (side: 'P1' | 'P2') => {
     const order = displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play);
     const activity = playSideActivity(play);
