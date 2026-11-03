@@ -434,17 +434,14 @@ test('Recent controller and key detail CSS positions keys and keeps detail bound
   assert.match(recentCss, /\.\_\_uprofile_play_panel_scroll\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_panel\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;[^}]*gap:\s*calc\(16 \* var\(--u\)\);[^}]*width:\s*max-content;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_controller\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*calc\(8 \* var\(--u\)\);[^}]*width:\s*max-content;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_keyboard\s*\{[^}]*position:\s*relative;[^}]*width:\s*calc\(136 \* var\(--u\)\);[^}]*height:\s*calc\(150 \* var\(--u\)\);/s);
-  for (const [key, left] of [[1, 0], [3, 34], [5, 68], [7, 102], [2, 22], [4, 56], [6, 90]]) {
+  assert.match(recentCss, /\.\_\_uprofile_play_keyboard\s*\{[^}]*position:\s*relative;[^}]*width:\s*calc\(132 \* var\(--u\)\);[^}]*height:\s*calc\(118 \* var\(--u\)\);/s);
+  for (const [key, left] of [[1, 0], [3, 34], [5, 68], [7, 102], [2, 17], [4, 51], [6, 85]]) {
     assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{\\s*left:\\s*calc\\(${left} \\* var\\(--u\\)\\);`));
   }
-  for (const key of [1, 3, 5, 7]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{[^}]*width:\\s*calc\\(34 \\* var\\(--u\\)\\)`));
-  for (const key of [2, 4, 6]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{[^}]*width:\\s*calc\\(24 \\* var\\(--u\\)\\);[^}]*z-index:\\s*1;`));
-  assert.match(recentCss, /\.\_\_uprofile_play_unit_white\s*\{\s*top:\s*calc\(66 \* var\(--u\)\);/);
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_white\s*\{\s*top:\s*calc\(68 \* var\(--u\)\);/);
   assert.match(recentCss, /\.\_\_uprofile_play_unit_black\s*\{\s*top:\s*0;/);
   assert.match(recentCss, /\.\_\_uprofile_play_unit_scratch\s*\{[^}]*width:\s*calc\(104 \* var\(--u\)\);[^}]*height:\s*calc\(104 \* var\(--u\)\);[^}]*border-radius:\s*50%;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_white\s*\{[^}]*height:\s*calc\(64 \* var\(--u\)\)/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller \.__uprofile_play_key_black\s*\{[^}]*height:\s*calc\(44 \* var\(--u\)\)/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_keyboard button\s*\{[^}]*padding:\s*0;[^}]*border:\s*0;/s);
   assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*nth-of-type/);
   assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*transform:\s*translate/);
   for (const [variant, declarations] of [
@@ -556,6 +553,9 @@ test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, 
   const textContent = value => Array.isArray(value) ? value.map(textContent).join('') : value && typeof value === 'object' ? textContent(value.props?.children) : value ?? '';
   const inspect = (detail, play) => {
     const nodes = flatten(detailTree(detail, play));
+    const layouts = nodes.filter(node => exact(node, '__uprofile_play_lane_layout'));
+    assert.equal(layouts.length, 1);
+    assert.deepEqual(Array.from(layouts[0].props.children, node => node.props.className.split(' ').find(token => ['__uprofile_play_pattern', '__uprofile_play_rating'].includes(token))), ['__uprofile_play_pattern', '__uprofile_play_rating']);
     const groups = nodes.filter(node => exact(node, '__uprofile_play_pattern_groups'));
     assert.equal(groups.length, 1);
     const rows = groups[0].props.children;
@@ -621,19 +621,20 @@ test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, 
   }
   const cssRule = selector => recentCss.match(new RegExp(`${selector}\\s*\\{([^}]*)\\}`))?.[1] ?? '';
   const declaration = (body, property) => body.match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`))?.[1]?.trim();
-  assert.match(declaration(cssRule('\\.__uprofile_play_pattern'), 'container-type'), /inline-size/);
-  assert.match(declaration(cssRule('\\.__uprofile_play_rating'), 'container-type'), /inline-size/);
-  for (const selector of ['\\.__uprofile_play_pattern_scroll', '\\.__uprofile_play_panel_scroll']) {
+  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern'), 'container'), 'infplaypattern / inline-size');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_rating'), 'container'), 'infplayrating / inline-size');
+  for (const selector of ['\\.__uprofile_play_pattern_scale', '\\.__uprofile_play_rating_scale']) {
     const body = cssRule(selector);
     assert.match(declaration(body, '--u'), /clamp\(0\.5px, calc\(100cqi \/ 540\), 1px\)/);
-    assert.equal(declaration(body, 'max-width'), '100%');
-    assert.equal(declaration(body, 'min-width'), '0');
-    assert.equal(declaration(body, 'overflow-x'), 'auto');
     assert.equal(Math.max(.5, Math.min(1, 540 / 540)), 1);
     assert.equal(Math.max(.5, Math.min(1, 270 / 540)), .5);
     assert.equal(270 * Math.max(.5, Math.min(1, 270 / 540)), 135);
     assert.equal(269 * Math.max(.5, Math.min(1, 269 / 540)), 134.5);
   }
+  assert.match(cssRule('\\.__uprofile_play_panel_scroll'), /max-width:\s*100%;[^}]*overflow-x:\s*auto/);
+  assert.match(recentCss, /\.__uprofile_play_pattern_scale\s*\{[^}]*--u:\s*clamp\(0\.5px, calc\(100cqi \/ 540\), 1px\)/s);
+  assert.match(recentCss, /\.__uprofile_play_lane_layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+  assert.match(recentCss, /@media\s*\(min-width:\s*900px\)\s*\{\s*\.__uprofile_play_lane_layout\s*\{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'max-width'), '100%');
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'min-width'), '0');
   assert.match(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'gap'), /calc\(16 \* var\(--u\)\)/);
@@ -729,6 +730,20 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
   assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_black')).length, 6);
   assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_scratch')).length, 2);
   assert.equal(nodes.filter(node => node.props?.className === '__uprofile_play_keyboard').length, 2);
+  for (const unit of [...p1Units, ...p2Units]) {
+    const button = flatten(unit).find(node => node.type === 'button');
+    const buttonChild = Array.isArray(button.props.children) ? button.props.children[0] : button.props.children;
+    if (unit.props['data-key'] == null) {
+      assert.equal(buttonChild.props.className, undefined);
+      assert.equal(buttonChild.props.children, 'SCRATCH');
+      continue;
+    }
+    const number = Number(unit.props['data-key']);
+    const tile = buttonChild;
+    assert.ok(tile.props.className.split(' ').includes('__uprofile_play_pattern_tile'));
+    assert.ok(tile.props.className.split(' ').includes(number % 2 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black'));
+    assert.ok(tile.props.children.props.className.split(' ').includes('__uprofile_play_pattern_digit'));
+  }
   for (const button of buttons) {
     assert.match(button.props['aria-label'], /^(1P|2P) /);
     assert.equal(button.props['aria-expanded'], false);
