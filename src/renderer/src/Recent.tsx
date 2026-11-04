@@ -10,7 +10,7 @@
 // (index.css 에 복사). 헤더 < 날짜 > N곡, 6 컬럼 grid (lamp / LV / 곡명 / LAMP변동 / DJ변동 / SCORE변동).
 //
 // 행 클릭 → DP 탭으로 이동 + 해당 곡 검색 (App.tsx 의 scrollTarget 패턴).
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { ChartSlot, SongRow } from '../../shared/types';
 import { DP_SLOTS } from '../../shared/types';
@@ -402,70 +402,63 @@ function laneEvaluation(side: SideDetail | null | undefined): { notes: number; e
 function laneKeyEvaluation(side: SideDetail | null | undefined, index: number): { notes: number; ex: number; rank: string; rate: string } | null {
   const lane = side?.lanes?.[index];
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-  if (side?.lanes_ok === false || !Array.isArray(side?.lanes) || side.lanes.length !== 8 || !Array.isArray(lane) || lane.length < 5 || lane.slice(0, 5).some((value) => !valid(value))) return null;
+  if (side?.lanes_ok === false || !Array.isArray(side?.lanes) || !Array.isArray(lane) || lane.length < 5 || lane.slice(0, 5).some((value) => !valid(value))) return null;
   const notes = lane.slice(0, 5).reduce((sum, value) => sum + value, 0);
-  if (notes === 0) return { notes, ex: 0, rank: '—', rate: '—' };
+  if (notes === 0) return null;
   const ex = lane[0] * 2 + lane[1];
+  if (ex > 2 * notes) return null;
   const rank = ex === 0 ? 'F' : djLevelFromScore(ex, notes) || '—';
   return { notes, ex, rank, rate: `${(ex / (notes * 2) * 100).toFixed(2)}%` };
 }
 
-function PlayLaneController({ side, player, activity, accountKey }: { side: SideDetail | null | undefined; player: 'P1' | 'P2'; activity: 'P1' | 'P2' | 'BOTH' | null; accountKey?: string | null }): JSX.Element {
-  const [openKey, setOpenKey] = useState<number | 'scratch' | null>(null);
-  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
-  const trigger = useMemo(() => ({ current: null as HTMLButtonElement | null }), []);
-  useEffect(() => {
-    if (openKey == null) return;
-    const close = () => setOpenKey(null);
-    const outside = (event: PointerEvent) => { const target = event.target as Element | null; if (target && !target.closest('.__uprofile_play_controller') && !target.closest('.__uprofile_play_keydetail')) close(); };
-    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); setOpenKey(null); trigger.current?.focus(); } };
-    document.addEventListener('keydown', escape);
-    document.addEventListener('pointerdown', outside);
-    window.addEventListener('scroll', close, true);
-    window.addEventListener('resize', close);
-    return () => { document.removeEventListener('keydown', escape); document.removeEventListener('pointerdown', outside); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
-  }, [openKey, trigger]);
-  useEffect(() => { setOpenKey(null); }, [accountKey]);
+function placeLaneDetail(anchor: { left: number; top: number; bottom: number }, box: { width: number; height: number }, viewportW: number, viewportH: number): { top: number; left: number } {
+  const gap = 8;
+  const width = Math.min(box.width, viewportW - gap * 2);
+  const height = Math.min(box.height, viewportH - gap * 2);
+  const left = Math.max(gap, Math.min(anchor.left, viewportW - width - gap));
+  const below = viewportH - anchor.bottom - gap;
+  const top = below >= height || below >= anchor.top - gap ? anchor.bottom + gap : anchor.top - height - gap;
+  return { left, top: Math.max(gap, Math.min(top, viewportH - height - gap)) };
+}
+
+type LaneSelection = { rowKey: string; player: 'P1' | 'P2'; lane: number | 'scratch'; side: SideDetail; button: HTMLButtonElement; touch: boolean };
+
+function PlayLaneController({ side, player, activity = null, rowKey = '', selection = null, onSelect = () => {} }: { side: SideDetail | null | undefined; player: 'P1' | 'P2'; activity?: 'P1' | 'P2' | 'BOTH' | null; rowKey?: string; selection?: LaneSelection | null; onSelect?: (selection: LaneSelection | null) => void }): JSX.Element {
   const inactive = side == null || activity == null || (activity !== 'BOTH' && activity !== player);
   const key = (number: number | 'scratch', className: string, label: string) => {
     const index = laneCounterIndex(number);
-    const id = `play-key-detail-${player}-${number}`;
-    const open = (button: HTMLButtonElement) => { trigger.current = button; const r = button.getBoundingClientRect(); const height = Math.min(360, window.innerHeight - 16); const top = r.bottom + height > window.innerHeight - 8 ? Math.max(8, r.top - height) : r.bottom; setPosition({ top, left: Math.max(8, Math.min(r.left, window.innerWidth - 320)) }); setOpenKey(number); };
+    const id = `play-key-detail-${encodeURIComponent(rowKey)}-${player}-${number}`;
+    const active = selection?.rowKey === rowKey && selection.player === player && selection.lane === number;
+    const labelText = `${player} ${label === 'SCRATCH' ? '스크래치' : `건반 ${label}`}`;
+    const open = (button: HTMLButtonElement, touch: boolean) => { if (side != null) onSelect({ rowKey, player, lane: number, side, button, touch }); };
     const evaluation = index >= 0 ? laneKeyEvaluation(side, index) : null;
     const rankClass = number === 'scratch' ? '__uprofile_play_rank_scratch' : Number(number) % 2 === 0 ? '__uprofile_play_rank_black' : '__uprofile_play_rank_white';
     const tileClass = number === 'scratch' ? '' : `__uprofile_play_pattern_tile ${Number(number) % 2 === 1 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black'}`;
-    return <button type="button" className={`__uprofile_play_unit ${className}${inactive ? ' __uprofile_play_inactive' : ''}`} key={String(number)} data-key={number === 'scratch' ? 8 : number} aria-label={`${player === 'P1' ? 'P1' : 'P2'} ${label === 'SCRATCH' ? '스크래치' : `건반 ${label}`}`} aria-expanded={openKey === number} aria-describedby={openKey === number && side != null ? id : undefined} onMouseEnter={(event) => { if (side != null) open(event.currentTarget); }} onFocus={(event) => { if (side != null) open(event.currentTarget); }} onClick={(event) => { if (side == null) return; if (openKey === number) setOpenKey(null); else open(event.currentTarget); }}>
+    return <button type="button" className={`__uprofile_play_unit ${className}${inactive ? ' __uprofile_play_inactive' : ''}`} key={String(number)} data-key={number === 'scratch' ? 8 : number} aria-label={side != null ? labelText : undefined} aria-expanded={side != null ? active : undefined} aria-describedby={side != null && active ? id : undefined} onPointerOver={side != null ? (event) => { if (event.pointerType !== 'touch') open(event.currentTarget, false); } : undefined} onPointerDown={side != null ? (event) => { if (event.pointerType === 'touch') { event.preventDefault(); if (!active) open(event.currentTarget, true); } } : undefined} onPointerOut={side != null ? (event) => { const target = event.relatedTarget as Element | null; if (!selection?.touch && !target?.closest('.__uprofile_play_keydetail') && selection?.button === event.currentTarget) onSelect(null); } : undefined} onFocus={side != null ? (event) => open(event.currentTarget, false) : undefined}>
       {number !== 'scratch' && <span className={tileClass}><span className="__uprofile_play_pattern_digit" /></span>}
       <span className={`__uprofile_play_rank ${rankClass}${inactive ? ' __uprofile_play_rank_inactive' : ''}`} aria-hidden="true">{evaluation?.rank ?? '—'}</span>
     </button>;
   };
   const keys = Array.from({ length: 7 }, (_, index) => index + 1);
-  return <><div className="__uprofile_play_controller" data-player={player} onMouseLeave={(event) => { if (!event.currentTarget.parentElement?.querySelector('.__uprofile_play_keydetail')?.contains(event.relatedTarget as Node)) setOpenKey(null); }}>
+  return <div className="__uprofile_play_controller" data-player={player}>
     {player === 'P1' && key('scratch', '__uprofile_play_unit_scratch', 'SCRATCH')}
     <div className="__uprofile_play_keyboard">{keys.map((number) => key(number, `__uprofile_play_unit_${number % 2 === 1 ? 'white' : 'black'}`, String(number)))}</div>
     {player === 'P2' && key('scratch', '__uprofile_play_unit_scratch', 'SCRATCH')}
-  </div>{openKey != null && position && createPortal(<div id={`play-key-detail-${player}-${openKey}`} onMouseEnter={() => {}} onMouseLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpenKey(null); }} onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpenKey(null); }} style={{ position: 'fixed', zIndex: 10000, top: position.top, left: position.left, width: 'min(560px, calc(100vw - 16px))', maxWidth: 'calc(100vw - 16px)', maxHeight: 'min(52vh, 360px)', overflow: 'auto' }}><PlayLaneDetail side={side} index={laneCounterIndex(openKey)} /></div>, document.body)}</>;
-}
-
-function PlayLaneDetail({ side, index }: { side: SideDetail | null | undefined; index: number }): JSX.Element {
-  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-  const evaluation = laneKeyEvaluation(side, index);
-  const names = ['PG', 'GR', 'GD', 'BD', 'PR', '空PR', 'F-GR', 'F-GD', 'S-GR', 'S-GD'];
-  return <div className="__uprofile_play_keydetail">
-    <div className="__uprofile_play_keydetail_row">
-      <span>{index === 7 ? 'SCRATCH' : index + 1}</span>
-      {names.map((name, column) => {
-        const value = column < 6 ? side?.lanes?.[index]?.[column] : side?.lane_fs?.[index]?.[column - 6];
-        const shown = column >= 6 && side?.lane_fs == null ? '—' : valid(value) ? String(value) : '—';
-        return <span key={name}>{name} <b>{shown}</b></span>;
-      })}
-      <span>RANK <b>{evaluation?.rank ?? '—'}</b></span><span>EX% <b>{evaluation?.rate ?? '—'}</b></span>
-    </div>
-    {side?.lanes_ok === false && <small>레인 검증 불일치</small>}
   </div>;
 }
 
-function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, accountKey?: string | null): JSX.Element {
+function PlayLaneDetail({ side, index }: { side: SideDetail | null | undefined; index: number }): JSX.Element {
+  const evaluation = laneKeyEvaluation(side, index);
+  const value = (item: unknown) => item == null ? '—' : String(item);
+  const lane = side?.lanes?.[index];
+  const fs = side?.lane_fs?.[index];
+  const cells = [0, 1, 2, 3, 4, 5].map((column) => value(lane?.[column]));
+  cells.push(...(side?.lane_fs == null ? ['—', '—', '—', '—'] : [0, 1, 2, 3].map((column) => value(fs?.[column]))));
+  const text = `${index === 7 ? 'scratch' : `key ${index + 1}`} · ${cells.join(' · ')} · ${evaluation?.rank ?? '—'} · ${evaluation?.rate ?? '—'}${side?.lanes_ok === false ? ' · 레인 검증 불일치' : ''}`;
+  return <div className="__uprofile_play_keydetail">{text}</div>;
+}
+
+function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, rowKey = '', selection: LaneSelection | null = null, onSelect: (selection: LaneSelection | null) => void = () => {}): JSX.Element {
   const head = <div className="__uprofile_play_head"><span className="__uprofile_play_head_level">{level ?? '—'}</span><span className="__uprofile_play_head_options">{playOptionDisplay(play)}</span></div>;
   const renderLanePattern = (side: 'P1' | 'P2') => {
     const order = displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play);
@@ -482,7 +475,7 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
     <span><span>DJ LEVEL</span> <b>{play.dj_rank == null || play.dj_rank === '' ? '—' : play.dj_rank}</b></span>
     <span><span>BP</span> <b>{playMissLabel(play.miss_count)}</b></span>
   </div>;
-  if (!detail) return <div className="__uprofile_play_sections">{head}{summary}<section className="__uprofile_playdetail_judge __uprofile_play_inactive"><p>상세 기록 없음</p></section><div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'}</h5><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} /></div>)}</div></div></div></section></div></div>;
+  if (!detail) return <div className="__uprofile_play_sections">{head}{summary}<section className="__uprofile_playdetail_judge __uprofile_play_inactive"><p>상세 기록 없음</p></section><div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'}</h5><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} rowKey={rowKey} selection={selection} onSelect={onSelect} /></div>)}</div></div></div></section></div></div>;
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const aggregate = (index: number) => {
@@ -514,7 +507,7 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
     {summary}
     <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><div className="__uprofile_playdetail_summary">{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>{!hasFs && <small className="__uprofile_playdetail_foot">FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판</small>}</section>
     <div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section>
-    <section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => { const sideDetail = detail[side === 'P1' ? 'p1' : 'p2']; return <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'}</h5><PlayLaneController side={sideDetail} player={side} activity={playSideActivity(play)} accountKey={accountKey} /></div>; })}</div></div></div></section></div>
+    <section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => { const sideDetail = detail[side === 'P1' ? 'p1' : 'p2']; return <div key={side}><h5>PLAYER{side === 'P1' ? '1' : '2'}</h5><PlayLaneController side={sideDetail} player={side} activity={playSideActivity(play)} rowKey={rowKey} selection={selection} onSelect={onSelect} /></div>; })}</div></div></div></section></div>
   </div>;
 }
 
@@ -522,10 +515,46 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
   const [listState, setListState] = useState<RecentPlayListState>(() => ({ accountId: '', rows: [], signature: '', openKeys: new Set() }));
   const [playReadError, setPlayReadError] = useState<string | null>(null);
   const [textage, setTextage] = useState<Awaited<ReturnType<typeof ensureTextageMeta>>>(null);
+  const [selection, setSelection] = useState<LaneSelection | null>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
   const normalizedId = useMemo(() => iidxId?.replace(/-/g, '').trim() || '', [iidxId]);
 
   const recentPlays = listState.accountId === normalizedId ? listState.rows : [];
   const renderedRows = recentPlayRows(recentPlays, normalizedId).reverse();
+  const selectedRow = selection && selection.rowKey === renderedRows.find(({ rowKey }) => rowKey === selection.rowKey)?.rowKey && listState.openKeys.has(selection.rowKey)
+    ? renderedRows.find(({ rowKey }) => rowKey === selection.rowKey)?.play : undefined;
+  const selectedSide = selectedRow?.detail?.[selection?.player === 'P1' ? 'p1' : 'p2'];
+
+  useEffect(() => { setSelection(null); }, [normalizedId, listState.signature]);
+  useEffect(() => { if (selection && (!listState.openKeys.has(selection.rowKey) || !renderedRows.some(({ rowKey }) => rowKey === selection.rowKey))) setSelection(null); }, [selection, listState.openKeys, renderedRows]);
+  useEffect(() => {
+    if (!selection) return;
+    const close = () => setSelection(null);
+    const outside = (event: PointerEvent) => { const target = event.target as Element | null; if (target && !target.closest('.__uprofile_play_unit') && !target.closest('.__uprofile_play_keydetail')) close(); };
+    const focusOutside = (event: FocusEvent) => { const target = event.target as Element | null; if (target && !target.closest('.__uprofile_play_unit') && !target.closest('.__uprofile_play_keydetail')) close(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); selection.button.focus(); close(); } };
+    document.addEventListener('keydown', escape);
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('focusin', focusOutside);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => { document.removeEventListener('keydown', escape); document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', focusOutside); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+  }, [selection]);
+  useEffect(() => {
+    if (!selection || !detailRef.current) { setPosition(null); return; }
+    const detail = detailRef.current;
+    const viewportW = document.documentElement.clientWidth || window.innerWidth;
+    const viewportH = document.documentElement.clientHeight || window.innerHeight;
+    const gap = 8;
+    detail.style.maxWidth = `${Math.max(0, viewportW - gap * 2)}px`;
+    detail.style.maxHeight = `${Math.max(0, viewportH - gap * 2)}px`;
+    detail.style.visibility = 'hidden';
+    const anchor = selection.button.getBoundingClientRect();
+    const box = detail.getBoundingClientRect();
+    setPosition(placeLaneDetail(anchor, box, viewportW, viewportH));
+    detail.style.visibility = '';
+  }, [selection]);
 
   useEffect(() => {
     setListState({ accountId: normalizedId, rows: [], signature: '', openKeys: new Set() });
@@ -577,11 +606,12 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
               <span>{play.ex_score === '' ? '—' : play.ex_score}</span>
               <span className="__uprofile_recentplays_chev">›</span>
             </summary>
-            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), normalizedId)}
+            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), rowKey, selection, setSelection)}
           </details>
         ))}
       </div>
     )}
+    {selection && selectedSide && createPortal(<div ref={detailRef} id={`play-key-detail-${encodeURIComponent(selection.rowKey)}-${selection.player}-${selection.lane}`} role="tooltip" aria-label={`레인별 평가: ${selection.player} ${selection.lane === 'scratch' ? '스크래치' : `건반 ${selection.lane}`}`} className="__uprofile_play_keydetail" onPointerOut={(event) => { if (!selection.touch && !event.currentTarget.contains(event.relatedTarget as Node) && !selection.button.contains(event.relatedTarget as Node)) setSelection(null); }} style={{ position: 'fixed', zIndex: 10000, left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? 'visible' : 'hidden' }}><PlayLaneDetail side={selectedSide} index={laneCounterIndex(selection.lane)} /></div>, document.body)}
   </section>;
 }
 
