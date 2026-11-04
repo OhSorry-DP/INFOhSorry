@@ -108,6 +108,7 @@ test('auto/initial unchanged와 미확정 DBR 응답은 완료 통지를 발생�
 
 const recentSource = read('./Recent.tsx');
 const recentPlaysSource = recentSource.slice(recentSource.indexOf('export function RecentPlays('), recentSource.indexOf('\nexport default function Recent('));
+const recentListHelpers = recentSource.slice(recentSource.indexOf('type RecentPlayListState'), recentSource.indexOf('\nfunction playOptionDisplay('));
 const recentView = recentSource.slice(recentSource.indexOf('function recentPlayTime('), recentSource.indexOf('\nfunction detailSideHidden('));
 const recentViewCode = ts.transpileModule(`${recentView}; ({ recentPlayTime })`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 const recentDetail = recentSource.slice(recentSource.indexOf('function detailSideHidden('), recentSource.indexOf('\nexport function RecentPlays('));
@@ -244,37 +245,158 @@ test('RecentPlays display reverses chronological rows and formats KST timestamps
   const format = vm.runInNewContext(recentViewCode, {}).recentPlayTime;
   const rows = ['2026-11-01T00:00:00Z', '2026-11-01T01:00:00Z'];
   assert.deepEqual(rows.map(format), ['11-01 09:00', '11-01 10:00']);
-  assert.match(recentPlaysSource, /\[\.\.\.recentPlays\]\.reverse\(\)/);
+  assert.match(recentPlaysSource, /renderedRows\.map\(/);
 });
 
-test('RecentPlays preserves repeated songs and initializes only latest normal row open', () => {
-  const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('{[...recentPlays].reverse().map('));
-  assert.match(snippet, /map\(\(play, index\)/);
-  assert.match(snippet, /key=\{`\$\{normalizedId\}-\$\{play\.timestamp\}-\$\{index\}`\}/);
+test('RecentPlays keys rows from full contents and preserves detail rendering', () => {
+  const snippet = recentPlaysSource.slice(recentPlaysSource.indexOf('{renderedRows.map('));
+  assert.match(recentSource, /function recentPlayRows\(rows: PlayCsvRow\[\], normalizedId: string\)/);
+  assert.match(recentSource, /JSON\.stringify\(\[normalizedId, rowText, occurrence\]\)/);
   assert.match(snippet, /play\.title/);
   assert.match(snippet, /play\.difficulty/);
   assert.match(snippet, /play\.ex_score/);
   assert.match(snippet, /<details className="__uprofile_recentplays_item"/);
-  assert.match(snippet, /open=\{openPlay ===/);
-  assert.match(snippet, /setOpenPlay/);
-  assert.match(recentPlaysSource, /setOpenPlay\(\(current\) => current \|\| latestNormalPlayKey\(nextRows, normalizedId\)\)/);
-  assert.match(recentPlaysSource, /useEffect\(\(\) => \{\s*setOpenPlay\(null\);/);
-  assert.match(snippet, /onToggle=\{\(event\) => \{ if \(event\.currentTarget\.open\) setOpenPlay\(/);
-  assert.match(snippet, /current === `\$\{normalizedId\}-\$\{play\.timestamp\}-\$\{recentPlays\.length - 1 - index\}` \? null : current/);
+  assert.match(snippet, /open=\{listState\.openKeys\.has\(rowKey\)\}/);
+  assert.match(snippet, /event\.currentTarget\.open/);
+  assert.match(snippet, /current\.signature !== listState\.signature/);
   assert.match(snippet, /renderPlayDetail\(play\.detail, play,/);
   assert.match(recentCss, /\.\_\_uprofile_recentplays_row\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:/s);
 });
 
-test('latest normal play opens once in a ten-row fixture, skips newest error, and leaves all-error lists closed', () => {
-  const source = recentSource.slice(recentSource.indexOf('function latestNormalPlayKey('), recentSource.indexOf('\nfunction playOptionDisplay('));
-  const code = ts.transpileModule(`${source}; latestNormalPlayKey`, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
-  const latestNormalPlayKey = vm.runInNewContext(code, { isPlayErrorRow: play => play.error === true });
-  const rows = Array.from({ length: 8 }, (_, index) => ({ timestamp: `t${index}` }));
-  rows.push({ timestamp: 'error', error: true });
-  const key = latestNormalPlayKey(rows, 'account');
-  assert.equal(key, 'account-t7-1');
-  assert.equal(rows.filter((play, index) => key === `account-${play.timestamp}-${rows.length - 1 - index}`).length, 1);
-  assert.equal(latestNormalPlayKey(rows.slice(-1), 'account'), null);
+function createRecentPlaysHarness({ ensureTextageMeta = async () => null, playChartLevel = () => null } = {}) {
+  const source = recentPlaysSource.replace('export function RecentPlays(', 'function RecentPlays(');
+  const code = ts.transpileModule(`${recentListHelpers}; ${source}; ({ RecentPlays, recentPlayRows, initialRecentOpenKeys })`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
+  const slots = [];
+  const effects = [];
+  const listeners = [];
+  let cursor = 0;
+  let props;
+  let api;
+  const depsEqual = (a, b) => a && b && a.length === b.length && a.every((value, index) => Object.is(value, b[index]));
+  const React = { createElement: (type, values, ...children) => ({ type, props: { ...(values ?? {}), children: children.length === 1 ? children[0] : children } }) };
+  const context = {
+    React,
+    useState(initial) {
+      const index = cursor++;
+      if (!slots[index]) slots[index] = { value: typeof initial === 'function' ? initial() : initial };
+      return [slots[index].value, update => { slots[index].value = typeof update === 'function' ? update(slots[index].value) : update; }];
+    },
+    useMemo(factory, deps) {
+      const index = cursor++;
+      if (!slots[index] || !depsEqual(slots[index].deps, deps)) slots[index] = { value: factory(), deps };
+      return slots[index].value;
+    },
+    useEffect(callback, deps) {
+      const index = cursor++;
+      if (!slots[index] || !depsEqual(slots[index].deps, deps)) {
+        effects.push(() => {
+          slots[index]?.cleanup?.();
+          const cleanup = callback();
+          slots[index] = { deps, cleanup };
+        });
+      }
+    },
+    isPlayErrorRow: play => play.error === true,
+    subscribeRecentPlays(id, update) { const entry = { id, update, active: true }; listeners.push(entry); return () => { entry.active = false; }; },
+    ensureTextageMeta,
+    playChartLevel,
+    recentPlayTime: () => 'time',
+    renderPlayDetail: () => null,
+    norm: value => value,
+    DP_SLOTS: [],
+  };
+  const module = vm.runInNewContext(code, context);
+  api = { ...module, listeners, render(nextProps = props) { props = nextProps; cursor = 0; const tree = module.RecentPlays(props); while (effects.length) effects.shift()(); return tree; } };
+  api.state = () => slots[0].value;
+  return api;
+}
+
+test('RecentPlays initially opens only newest row for 1, 2, 10, and 100 rows', () => {
+  for (const count of [1, 2, 10, 100]) {
+    const h = createRecentPlaysHarness();
+    h.render({ iidxId: 'account' });
+    h.listeners[0].update(Array.from({ length: count }, (_, index) => ({ timestamp: `t${index}`, value: index })), null);
+    const tree = h.render();
+    const details = flatten(tree).filter(node => node.type === 'details');
+    assert.equal(details.length, count);
+    assert.equal(details.filter(node => node.props.open).length, 1);
+    if (count === 10) {
+      assert.equal(details[0].props.open, true);
+      assert.equal(details.slice(1).filter(node => node.props.open).length, 0);
+    }
+  }
+});
+
+test('RecentPlays closes on newest error, all errors, and empty rows; same signature preserves manual toggles', () => {
+  for (const rows of [[{ timestamp: 'normal' }, { timestamp: 'error', error: true }], [{ timestamp: 'error', error: true }], []]) {
+    const h = createRecentPlaysHarness(); h.render({ iidxId: 'account' }); h.listeners[0].update(rows, null);
+    assert.equal(flatten(h.render()).filter(node => node.type === 'details' && node.props.open).length, 0);
+  }
+  const h = createRecentPlaysHarness(); h.render({ iidxId: 'account' });
+  const rows = [{ timestamp: 'a' }, { timestamp: 'b' }, { timestamp: 'c' }];
+  h.listeners[0].update(rows, null);
+  let details = flatten(h.render()).filter(node => node.type === 'details');
+  details[1].props.onToggle({ currentTarget: { open: true } });
+  details = flatten(h.render()).filter(node => node.type === 'details');
+  details[2].props.onToggle({ currentTarget: { open: true } });
+  details = flatten(h.render()).filter(node => node.type === 'details');
+  details[0].props.onToggle({ currentTarget: { open: false } });
+  h.listeners[0].update(rows.map(row => ({ ...row })), null);
+  details = flatten(h.render()).filter(node => node.type === 'details');
+  assert.deepEqual(details.map(node => node.props.open), [false, true, true]);
+});
+
+test('RecentPlays resets on changed content and makes row keys collision safe', () => {
+  const h = createRecentPlaysHarness(); h.render({ iidxId: 'account' });
+  let rows = Array.from({ length: 100 }, (_, index) => ({ timestamp: 'same', value: index }));
+  h.listeners[0].update(rows, null);
+  let tree = h.render();
+  const before = flatten(tree).filter(node => node.type === 'details').map(node => node.props.key);
+  h.listeners[0].update([...rows, { timestamp: 'new', value: 100 }], null);
+  tree = h.render();
+  let details = flatten(tree).filter(node => node.type === 'details');
+  assert.equal(details.filter(node => node.props.open).length, 1);
+  assert.equal(details[0].props.open, true);
+  assert.ok(details.slice(1).some(node => before.includes(node.props.key)));
+  rows = [{ timestamp: 't', value: 1 }, { timestamp: 't', value: 2 }, { timestamp: 't', value: 1 }, { timestamp: 't', error: true }];
+  h.listeners[0].update(rows, null);
+  details = flatten(h.render()).filter(node => node.type === 'details');
+  assert.equal(new Set(details.map(node => node.props.key)).size, 3);
+  assert.equal(details.filter(node => node.props.open).length, 0);
+});
+
+test('RecentPlays ignores stale toggles and prior account callbacks after account switch', () => {
+  const h = createRecentPlaysHarness(); h.render({ iidxId: 'first' });
+  const oldCallback = h.listeners[0].update;
+  oldCallback([{ timestamp: 'old' }], null);
+  const oldDetails = flatten(h.render()).filter(node => node.type === 'details');
+  h.render({ iidxId: 'second' });
+  oldCallback([{ timestamp: 'late' }], null);
+  h.listeners[1].update([{ timestamp: 'new' }], null);
+  const details = flatten(h.render()).filter(node => node.type === 'details');
+  oldDetails[0].props.onToggle({ currentTarget: { open: true } });
+  assert.equal(flatten(h.render()).filter(node => node.type === 'details')[0].props.open, true);
+  assert.equal(details[0].props.key, JSON.stringify(['second', JSON.stringify({ timestamp: 'new' }), 0]));
+});
+
+test('RecentPlays ignores prior signature toggles and refreshes details when Textage resolves', async () => {
+  let resolveTextage;
+  const meta = { songs: {} };
+  const levels = [];
+  const h = createRecentPlaysHarness({ ensureTextageMeta: () => new Promise(resolve => { resolveTextage = resolve; }), playChartLevel: (_play, _rows, textage) => { levels.push(textage); return textage ? 12 : null; } });
+  h.render({ iidxId: 'account' });
+  h.listeners[0].update([{ timestamp: 'old', detail: null }], null);
+  const oldToggle = flatten(h.render()).find(node => node.type === 'details').props.onToggle;
+  h.listeners[0].update([{ timestamp: 'new', detail: null }], null);
+  const expectedOpenKeys = h.state().openKeys;
+  oldToggle({ currentTarget: { open: true } });
+  let details = flatten(h.render()).filter(node => node.type === 'details');
+  assert.equal(details[0].props.open, true);
+  assert.equal(h.state().openKeys, expectedOpenKeys);
+  resolveTextage(meta);
+  await Promise.resolve();
+  h.render();
+  assert.equal(levels[levels.length - 1], meta);
 });
 
 test('RecentPlays error row shows code -11 in one cell', () => {
@@ -312,32 +434,23 @@ test('RecentPlays renders missing detail and one-column section structure', () =
 
 test('RecentPlays summary has five cells and detail headers and display values match for both branches', () => {
   const summarySource = recentSource.slice(recentSource.indexOf('export function RecentPlays('), recentSource.indexOf('\nexport default function Recent('));
-  const transpiled = ts.transpileModule(`${summarySource.replace('export function RecentPlays(', 'function RecentPlays(')}; RecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
-  const React = { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children: children.length === 1 ? children[0] : children } }) };
-  let stateCall = 0;
+  const transpiled = ts.transpileModule(`${recentListHelpers}; ${summarySource.replace('export function RecentPlays(', 'function RecentPlays(')}; RecentPlays`, { compilerOptions: { target: ts.ScriptTarget.ES2022, jsx: ts.JsxEmit.React } }).outputText;
   const plays = [
     { timestamp: 't1', song_id: 'game-42-dp', title: '未完成ノ蒸氣驅動乙女', difficulty: 'DPH', ex_score: '1684', notes: '2000', settings_p1_11: '0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0', battle_flag: '0' },
     { timestamp: 't2', song_id: 'game-42-sp', title: '未完成ノ蒸氣驅動乙女', difficulty: 'SPA', ex_score: '1684', notes: '2000', settings_p1_11: '0 0 0 0 0 0', settings_p2_11: '0 0 0 0 0 0', battle_flag: '0' },
   ];
-  const seenLevels = [];
   const actualTextage = { songs: { gameSong42: { title: '未完成ノ蒸氣驅動乙女', levels: { DH: 11, SA: 12 } } } };
-  const RecentPlays = vm.runInNewContext(transpiled, { React, useState: initial => [Array.isArray(initial) ? plays : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update(plays, null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: getPlayChartLevel, recentPlayTime: () => 'time', renderPlayDetail: (...args) => { seenLevels.push(args[2]); return null; }, norm: value => value, DP_SLOTS: [] });
-  const loadingTree = RecentPlays({ iidxId: 'id' });
-  assert.deepEqual(seenLevels, [null, null]);
-  seenLevels.length = 0;
-  const tree = RecentPlays({ iidxId: 'id' });
+  const h = createRecentPlaysHarness();
+  h.render({ iidxId: 'id' });
+  h.listeners[0].update(plays, null);
+  const tree = h.render();
   const summary = flatten(tree).find(node => node.type === 'summary');
   assert.equal(summary.props.children.length, 5);
   assert.deepEqual(summary.props.children.map(node => node.props.className), [undefined, undefined, undefined, undefined, '__uprofile_recentplays_chev']);
   assert.doesNotMatch(JSON.stringify(summary), /AA-0001|50%|12 ·/);
 
-  assert.ok(flatten(loadingTree).some(node => node.type === 'summary'));
   const levels = plays.map(play => getPlayChartLevel(play, [], actualTextage));
   assert.deepEqual(levels, [11, 12]);
-  const levelHarness = vm.runInNewContext(transpiled, { React, useState: initial => [Array.isArray(initial) ? plays : initial === null && initial !== undefined ? actualTextage : initial, () => {}], useMemo: fn => fn(), useEffect: callback => callback(), isPlayErrorRow: () => false, subscribeRecentPlays(_id, update) { update(plays, null); return () => {}; }, ensureTextageMeta: async () => null, playChartLevel: (play, rows) => getPlayChartLevel(play, rows, actualTextage), recentPlayTime: () => 'time', renderPlayDetail: (...args) => { seenLevels.push(args[2]); return null; }, norm: value => value, DP_SLOTS: [] });
-  levelHarness({ iidxId: 'id' });
-  assert.deepEqual(seenLevels, [null, null]);
-  seenLevels.length = 0;
   assert.notEqual(plays[0].song_id, 'gameSong42');
   assert.notEqual(plays[1].song_id, 'gameSong42');
   const details = [null, { complete: true, p1: {}, p2: {} }];

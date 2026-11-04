@@ -332,11 +332,22 @@ function playOptionInfo(play: PlayCsvRow): string {
   return items.join(', ');
 }
 
-function latestNormalPlayKey(rows: PlayCsvRow[], normalizedId: string): string | null {
-  const index = [...rows].reverse().findIndex((play) => !isPlayErrorRow(play));
-  if (index < 0) return null;
-  const play = rows[rows.length - 1 - index];
-  return `${normalizedId}-${play.timestamp}-${index}`;
+type RecentPlayListState = { accountId: string; rows: PlayCsvRow[]; signature: string; openKeys: Set<string> };
+
+function recentPlayRows(rows: PlayCsvRow[], normalizedId: string): { play: PlayCsvRow; rowKey: string }[] {
+  const occurrences = new Map<string, number>();
+  return rows.map((play) => {
+    const rowText = JSON.stringify(play);
+    const occurrence = occurrences.get(rowText) ?? 0;
+    occurrences.set(rowText, occurrence + 1);
+    return { play, rowKey: JSON.stringify([normalizedId, rowText, occurrence]) };
+  });
+}
+
+function initialRecentOpenKeys(rows: PlayCsvRow[], normalizedId: string): Set<string> {
+  const keyedRows = recentPlayRows(rows, normalizedId);
+  const latest = keyedRows[keyedRows.length - 1];
+  return latest && !isPlayErrorRow(latest.play) ? new Set([latest.rowKey]) : new Set();
 }
 
 function playOptionDisplay(play: PlayCsvRow): string {
@@ -508,24 +519,29 @@ function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRo
 }
 
 export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element {
-  const [recentPlays, setRecentPlays] = useState<PlayCsvRow[]>([]);
+  const [listState, setListState] = useState<RecentPlayListState>(() => ({ accountId: '', rows: [], signature: '', openKeys: new Set() }));
   const [playReadError, setPlayReadError] = useState<string | null>(null);
   const [textage, setTextage] = useState<Awaited<ReturnType<typeof ensureTextageMeta>>>(null);
-  const [openPlay, setOpenPlay] = useState<string | null>(null);
   const normalizedId = useMemo(() => iidxId?.replace(/-/g, '').trim() || '', [iidxId]);
 
+  const recentPlays = listState.accountId === normalizedId ? listState.rows : [];
+  const renderedRows = recentPlayRows(recentPlays, normalizedId).reverse();
+
   useEffect(() => {
-    setOpenPlay(null);
-    setRecentPlays([]);
+    setListState({ accountId: normalizedId, rows: [], signature: '', openKeys: new Set() });
     setPlayReadError(null);
     setTextage(null);
     if (!normalizedId) return;
     let active = true;
     void ensureTextageMeta().then((meta) => { if (active) setTextage(meta); });
     const unsubscribe = subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
-      setRecentPlays(nextRows);
+      const signature = JSON.stringify(nextRows);
+      setListState((current) => {
+        if (!active || current.accountId !== normalizedId) return current;
+        if (current.signature === signature) return current;
+        return { accountId: normalizedId, rows: nextRows, signature, openKeys: initialRecentOpenKeys(nextRows, normalizedId) };
+      });
       setPlayReadError(nextError);
-      setOpenPlay((current) => current || latestNormalPlayKey(nextRows, normalizedId));
     });
     return () => { active = false; unsubscribe(); };
   }, [normalizedId]);
@@ -538,12 +554,22 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
       <p className="__uprofile_tabempty">플레이 기록이 없습니다.</p>
     ) : (
       <div className="__uprofile_recentplays_list">
-        {[...recentPlays].reverse().map((play, index) => isPlayErrorRow(play) ? (
-          <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={`error-${index}`}>
+        {renderedRows.map(({ play, rowKey }) => isPlayErrorRow(play) ? (
+          <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={rowKey}>
             기록 오류 (코드 {play.song_id})
           </div>
         ) : (
-          <details className="__uprofile_recentplays_item" key={`${normalizedId}-${play.timestamp}-${index}`} open={openPlay === `${normalizedId}-${play.timestamp}-${recentPlays.length - 1 - index}`} onToggle={(event) => { if (event.currentTarget.open) setOpenPlay(`${normalizedId}-${play.timestamp}-${recentPlays.length - 1 - index}`); else setOpenPlay((current) => current === `${normalizedId}-${play.timestamp}-${recentPlays.length - 1 - index}` ? null : current); }}>
+          <details className="__uprofile_recentplays_item" key={rowKey} open={listState.openKeys.has(rowKey)} onToggle={(event) => {
+            const shouldOpen = event.currentTarget.open;
+            setListState((current) => {
+              if (current.accountId !== normalizedId || current.signature !== listState.signature) return current;
+              const isOpen = current.openKeys.has(rowKey);
+              if (isOpen === shouldOpen) return current;
+              const openKeys = new Set(current.openKeys);
+              if (shouldOpen) openKeys.add(rowKey); else openKeys.delete(rowKey);
+              return { ...current, openKeys };
+            });
+          }}>
             <summary className="__uprofile_recentplays_row">
               <span>{recentPlayTime(play.timestamp)}</span>
               <span title={play.title}>{play.title || '—'}</span>
