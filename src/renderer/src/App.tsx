@@ -1688,7 +1688,12 @@ export default function App() {
           addDiagLine('플레이 기록 업로드 실패');
         }
         try {
-          await uploadAutomaticDbr(plays, iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved);
+          if (result.ok && result.found !== false) {
+            const parsed = parsePlayHistoryDetailed(result.csv ?? '');
+            if (parsed.errorCode == null && parsed.lastCompleteError == null && parsed.rows.length > 0) {
+              await uploadAutomaticDbr([parsed.rows[parsed.rows.length - 1]], iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved, false);
+            }
+          }
         } catch {
           addDiagLine('DBR 자동 저장 실패');
         }

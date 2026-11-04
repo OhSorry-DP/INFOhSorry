@@ -85,9 +85,66 @@ test('append 이벤트는 CSV를 다시 읽어 remote plays를 갱신', () => {
   assert.match(appSource, /await readPlayCsv\(iidxId\)/);
 });
 
+test('append DBR은 마지막 완결 행 하나만 전송', () => {
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.match(append, /uploadAutomaticDbr\(\[parsed\.rows\[parsed\.rows\.length - 1\]\]/);
+  assert.match(append, /onDbrSaved, false\)/);
+});
+
+test('append 마지막 비DBR 행에서 과거 적격 행을 고르지 않는다', () => {
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.match(append, /parsed\.rows\[parsed\.rows\.length - 1\]/);
+  assert.doesNotMatch(append, /findLast|\.reverse\(\)|\.sort\(/);
+});
+
+test('append 마지막 형식 오류는 DBR을 생략한다', async () => {
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.match(append, /parsed\.errorCode == null && parsed\.lastCompleteError == null && parsed\.rows\.length > 0/);
+  const cases = [
+    { read: { ok: true, csv: 'csv' }, parsed: { rows: [{ marker: 'A' }], lastCompleteError: { columns: 1 }, errorCode: null } },
+    { read: { ok: true, csv: 'csv' }, parsed: { rows: [{ marker: 'A' }], lastCompleteError: null, errorCode: -9 } },
+    { read: { ok: true, csv: 'csv' }, parsed: { rows: [], lastCompleteError: null, errorCode: null } },
+    { read: { ok: true, found: false, csv: 'csv' }, parsed: { rows: [{ marker: 'A' }], lastCompleteError: null, errorCode: null } },
+    { read: { ok: false }, parsed: { rows: [{ marker: 'A' }], lastCompleteError: null, errorCode: null } },
+    { read: { ok: true, csv: 'csv' }, throws: true },
+  ];
+  for (const item of cases) {
+    const calls = [];
+    const globals = {
+      APP_VERSION: 'test', refreshRemotePlays: async () => {}, sessionRef: { current: { generation: 1 } },
+      window: { infohsorry: { upload: { readPlayCsv: async () => item.read }, session: { getState: async () => ({ pid: 5 }) } } },
+      buildUploadPlays: () => [], parsePlayHistoryDetailed: () => { if (item.throws) throw new Error('parse'); return item.parsed; },
+      readIidxIdFresh: async () => ({ iidxId: 'C123456789012', processMissing: false }),
+      uploadAutomaticPlays: async () => {}, uploadAutomaticDbr: async (...args) => calls.push(args),
+      onDbrSaved() {}, addDiagLine() {}, console: { warn() {} },
+    };
+    const code = ts.transpileModule(`export function setup() { const playsChainByAccount = new Map(); ${append} return handlePlaysAppend; }`, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+    const exports = {};
+    vm.runInNewContext(code, { exports, ...globals });
+    exports.setup()({ iidxId: 'C123456789012' });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('append PUT 완료 뒤 DBR을 호출한다', () => {
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.ok(append.indexOf('await uploadAutomaticPlays') < append.indexOf('await uploadAutomaticDbr'));
+});
+
+test('append CSV 읽기는 계정 체인 안에 남는다', () => {
+  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
+  assert.ok(append.indexOf('previous.catch(() => {}).then(async () => {') < append.indexOf('await readPlayCsv(iidxId)'));
+});
+
+test('auto initial 전체 대상과 기존 플레이 창을 유지한다', () => {
+  assert.match(appSource, /uploadAutomaticDbr\(snapshot\.plays, snapshot\.iidxId, gameRecognized,/);
+  assert.match(appSource, /buildUploadPlays\(result\.ok[\s\S]*?\)\.slice\(-10\)/);
+});
+
 test('append 한 번으로 플레이 결과와 무관하게 동일 판 DBR 저장을 실행', async () => {
   const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
-  assert.match(append, /await uploadAutomaticDbr\(plays, iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved\)/);
+  assert.match(append, /parsePlayHistoryDetailed\(result\.csv \?\? ''\)/);
   const calls = []; const diagnostics = []; const savedIds = [];
   const globals = {
     APP_VERSION: 'test', refreshRemotePlays: async () => {}, sessionRef: { current: { generation: 1 } },
@@ -96,6 +153,7 @@ test('append 한 번으로 플레이 결과와 무관하게 동일 판 DBR 저�
       session: { getState: async () => ({ pid: 5 }) },
     } },
     buildUploadPlays: () => [{ timestamp: '2026-01-01T00:00:00.000Z', song_id: '80121', title: 'Fixture Song', difficulty: 'SPA', notes: '10', ex_score: '5' }],
+    parsePlayHistoryDetailed: () => ({ rows: [{ song_id: '80121', marker: 'last' }], lastCompleteError: null }),
     readIidxIdFresh: async () => ({ iidxId: 'C123456789012', processMissing: false }),
     uploadAutomaticPlays: async (...args) => { calls.push(['plays', ...args]); return { ok: true }; },
     uploadAutomaticDbr: async (...args) => { calls.push(['dbr', ...args]); args[7]?.(args[1]); return { ok: true }; },
@@ -110,7 +168,8 @@ test('append 한 번으로 플레이 결과와 무관하게 동일 판 DBR 저�
   h.handlePlaysAppend({ iidxId: 'C123456789012' });
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(calls.map(call => call[0]), ['plays', 'dbr']);
-  assert.equal(calls[0][1], calls[1][1]);
+  assert.notEqual(calls[0][1], calls[1][1]);
+  assert.equal(calls[1][1][0].marker, 'last');
   assert.equal(calls[0][2], 'C123456789012'); assert.equal(calls[1][2], 'C123456789012');
   assert.equal(await calls[1][3](), true);
   assert.equal(h.revisions['C123456789012'], 1);
@@ -160,8 +219,8 @@ test('DBR saved 완료는 해당 계정 revision만 올리고 현재 gate 계정
   assert.match(appSource, /Object\.assign\(remoteUser, \{ plays \}\)/);
   assert.doesNotMatch(appSource.slice(appSource.indexOf('const remoteUser = buildRemoteUser'), appSource.indexOf('void window.infohsorry.remote.setUser')), /dbrSavedRevisionByAccount|dbrRevision/);
   const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
-  assert.match(append, /uploadAutomaticDbr\(plays, iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved\)/);
-  assert.equal((append.match(/onDbrSaved\)/g) ?? []).length, 1);
+  assert.match(append, /uploadAutomaticDbr\(\[parsed\.rows\[parsed\.rows\.length - 1\]\], iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved, false\)/);
+  assert.equal((append.match(/onDbrSaved, false\)/g) ?? []).length, 1);
 });
 
 test('saved revision은 동일 plays payload publish를 한 번 재실행하고 unchanged와 다른 계정은 제외', () => {
