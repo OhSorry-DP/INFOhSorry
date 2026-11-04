@@ -530,6 +530,72 @@ test('DBR 실제 저장 완료 콜백은 묶음당 한 번이며 조기 종료�
   await api.uploadAutomaticDbr([{ ...base, title: 'Fixture 1' }], 'C123456789012', async () => true, decode, async () => 'token', async () => { nextRequests++; return { ok: true, json: async () => ({ updatedAt: 'now' }) }; }, songs);
   assert.equal(nextRequests, 1);
 });
+test('DBR 직렬 전송 중 우회 전송은 진행한다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; });
+  let aStarted = false; let bStarted = 0; let bCompleted = false;
+  const send = async (_url, options) => {
+    const id = JSON.parse(options.body).song_id;
+    if (id === 9001) { aStarted = true; await gateA; }
+    if (id === 9002) { bStarted++; bCompleted = true; }
+    return { ok: true, json: async () => ({ scores: {} }) };
+  };
+  const songs = async () => new Map([1, 2].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
+  const a = api.uploadAutomaticDbr([{ ...row(1), title: 'Fixture 1' }], 'A', async () => true, decode, async () => 't', send, songs);
+  while (!aStarted) await Promise.resolve();
+  await api.uploadAutomaticDbr([{ ...row(2), title: 'Fixture 2' }], 'B', async () => true, decode, async () => 't', send, songs, undefined, false);
+  assert.equal(bStarted, 1); assert.equal(bCompleted, true);
+  releaseA(); await a;
+});
+test('DBR 우회 완료는 전체 잠금을 해제하지 않는다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; });
+  let aStarted = false; const posted = [];
+  const send = async (_url, options) => { const id = JSON.parse(options.body).song_id; posted.push(id); if (id === 9001) { aStarted = true; await gateA; } return { ok: true, json: async () => ({ scores: {} }) }; };
+  const songs = async () => new Map([1, 2, 3].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 }); const call = (id, serialize) => api.uploadAutomaticDbr([{ ...row(id), title: `Fixture ${id}` }], String(id), async () => true, decode, async () => 't', send, songs, undefined, serialize);
+  const a = call(1); while (!aStarted) await Promise.resolve(); await call(2, false);
+  const c = call(3); await Promise.resolve(); await Promise.resolve(); assert.deepEqual(posted, [9001, 9002]);
+  releaseA(); await Promise.all([a, c]); assert.deepEqual(posted, [9001, 9002, 9003]);
+});
+test('DBR 전체 전송은 기본 직렬화를 유지한다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; }); let aStarted = false; const posted = [];
+  const send = async (_url, options) => { const id = JSON.parse(options.body).song_id; posted.push(id); if (id === 9001) { aStarted = true; await gateA; } return { ok: true, json: async () => ({ scores: {} }) }; };
+  const songs = async () => new Map([1, 2].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 }); const call = id => api.uploadAutomaticDbr([{ ...row(id), title: `Fixture ${id}` }], String(id), async () => true, decode, async () => 't', send, songs);
+  const a = call(1); while (!aStarted) await Promise.resolve(); const c = call(2); await Promise.resolve(); await Promise.resolve(); assert.deepEqual(posted, [9001]);
+  releaseA(); await Promise.all([a, c]); assert.deepEqual(posted, [9001, 9002]);
+});
+test('DBR 우회 실패는 전체 잠금을 보존한다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; }); let aStarted = false; const posted = [];
+  const send = async (_url, options) => { const id = JSON.parse(options.body).song_id; posted.push(id); if (id === 9001) { aStarted = true; await gateA; } if (id === 9002) throw new Error('우회 실패'); return { ok: true, json: async () => ({ scores: {} }) }; };
+  const songs = async () => new Map([1, 2, 3].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 }); const call = (id, serialize) => api.uploadAutomaticDbr([{ ...row(id), title: `Fixture ${id}` }], String(id), async () => true, decode, async () => 't', send, songs, undefined, serialize);
+  const a = call(1); while (!aStarted) await Promise.resolve(); await call(2, false); const c = call(3); await Promise.resolve(); await Promise.resolve(); assert.deepEqual(posted, [9001, 9002]);
+  releaseA(); await Promise.all([a, c]); assert.deepEqual(posted, [9001, 9002, 9003]);
+});
+test('DBR 우회 저장 응답에서만 완료 통지한다', async () => {
+  const api = sync(); const base = { ...row(1), title: 'Fixture Song' }; const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]); const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
+  const replies = [
+    { send: async () => ({ ok: true, json: async () => ({ scores: {} }) }), expected: 1 },
+    { send: async () => ({ ok: true, json: async () => ({ unchanged: true }) }), expected: 0 },
+    { send: async () => ({ ok: false, status: 500, json: async () => ({}) }), expected: 0 },
+    { send: async () => { throw new Error('전송 실패'); }, expected: 0 },
+  ];
+  for (const { send, expected } of replies) { let count = 0; await api.uploadAutomaticDbr([base], 'A', async () => true, decode, async () => 't', send, songs, () => count++, false); assert.equal(count, expected); }
+});
+test('DBR 우회도 저장 자격과 개선 전용을 유지한다', async () => {
+  const api = sync(); const actual = actualRows()[0]; const valid = { ...actual, title: 'Fixture Song', song_id: '80121', difficulty: 'SPA', play_speed: '1.00', settings_p1_11: '1 1 1 0 5 1 0 0 0 0 1', gauge_p2_w78: '80' };
+  const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]); const bodies = [];
+  await api.uploadAutomaticDbr([valid], 'A', async () => true, undefined, async () => 't', async (_url, options) => { bodies.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ scores: {} }) }; }, songs, undefined, false);
+  assert.equal(bodies.length, 1); assert.equal(bodies[0].improvements_only, true);
+  for (const rejected of [
+    { ...valid, settings_p1_11: '1 1 0 0 5 1 0 0 0 0 1' },
+    { ...valid, settings_p1_11: '0 1 1 0 5 1 0 0 0 0 1' },
+    { ...valid, play_speed: '0.70' },
+  ]) {
+    let requests = 0; await api.uploadAutomaticDbr([rejected], 'A', async () => true, undefined, async () => 't', async () => { requests++; return { ok: true, json: async () => ({ scores: {} }) }; }, songs, undefined, false); assert.equal(requests, 0);
+  }
+});
 test('DBR은 0개/복수 후보만 건너뛰고 제목 정규화 후 단일 내부 ID를 전송', async () => {
   const api = sync(); const calls = [];
   const rows = ['Missing', 'Duplicate', ' Fixture Song  '].map((title, id) => ({ ...row(id), title }));

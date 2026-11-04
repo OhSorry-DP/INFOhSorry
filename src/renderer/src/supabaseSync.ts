@@ -1521,10 +1521,14 @@ export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, ga
   decode: (row: PlayCsvRow) => BattleRandomScore | null = decodeBattleRandomPlay,
   bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
   send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache,
-  onSaved?: (iidxId: string) => void): Promise<void> {
-  while (dbrSending) await dbrSending;
+  onSaved?: (iidxId: string) => void, serialize = true): Promise<void> {
+  let ownsLock = false;
   let finish!: () => void;
-  dbrSending = new Promise<void>(resolve => { finish = resolve; });
+  if (serialize) {
+    while (dbrSending) await dbrSending;
+    dbrSending = new Promise<void>(resolve => { finish = resolve; });
+    ownsLock = true;
+  }
   let saved = false;
   const diag = (reason: string, row?: PlayCsvRow, score?: BattleRandomScore, extra = '') => {
     const clean = (value: unknown, max: number) => String(value ?? '').replace(/[\x00-\x1f\x7f]/g, '').replace(/(?:bearer|token|cookie|password|passwd|authorization|secret)[^\s]*/gi, '[redacted]').slice(0, max);
@@ -1571,8 +1575,10 @@ export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, ga
       } catch { diag('candidate_exception', row, score); }
     }
   } finally {
-    dbrSending = null;
-    finish();
+    if (ownsLock) {
+      dbrSending = null;
+      finish();
+    }
     if (saved) { try { onSaved?.(iidxId); } catch {} }
   }
 }
