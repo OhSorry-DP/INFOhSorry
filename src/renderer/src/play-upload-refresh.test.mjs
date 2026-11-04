@@ -644,6 +644,7 @@ test('Recent controller and key detail CSS positions keys and keeps detail bound
     ['black', 'border:\\s*calc\\(1 \\* var\\(--rating-u\\)\\) solid #3f8cff;[^}]*background:\\s*#133263;[^}]*color:\\s*#fff'],
     ['white', 'border:\\s*calc\\(1 \\* var\\(--rating-u\\)\\) solid #cbd5e1;[^}]*background:\\s*#f8fafc;[^}]*color:\\s*#172033'],
   ]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_rank_${variant}\\s*\\{[^}]*${declarations}`, 's'));
+  assert.match(recentCss, /\.__uprofile_play_unit_scratch\s*\{[^}]*position:\s*relative;[^}]*width:\s*calc\(96 \* var\(--rating-u\)\);/s);
   assert.match(recentCss, /\.\_\_uprofile_play_rank_inactive\s*\{[^}]*background:\s*#4b5563;[^}]*border-color:\s*#6b7280;[^}]*color:\s*transparent;[^}]*opacity:\s*1;/s);
   assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_inactive\s*\{[^}]*color:\s*var\(--text-secondary\);/s);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_row\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*align-items:\s*center;[^}]*gap:\s*calc\(4 \* var\(--u\)\);[^}]*flex:\s*none;/s);
