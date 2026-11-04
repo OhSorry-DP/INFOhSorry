@@ -624,25 +624,25 @@ test('Recent hides a side only when every lane count and FS count is zero or FS 
 
 test('Recent controller and key detail CSS positions keys and keeps detail bounded, scrollable, and keyboard visible', () => {
   assert.match(recentCss, /\.\_\_uprofile_play_panel_scroll\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_panel\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;[^}]*gap:\s*calc\(16 \* var\(--u\)\);[^}]*width:\s*max-content;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*calc\(8 \* var\(--u\)\);[^}]*width:\s*max-content;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_keyboard\s*\{[^}]*position:\s*relative;[^}]*width:\s*calc\(132 \* var\(--u\)\);[^}]*height:\s*calc\(118 \* var\(--u\)\);/s);
-  for (const [key, left] of [[1, 0], [3, 34], [5, 68], [7, 102], [2, 17], [4, 51], [6, 85]]) {
-    assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{\\s*left:\\s*calc\\(${left} \\* var\\(--u\\)\\);`));
+  assert.match(recentCss, /\.\_\_uprofile_play_panel\s*\{[^}]*display:\s*flex;[^}]*flex-wrap:\s*nowrap;[^}]*gap:\s*calc\(16 \* var\(--rating-u\)\);[^}]*width:\s*max-content;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*gap:\s*calc\(8 \* var\(--rating-u\)\);[^}]*width:\s*max-content;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_keyboard\s*\{[^}]*position:\s*relative;[^}]*width:\s*calc\(124 \* var\(--rating-u\)\);[^}]*height:\s*calc\(96 \* var\(--rating-u\)\);/s);
+  for (const [key, left] of [[1, 0], [3, 32], [5, 64], [7, 96], [2, 16], [4, 48], [6, 80]]) {
+    assert.match(recentCss, new RegExp(`\\.__uprofile_play_unit\\[data-key="${key}"\\]\\s*\\{\\s*left:\\s*calc\\(${left} \\* var\\(--rating-u\\)\\);`));
   }
-  assert.match(recentCss, /\.\_\_uprofile_play_unit_white\s*\{\s*top:\s*calc\(68 \* var\(--u\)\);/);
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_white\s*\{\s*top:\s*calc\(40 \* var\(--rating-u\)\);/);
   assert.match(recentCss, /\.\_\_uprofile_play_unit_black\s*\{\s*top:\s*0;/);
-  assert.match(recentCss, /\.\_\_uprofile_play_unit_scratch\s*\{[^}]*width:\s*calc\(104 \* var\(--u\)\);[^}]*height:\s*calc\(104 \* var\(--u\)\);[^}]*border-radius:\s*50%;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_keyboard button\s*\{[^}]*padding:\s*0;[^}]*border:\s*0;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_unit_scratch\s*\{[^}]*width:\s*calc\(96 \* var\(--rating-u\)\);[^}]*height:\s*calc\(96 \* var\(--rating-u\)\);[^}]*border-radius:\s*50%;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller button\s*\{[^}]*padding:\s*0;[^}]*border:\s*0;/s);
   assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*nth-of-type/);
   assert.doesNotMatch(recentCss, /__uprofile_play_(?:controller|unit|key)[^{}]*transform:\s*translate/);
   for (const [variant, declarations] of [
-    ['scratch', 'border:\\s*calc\\(2 \\* var\\(--u\\)\\) solid #e33b3b;[^}]*background:\\s*#17191e;[^}]*color:\\s*#fff'],
-    ['black', 'background:\\s*#174b94;[^}]*border:\\s*calc\\(1 \\* var\\(--u\\)\\) solid #3985df;[^}]*color:\\s*#fff'],
-    ['white', 'background:\\s*#f3f3f3;[^}]*border:\\s*calc\\(1 \\* var\\(--u\\)\\) solid #b8b8b8;[^}]*color:\\s*#222'],
+    ['scratch', 'border:\\s*calc\\(1 \\* var\\(--rating-u\\)\\) solid #ff4b4b;[^}]*background:\\s*#30151a;[^}]*color:\\s*#fff'],
+    ['black', 'border:\\s*calc\\(1 \\* var\\(--rating-u\\)\\) solid #3f8cff;[^}]*background:\\s*#133263;[^}]*color:\\s*#fff'],
+    ['white', 'border:\\s*calc\\(1 \\* var\\(--rating-u\\)\\) solid #cbd5e1;[^}]*background:\\s*#f8fafc;[^}]*color:\\s*#172033'],
   ]) assert.match(recentCss, new RegExp(`\\.__uprofile_play_rank_${variant}\\s*\\{[^}]*${declarations}`, 's'));
-  assert.match(recentCss, /\.\_\_uprofile_play_rank_inactive\s*\{[^}]*background:\s*#555;[^}]*border-color:\s*#777;[^}]*color:\s*transparent;/s);
-  assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_inactive\s*\{[^}]*opacity:\s*\.45;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_rank_inactive\s*\{[^}]*background:\s*#4b5563;[^}]*border-color:\s*#6b7280;[^}]*color:\s*transparent;[^}]*opacity:\s*1;/s);
+  assert.match(recentCss, /\.\_\_uprofile_play_controller \.\_\_uprofile_play_inactive\s*\{[^}]*color:\s*var\(--text-secondary\);/s);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_row\s*\{[^}]*display:\s*flex;[^}]*flex-direction:\s*column;[^}]*align-items:\s*center;[^}]*gap:\s*calc\(4 \* var\(--u\)\);[^}]*flex:\s*none;/s);
   assert.doesNotMatch(recentCss, /\.\_\_uprofile_play_pattern_row \+ \.\_\_uprofile_play_pattern_row\s*\{/);
   assert.match(recentCss, /\.\_\_uprofile_play_pattern_tiles\s*\{[^}]*display:\s*flex;[^}]*gap:\s*calc\(3 \* var\(--u\)\);/s);
@@ -661,21 +661,21 @@ test('Recent controller and key detail CSS positions keys and keeps detail bound
 });
 
 test('lane detail hover stays open across trigger and portal, then closes after leaving both', () => {
-  assert.match(recentDetail, /onMouseEnter=\{\(event\) => open\(event\.currentTarget\)\}/);
-  assert.match(recentDetail, /onMouseLeave=\{\(event\) => \{ if \(!event\.currentTarget\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
+  assert.match(recentDetail, /onMouseEnter=\{\(event\) => \{ if \(side != null\) open\(event\.currentTarget\); \}\}/);
   assert.match(recentDetail, /onMouseLeave=\{\(event\) => \{ if \(!event\.currentTarget\.parentElement\?\.querySelector\('\.__uprofile_play_keydetail'\)\?\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
+  assert.match(recentDetail, /onMouseEnter=\{\(\) => \{\}\}/);
 });
 
 test('lane detail tap replaces the selected key, outside pointer closes, and inside detail remains', () => {
-  assert.match(recentDetail, /onClick=\{\(event\) => \{ if \(openKey === number\) setOpenKey\(null\); else open\(event\.currentTarget\); \}\}/);
+  assert.match(recentDetail, /onClick=\{\(event\) => \{ if \(side == null\) return; if \(openKey === number\) setOpenKey\(null\); else open\(event\.currentTarget\); \}\}/);
   assert.match(recentDetail, /document\.addEventListener\('pointerdown', outside\)/);
   assert.match(recentDetail, /!target\.closest\('\.__uprofile_play_controller'\) && !target\.closest\('\.__uprofile_play_keydetail'\)/);
   assert.match(recentDetail, /onMouseLeave=\{\(event\) => \{ if \(!event\.currentTarget\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
 });
 
 test('lane detail focus change closes outside, button name identifies side and detail link uses shown ID', () => {
-  assert.match(recentDetail, /aria-label=\{`\$\{player === 'P1' \? '1P' : '2P'\} \$\{label === 'SCRATCH' \? '스크래치' : `건반 \$\{label\}`\}`\}/);
-  assert.match(recentDetail, /aria-describedby=\{openKey === number \? id : undefined\}/);
+  assert.match(recentDetail, /aria-label=\{`\$\{player === 'P1' \? 'P1' : 'P2'\} \$\{label === 'SCRATCH' \? '스크래치' : `건반 \$\{label\}`\}`\}/);
+  assert.match(recentDetail, /aria-describedby=\{openKey === number && side != null \? id : undefined\}/);
   assert.doesNotMatch(recentDetail, /aria-controls/);
   assert.match(recentDetail, /onBlur=\{\(event\) => \{ if \(!event\.currentTarget\.contains\(event\.relatedTarget as Node\)\) setOpenKey\(null\); \}\}/);
 });
@@ -843,7 +843,9 @@ test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, 
   const declaration = (body, property) => body.match(new RegExp(`(?:^|;)\\s*${property}\\s*:\\s*([^;]+)`))?.[1]?.trim();
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern'), 'container'), 'infplaypattern / inline-size');
   assert.equal(declaration(cssRule('\\.__uprofile_play_rating'), 'container'), 'infplayrating / inline-size');
-  for (const selector of ['\\.__uprofile_play_pattern_scale', '\\.__uprofile_play_rating_scale']) {
+  assert.equal(declaration(cssRule('\\.__uprofile_play_rating_scale'), '--rating-u'), 'clamp(.5px, 0.185185cqi, 1px)');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_rating_scale'), '--tile-u'), 'var(--rating-u)');
+  for (const selector of ['\\.__uprofile_play_pattern_scale']) {
     const body = cssRule(selector);
     assert.match(declaration(body, '--u'), /clamp\(0\.5px, calc\(100cqi \/ 540\), 1px\)/);
     assert.equal(Math.max(.5, Math.min(1, 540 / 540)), 1);
@@ -854,13 +856,13 @@ test('Recent lane pattern arranges active and inactive rows for SP, DP, battle, 
   assert.match(cssRule('\\.__uprofile_play_panel_scroll'), /max-width:\s*100%;[^}]*overflow-x:\s*auto/);
   assert.match(recentCss, /\.__uprofile_play_pattern_scale\s*\{[^}]*--u:\s*clamp\(0\.5px, calc\(100cqi \/ 540\), 1px\)/s);
   assert.match(recentCss, /\.__uprofile_play_lane_layout\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
-  assert.match(recentCss, /@media\s*\(min-width:\s*900px\)\s*\{\s*\.__uprofile_play_lane_layout\s*\{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(recentCss, /@media\s*\(min-width:\s*900px\),\s*\(min-width:\s*600px\) and \(pointer:\s*fine\)\s*\{\s*\.__uprofile_play_lane_layout\s*\{\s*grid-template-columns:\s*repeat\(2, minmax\(0, 1fr\)\)/);
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'max-width'), '100%');
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_scroll'), 'min-width'), '0');
   assert.match(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'gap'), /calc\(16 \* var\(--u\)\)/);
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_groups'), 'flex-wrap'), 'nowrap');
-  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_tile_white'), 'background'), '#f3f3f3');
-  assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_tile_black'), 'background'), '#181a1f');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_rating \\.__uprofile_play_pattern_tile_white'), 'background'), '#f8fafc');
+  assert.equal(declaration(cssRule('\\.__uprofile_play_rating \\.__uprofile_play_pattern_tile_black'), 'background'), '#252b36');
   assert.equal(declaration(cssRule('\\.__uprofile_play_pattern_digit'), 'color'), '#ff8a00');
   const inactiveTile = cssRule('\\.__uprofile_play_pattern_inactive\\s+\\.__uprofile_play_pattern_tile');
   assert.equal(declaration(inactiveTile, 'background'), '#3a3f47');
@@ -922,6 +924,7 @@ test('per-key evaluation and detail preserve one lane values, rank, rate, and un
 });
 
 test('Recent lane controllers render one two-side panel with oriented units, badges, and preserved controls', () => {
+  const textContentForTest = value => Array.isArray(value) ? value.map(textContentForTest).join('') : value && typeof value === 'object' ? textContentForTest(value.props?.children) : value ?? '';
   const lanes = Array.from({ length: 8 }, (_, lane) => [lane + 1, 0, 0, 0, 0, 0]);
   const side = { lanes_ok: true, lanes, lane_fs_unresolved: 3, fs: null };
   const controllerHarness = vm.runInNewContext(recentDetailCode, { React: { createElement: (type, props, ...children) => ({ type, props: { ...(props ?? {}), children } }) }, LAMP_NUM_TO_ABBR: {}, djLevelFromScore: (ex, notes) => { const ratio = ex / (notes * 2); return ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F'; }, useState: initial => [initial, () => {}], useMemo: fn => fn(), useEffect: () => {}, createPortal: node => node, document: { addEventListener() {}, removeEventListener() {} }, window: { addEventListener() {}, removeEventListener() {}, innerHeight: 800, innerWidth: 1200 } });
@@ -939,33 +942,35 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
   assert.equal(p1Units.length, 8);
   assert.equal(p2Units.length, 8);
   assert.equal(p1Units[0].props.className, '__uprofile_play_unit __uprofile_play_unit_scratch');
-  assert.deepEqual(p1Units.filter(node => node.props['data-key'] != null).map(node => node.props['data-key']), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(p1Units.map(node => node.props['data-key']), [8, 1, 2, 3, 4, 5, 6, 7]);
   assert.equal(p2Units.at(-1).props.className, '__uprofile_play_unit __uprofile_play_unit_scratch');
-  assert.deepEqual(p2Units.filter(node => node.props['data-key'] != null).map(node => node.props['data-key']), [1, 2, 3, 4, 5, 6, 7]);
+  assert.deepEqual(p2Units.map(node => node.props['data-key']), [1, 2, 3, 4, 5, 6, 7, 8]);
   const badges = nodes.filter(node => ['__uprofile_play_rank_white', '__uprofile_play_rank_black', '__uprofile_play_rank_scratch'].some(name => node.props?.className?.split(' ').includes(name)));
   assert.equal(badges.length, 16);
   assert.deepEqual([...new Set(badges.map(node => node.props.className.split(' ').find(token => ['__uprofile_play_rank_scratch', '__uprofile_play_rank_black', '__uprofile_play_rank_white'].includes(token))?.replace('__uprofile_play_rank_', '')))].sort(), ['black', 'scratch', 'white']);
-  assert.ok(badges.every(node => node.props['aria-hidden'] === 'true' && node.props.tabIndex === -1));
+  assert.ok(badges.every(node => node.props['aria-hidden'] === 'true' && [...p1Units, ...p2Units].some(unit => flatten(unit).includes(node))));
   assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_white')).length, 8);
   assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_black')).length, 6);
   assert.equal(badges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_scratch')).length, 2);
   assert.equal(nodes.filter(node => node.props?.className === '__uprofile_play_keyboard').length, 2);
+  const controllerText = [...p1Units, ...p2Units].map(unit => textContentForTest(unit)).join(' ');
+  assert.doesNotMatch(controllerText, /PLAYER|SCRATCH|[1-7]/);
   for (const unit of [...p1Units, ...p2Units]) {
     const button = flatten(unit).find(node => node.type === 'button');
-    const buttonChild = Array.isArray(button.props.children) ? button.props.children[0] : button.props.children;
-    if (unit.props['data-key'] == null) {
-      assert.equal(buttonChild.props.className, undefined);
-      assert.equal(buttonChild.props.children, 'SCRATCH');
+    const buttonChild = Array.isArray(button.props.children) ? button.props.children.filter(Boolean)[0] : button.props.children;
+    if (unit.props['data-key'] === 8) {
+      assert.ok(buttonChild.props.className.split(' ').includes('__uprofile_play_rank_scratch'));
+      assert.equal(buttonChild.props.children, 'AAA');
       continue;
     }
     const number = Number(unit.props['data-key']);
     const tile = buttonChild;
     assert.ok(tile.props.className.split(' ').includes('__uprofile_play_pattern_tile'));
     assert.ok(tile.props.className.split(' ').includes(number % 2 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black'));
-    assert.ok(tile.props.children.props.className.split(' ').includes('__uprofile_play_pattern_digit'));
+    assert.ok(flatten(tile).some(node => node.props?.className?.split(' ').includes('__uprofile_play_pattern_digit') && textContentForTest(node) === ''));
   }
   for (const button of buttons) {
-    assert.match(button.props['aria-label'], /^(1P|2P) /);
+    assert.match(button.props['aria-label'], /^P[12] (?:건반 [1-7]|스크래치)$/);
     assert.equal(button.props['aria-expanded'], false);
     assert.equal(button.props['aria-describedby'], undefined);
     assert.equal(typeof button.props.onMouseEnter, 'function');
@@ -975,10 +980,25 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
   const missing = flatten(detailTree(null, { ...play, difficulty: 'SPN', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' }));
   const missingBadges = missing.filter(node => ['__uprofile_play_rank_white', '__uprofile_play_rank_black', '__uprofile_play_rank_scratch'].some(name => node.props?.className?.split(' ').includes(name)));
   const inactiveBadges = missingBadges.filter(node => node.props.className.split(' ').includes('__uprofile_play_rank_inactive'));
-  assert.equal(inactiveBadges.length, 8);
-  assert.ok(inactiveBadges.every(node => node.props.children === ''));
-  assert.equal(missing.filter(node => node.type === 'button' && node.props.className === '__uprofile_play_inactive').length, 8);
-  assert.ok(missingBadges.filter(node => !node.props.className.split(' ').includes('__uprofile_play_rank_inactive')).every(node => node.props.children === '—'));
+  assert.equal(inactiveBadges.length, 16);
+  assert.ok(inactiveBadges.every(node => node.props.children === '—'));
+  assert.equal(missing.filter(node => node.type === 'button' && node.props.className.includes('__uprofile_play_inactive')).length, 16);
+  const activeSp = flatten(detailTree({ complete: true, p1: side, p2: side }, { ...play, difficulty: 'SPN', judge_16: '1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0' }));
+  const spInactive = activeSp.filter(node => node.type === 'button' && node.props.className?.includes('__uprofile_play_inactive'));
+  assert.equal(spInactive.length, 8);
+  assert.ok(spInactive.every(button => button.props['aria-label'].startsWith('P2 ')));
+  const renderedRanks = laneSide => flatten(controllerHarness.PlayLaneController({ side: laneSide, player: 'P1', activity: 'BOTH' })).filter(node => node.props?.className?.split(' ').includes('__uprofile_play_rank')).map(node => textContentForTest(node.props.children));
+  const emptyLanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]);
+  assert.deepEqual(renderedRanks({ lanes: emptyLanes }), Array(8).fill('—'));
+  const zeroExLanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 1, -1]);
+  assert.deepEqual(renderedRanks({ lanes: zeroExLanes }), Array(8).fill('F'));
+  const boundaryEx = [16, 14, 12, 10, 8, 6, 4, 2];
+  const boundaryLanes = boundaryEx.map(ex => [Math.floor(ex / 2), ex % 2, 0, 0, 9 - Math.floor(ex / 2) - (ex % 2), 999]);
+  assert.deepEqual(renderedRanks({ lanes: boundaryLanes }), ['F', 'AAA', 'AA', 'A', 'B', 'C', 'D', 'E']);
+  assert.deepEqual(renderedRanks({ lanes: boundaryLanes, lanes_ok: false }), Array(8).fill('—'));
+  const invalidFront = boundaryLanes.map(lane => [...lane]);
+  invalidFront[0][4] = -1;
+  assert.equal(renderedRanks({ lanes: invalidFront })[1], '—');
 });
 
 test('Recent lane rating keeps side names and omits unresolved lane counts for missing, zero, and positive values', () => {

@@ -402,7 +402,7 @@ function laneEvaluation(side: SideDetail | null | undefined): { notes: number; e
 function laneKeyEvaluation(side: SideDetail | null | undefined, index: number): { notes: number; ex: number; rank: string; rate: string } | null {
   const lane = side?.lanes?.[index];
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
-  if (!side?.lanes_ok || !Array.isArray(lane) || lane.length !== 6 || lane.some((value) => !valid(value))) return null;
+  if (side?.lanes_ok === false || !Array.isArray(side?.lanes) || side.lanes.length !== 8 || !Array.isArray(lane) || lane.length < 5 || lane.slice(0, 5).some((value) => !valid(value))) return null;
   const notes = lane.slice(0, 5).reduce((sum, value) => sum + value, 0);
   if (notes === 0) return { notes, ex: 0, rank: '—', rate: '—' };
   const ex = lane[0] * 2 + lane[1];
@@ -426,7 +426,7 @@ function PlayLaneController({ side, player, activity, accountKey }: { side: Side
     return () => { document.removeEventListener('keydown', escape); document.removeEventListener('pointerdown', outside); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
   }, [openKey, trigger]);
   useEffect(() => { setOpenKey(null); }, [accountKey]);
-  const inactive = activity != null && activity !== 'BOTH' && activity !== player;
+  const inactive = side == null || activity == null || (activity !== 'BOTH' && activity !== player);
   const key = (number: number | 'scratch', className: string, label: string) => {
     const index = laneCounterIndex(number);
     const id = `play-key-detail-${player}-${number}`;
@@ -434,10 +434,10 @@ function PlayLaneController({ side, player, activity, accountKey }: { side: Side
     const evaluation = index >= 0 ? laneKeyEvaluation(side, index) : null;
     const rankClass = number === 'scratch' ? '__uprofile_play_rank_scratch' : Number(number) % 2 === 0 ? '__uprofile_play_rank_black' : '__uprofile_play_rank_white';
     const tileClass = number === 'scratch' ? '' : `__uprofile_play_pattern_tile ${Number(number) % 2 === 1 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black'}`;
-    return <div className={`__uprofile_play_unit ${className}`} key={String(number)} data-key={number === 'scratch' ? undefined : number}>
-      <button type="button" className={inactive ? '__uprofile_play_inactive' : undefined} aria-label={`${player === 'P1' ? '1P' : '2P'} ${label === 'SCRATCH' ? '스크래치' : `건반 ${label}`}`} aria-expanded={openKey === number} aria-describedby={openKey === number ? id : undefined} onMouseEnter={(event) => open(event.currentTarget)} onFocus={(event) => open(event.currentTarget)} onClick={(event) => { if (openKey === number) setOpenKey(null); else open(event.currentTarget); }}>{number === 'scratch' ? <span>{label}</span> : <span className={tileClass}><span className="__uprofile_play_pattern_digit">{label}</span></span>}</button>
-      <span className={`__uprofile_play_rank ${rankClass}${inactive ? ' __uprofile_play_rank_inactive' : ''}`} aria-hidden="true" tabIndex={-1}>{inactive ? '' : evaluation?.rank ?? '—'}</span>
-    </div>;
+    return <button type="button" className={`__uprofile_play_unit ${className}${inactive ? ' __uprofile_play_inactive' : ''}`} key={String(number)} data-key={number === 'scratch' ? 8 : number} aria-label={`${player === 'P1' ? 'P1' : 'P2'} ${label === 'SCRATCH' ? '스크래치' : `건반 ${label}`}`} aria-expanded={openKey === number} aria-describedby={openKey === number && side != null ? id : undefined} onMouseEnter={(event) => { if (side != null) open(event.currentTarget); }} onFocus={(event) => { if (side != null) open(event.currentTarget); }} onClick={(event) => { if (side == null) return; if (openKey === number) setOpenKey(null); else open(event.currentTarget); }}>
+      {number !== 'scratch' && <span className={tileClass}><span className="__uprofile_play_pattern_digit" /></span>}
+      <span className={`__uprofile_play_rank ${rankClass}${inactive ? ' __uprofile_play_rank_inactive' : ''}`} aria-hidden="true">{evaluation?.rank ?? '—'}</span>
+    </button>;
   };
   const keys = Array.from({ length: 7 }, (_, index) => index + 1);
   return <><div className="__uprofile_play_controller" data-player={player} onMouseLeave={(event) => { if (!event.currentTarget.parentElement?.querySelector('.__uprofile_play_keydetail')?.contains(event.relatedTarget as Node)) setOpenKey(null); }}>
