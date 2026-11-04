@@ -537,7 +537,7 @@ test('Recent detail aggregation, badges, and per-key detail use current DOM', ()
   assert.match(recentDetail, /side\?\.lanes_ok === false/);
   assert.match(recentDetail, /레인 검증 불일치/);
   assert.match(recentDetail, /cells\.join\(' · '\).*evaluation\?\.rank/);
-  assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
+  assert.match(recentDetail, /return <>\{text\}<\/>;/);
   assert.match(recentDetail, /side\?\.lanes\?\.\[index\]/);
   assert.doesNotMatch(recentDetail, /__uprofile_playdetail_(?:toggle|lanes)/);
   assert.doesNotMatch(recentCss, /__uprofile_playdetail_(?:toggle|lanes|tablebox|lanetable)|\[hidden\]/);
@@ -557,7 +557,7 @@ test('Recent detail runtime renders FAST/SLOW totals, PG ratio, CB and key detai
   assert.match(rendered, /48%/);
   assert.match(rendered, /__uprofile_play_controller/);
   assert.equal(flatten(nodes).filter(node => node.props?.className === '__uprofile_play_keydetail_row').length, 0);
-  assert.match(recentDetail, /className="__uprofile_play_keydetail"/);
+  assert.match(recentDetail, /return <>\{text\}<\/>;/);
 
   assert.match(rendered, /__uprofile_playdetail_fill/);
   assert.doesNotMatch(rendered, /FAST\/SLOW 미확정/);
@@ -660,6 +660,7 @@ test('Recent controller and key detail CSS positions keys and keeps detail bound
   assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-bad \.\_\_uprofile_playdetail_fill \{ background: #ff6a3a; \}/);
   assert.match(recentCss, /\.\_\_uprofile_playdetail_barrow\.k-poor \.\_\_uprofile_playdetail_fill \{ background: #ff4a34; \}/);
   assert.match(recentCss, /width:\s*max-content;[^}]*overflow:\s*auto;[^}]*padding:\s*8px;/s);
+  assert.match(recentCss, /\.__uprofile_play_unit\s*\{[^}]*position:\s*absolute;[^}]*cursor:\s*pointer;/);
   assert.doesNotMatch(recentCss, /__uprofile_playdetail_(?:toggle|lanes|tablebox|lanetable)|\[hidden\]/);
 });
 
@@ -918,7 +919,12 @@ test('per-key evaluation and detail preserve one lane values, rank, rate, and un
   assert.equal(laneKeyEvaluation(side, 1).rank, 'F');
   const tree = PlayLaneDetail({ side, index: 0 });
   const rendered = JSON.stringify(flatten(tree));
-  assert.equal(flatten(tree)[0].props.children, 'key 1 · 3 · 2 · 1 · 0 · 3 · 77 · — · — · — · — · C · 44.44%');
+  assert.equal(tree.props.children, 'key 1 · 3 · 2 · 1 · 0 · 3 · 77 · — · — · — · — · C · 44.44%');
+  const tooltip = { type: 'div', props: { role: 'tooltip', className: '__uprofile_play_keydetail', children: tree } };
+  assert.equal(flatten(tooltip).filter(node => node.props?.className === '__uprofile_play_keydetail').length, 1);
+  assert.equal(flatten(tooltip).filter(node => node.props?.role === 'tooltip' && node.props?.className === '__uprofile_play_keydetail').length, 1);
+  assert.match(recentPlaysSource, /role="tooltip"[^>]*className="__uprofile_play_keydetail"/);
+  assert.match(recentPlaysSource, /<PlayLaneDetail side=\{selectedSide\}/);
   const p1 = PlayLaneDetail({ side, index: 0 });
   assert.equal(p1.props.children, 'key 1 · 3 · 2 · 1 · 0 · 3 · 77 · — · — · — · — · C · 44.44%');
   assert.equal(PlayLaneDetail({ side: { lanes: [[null, undefined, 'x', 4, -1, null], ...lanes.slice(1)], lane_fs: [[undefined, null, 'fast', 0]] }, index: 0 }).props.children, 'key 1 · — · — · x · 4 · -1 · — · — · — · fast · 0 · — · —');
@@ -998,6 +1004,9 @@ test('Recent lane controllers render one two-side panel with oriented units, bad
   assert.equal(spInactive.length, 8);
   assert.ok(spInactive.every(button => button.props['aria-label'].startsWith('P2 ')));
   const renderedRanks = laneSide => flatten(controllerHarness.PlayLaneController({ side: laneSide, player: 'P1', activity: 'BOTH' })).filter(node => node.props?.className?.split(' ').includes('__uprofile_play_rank')).map(node => textContentForTest(node.props.children));
+  const sevenLanes = Array.from({ length: 7 }, () => [0, 0, 0, 0, 0, 0]); sevenLanes[0] = [3, 2, 1, 0, 3, 0];
+  assert.deepEqual(renderedRanks({ lanes: sevenLanes }), Array(8).fill('—'));
+  assert.match(textContentForTest(controllerHarness.PlayLaneDetail({ side: { lanes: sevenLanes }, index: 0 }).props.children), /· C · 44\.44%$/);
   const emptyLanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 0, 0]);
   assert.deepEqual(renderedRanks({ lanes: emptyLanes }), Array(8).fill('—'));
   const zeroExLanes = Array.from({ length: 8 }, () => [0, 0, 0, 0, 1, -1]);
@@ -1053,11 +1062,9 @@ test('lane controller pointer handlers preserve or replace the one selected lane
 test('Recent lane rating keeps side names and omits unresolved lane counts for missing, zero, and positive values', () => {
   for (const value of [undefined, 0, 3]) {
     const detail = value === undefined ? { complete: true, p1: {}, p2: {} } : { complete: true, p1: { lane_fs_unresolved: value }, p2: { lane_fs_unresolved: value } };
-    const headings = flatten(detailTree(detail)).filter(node => node.type === 'h5').map(node => node.props.children.flat().join(''));
-    assert.deepEqual(headings, ['PLAYER1', 'PLAYER2']);
-    assert.doesNotMatch(headings.join(' '), /레인 미확정/);
+    const ratingHeadings = flatten(detailTree(detail)).filter(node => node.props?.className === '__uprofile_play_rating').flatMap(node => flatten(node).filter(child => child.type === 'h5'));
+    assert.equal(ratingHeadings.length, 0);
   }
-  const missingHeadings = flatten(detailTree(null)).filter(node => node.type === 'h5').map(node => node.props.children.flat().join(''));
-  assert.deepEqual(missingHeadings, ['PLAYER1', 'PLAYER2']);
-  assert.doesNotMatch(missingHeadings.join(' '), /레인 미확정/);
+  const missingRatingHeadings = flatten(detailTree(null)).filter(node => node.props?.className === '__uprofile_play_rating').flatMap(node => flatten(node).filter(child => child.type === 'h5'));
+  assert.equal(missingRatingHeadings.length, 0);
 });

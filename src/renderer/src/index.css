@@ -3206,7 +3206,6 @@ body {
 @media (min-width: 900px), (min-width: 600px) and (pointer: fine) { .__uprofile_play_lane_layout { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .__uprofile_play_pattern_groups { display: flex; flex-wrap: nowrap; gap: calc(16 * var(--u)); width: max-content; }
 .__uprofile_play_rating > div { display: grid; gap: 6px; min-width: 0; }
-.__uprofile_play_rating h5 { margin: 0; color: var(--text-secondary); font-size: calc(12 * var(--u)); font-weight: 600; }
 .__uprofile_play_panel_scroll { max-width: 100%; min-width: 0; overflow-x: auto; }
 .__uprofile_play_pattern_scale { --u: clamp(0.5px, calc(100cqi / 540), 1px); }
 .__uprofile_play_rating_scale { --rating-u: clamp(.5px, 0.185185cqi, 1px); --tile-u: var(--rating-u); }
@@ -3214,7 +3213,7 @@ body {
 .__uprofile_play_controller { display: flex; align-items: center; gap: calc(8 * var(--rating-u)); width: max-content; font-size: calc(13 * var(--rating-u)); }
 .__uprofile_play_controller button { box-sizing: border-box; padding: 0; border: 0; background: transparent; color: inherit; }
 .__uprofile_play_keyboard { position: relative; width: calc(124 * var(--rating-u)); height: calc(96 * var(--rating-u)); }
-.__uprofile_play_unit { position: absolute; }
+.__uprofile_play_unit { position: absolute; cursor: pointer; }
 .__uprofile_play_unit[data-key="1"] { left: calc(0 * var(--rating-u)); }
 .__uprofile_play_unit[data-key="2"] { left: calc(16 * var(--rating-u)); }
 .__uprofile_play_unit[data-key="3"] { left: calc(32 * var(--rating-u)); }
