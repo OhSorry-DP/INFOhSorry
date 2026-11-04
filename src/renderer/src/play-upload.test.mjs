@@ -543,9 +543,15 @@ test('DBR 직렬 전송 중 우회 전송은 진행한다', async () => {
   const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
   const a = api.uploadAutomaticDbr([{ ...row(1), title: 'Fixture 1' }], 'A', async () => true, decode, async () => 't', send, songs);
   while (!aStarted) await Promise.resolve();
-  await api.uploadAutomaticDbr([{ ...row(2), title: 'Fixture 2' }], 'B', async () => true, decode, async () => 't', send, songs, undefined, false);
-  assert.equal(bStarted, 1); assert.equal(bCompleted, true);
-  releaseA(); await a;
+  const b = api.uploadAutomaticDbr([{ ...row(2), title: 'Fixture 2' }], 'B', async () => true, decode, async () => 't', send, songs, undefined, false);
+  let timer;
+  try {
+    const completed = await Promise.race([b.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), 200); })]);
+    assert.equal(completed, true, '우회 전송이 직렬 잠금을 기다렸다');
+    assert.equal(bStarted, 1); assert.equal(bCompleted, true);
+  } finally {
+    clearTimeout(timer); releaseA(); await Promise.all([a, b]);
+  }
 });
 test('DBR 우회 완료는 전체 잠금을 해제하지 않는다', async () => {
   const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; });
@@ -554,8 +560,14 @@ test('DBR 우회 완료는 전체 잠금을 해제하지 않는다', async () =>
   const songs = async () => new Map([1, 2, 3].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
   const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 }); const call = (id, serialize) => api.uploadAutomaticDbr([{ ...row(id), title: `Fixture ${id}` }], String(id), async () => true, decode, async () => 't', send, songs, undefined, serialize);
   const a = call(1); while (!aStarted) await Promise.resolve(); await call(2, false);
-  const c = call(3); await Promise.resolve(); await Promise.resolve(); assert.deepEqual(posted, [9001, 9002]);
-  releaseA(); await Promise.all([a, c]); assert.deepEqual(posted, [9001, 9002, 9003]);
+  const c = call(3);
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(posted, [9001, 9002]);
+  } finally {
+    releaseA(); await Promise.all([a, c]);
+  }
+  assert.deepEqual(posted, [9001, 9002, 9003]);
 });
 test('DBR 전체 전송은 기본 직렬화를 유지한다', async () => {
   const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; }); let aStarted = false; const posted = [];

@@ -127,14 +127,67 @@ test('append 마지막 형식 오류는 DBR을 생략한다', async () => {
   }
 });
 
-test('append PUT 완료 뒤 DBR을 호출한다', () => {
+function appendFixture({ readPlayCsv, uploadAutomaticPlays, uploadAutomaticDbr }) {
   const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
-  assert.ok(append.indexOf('await uploadAutomaticPlays') < append.indexOf('await uploadAutomaticDbr'));
+  const globals = {
+    APP_VERSION: 'test', refreshRemotePlays: async () => {}, sessionRef: { current: { generation: 1 } },
+    window: { infohsorry: { upload: { readPlayCsv }, session: { getState: async () => ({ pid: 5 }) } } },
+    buildUploadPlays: () => [], parsePlayHistoryDetailed: () => ({ rows: [{ marker: 'last' }], errorCode: null, lastCompleteError: null }),
+    readIidxIdFresh: async () => ({ iidxId: 'C123456789012', processMissing: false }),
+    uploadAutomaticPlays, uploadAutomaticDbr, onDbrSaved() {}, addDiagLine() {}, console: { warn() {} },
+  };
+  const code = ts.transpileModule(`export function setup() { const playsChainByAccount = new Map(); ${append} return handlePlaysAppend; }`,
+    { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const exports = {};
+  vm.runInNewContext(code, { exports, ...globals });
+  return exports.setup();
+}
+
+test('append PUT 완료 뒤 DBR을 호출한다', async () => {
+  for (const throws of [false, true]) {
+    let release; let started;
+    const gate = new Promise(resolve => { release = resolve; });
+    const putStarted = new Promise(resolve => { started = resolve; });
+    const calls = [];
+    const handle = appendFixture({
+      readPlayCsv: async () => ({ ok: true, csv: 'csv' }),
+      uploadAutomaticPlays: async () => { calls.push('plays'); started(); await gate; if (throws) throw new Error('PUT 실패'); },
+      uploadAutomaticDbr: async () => { calls.push('dbr'); },
+    });
+    handle({ iidxId: 'C123456789012' });
+    try {
+      await putStarted;
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(calls, ['plays']);
+    } finally {
+      release();
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    assert.deepEqual(calls, ['plays', 'dbr']);
+  }
 });
 
-test('append CSV 읽기는 계정 체인 안에 남는다', () => {
-  const append = appSource.slice(appSource.indexOf('const handlePlaysAppend'), appSource.indexOf('const handlePlayAppend'));
-  assert.ok(append.indexOf('previous.catch(() => {}).then(async () => {') < append.indexOf('await readPlayCsv(iidxId)'));
+test('append CSV 읽기는 계정 체인 안에 남는다', async () => {
+  let release; let started;
+  const gate = new Promise(resolve => { release = resolve; });
+  const putStarted = new Promise(resolve => { started = resolve; });
+  let reads = 0; let puts = 0;
+  const handle = appendFixture({
+    readPlayCsv: async () => { reads++; return { ok: true, csv: 'csv' }; },
+    uploadAutomaticPlays: async () => { if (++puts === 1) { started(); await gate; } },
+    uploadAutomaticDbr: async () => {},
+  });
+  handle({ iidxId: 'C123456789012' });
+  await putStarted;
+  handle({ iidxId: 'C123456789012' });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(reads, 1);
+  } finally {
+    release();
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(reads, 2);
 });
 
 test('auto initial 전체 대상과 기존 플레이 창을 유지한다', () => {
