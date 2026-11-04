@@ -120,3 +120,11 @@ INF 전체 `node --test`(src 아래 모든 `*.test.mjs`): tests 329 / pass 320 /
 - C머신 Sonnet 실측은 정배·미러 교집합을 찾고 랜덤으로 확인했다. 원보고서는 INF `origin/feat/play-logger:tools/scan/REPORT.md`다.
 - SP 1P 판정·배열, 배틀, S-RAN 배열 동작, 방향(A)·건반 인덱스 가정, 실제 화면은 실기 대기다. 방향을 잘못 가정했다면 표시 함수만 고친다.
 - 위 수치는 Claude 제공 결과이며 이번 문서 마감에서 재실행한 결과가 아니다.
+## 2026-11-04 PLAY LOG 웹 기준 이식
+
+- 범위: INF PLAY LOG 의 레인별 평가·건반 상세창·최신 판 펼침. 웹 리모트 Play Log(`pages/playdata.js`·`components.css`)를 정답으로 두고 INF 를 맞췄다. 웹·코치·CSV·업로드·기록기는 변경 없음.
+- 결정: 평가 건반 숫자·`SCRATCH`·`PLAYER1/2` 제거까지 웹 그대로. 펼침 상태는 `JSON.stringify(nextRows)` 서명 비교와 `Set` 다중 펼침, 행 key 는 행 내용+중복 순번.
+- 브랜치 `feat/play-log-web-port`. 조각 L1 펼침 상태 · L2 컨트롤러 DOM·랭크·CSS · L3 상세창 · 재요청(제목 제거·상세창 이중 상자·배지 레인 조건·커서).
+- 검수 결함: L2 가 패턴 타일 기본 규칙과 비활성 투명도를 지웠다(게이트·테스트로 검출). 렌더에서만 드러난 결함: `PLAYER` 제목 잔존(테스트가 틀린 기대값을 고정), 상세창 이중 상자로 화면 밖 이탈. 소스 문자열 테스트만으로는 못 잡는다 — 레이아웃 변경은 실제 렌더로 확인한다.
+- 렌더 확인 방법: 임시 폴더에 `RecentPlays` 를 esbuild 로 묶어 INF 의 Electron 으로 띄워 측정(`ELECTRON_RUN_AS_NODE` 해제 필요).
+- 남은 실기: 실제 플레이 데이터 화면, 터치 동작, 배치 방향·건반 인덱스.
