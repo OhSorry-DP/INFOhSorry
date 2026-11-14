@@ -139,16 +139,16 @@ heap 값(매번 위치가 바뀌는 동적 버퍼)을 안정적으로 따라가�
 
 `bm2dx.exe` modBase 기준 정적 offset 의 코드 fallback. 문자열 필드(`PROFILE_OFFSETS`)와 숫자 필드(`PROFILE_NUMERIC_OFFSETS`)로 나뉩니다.
 
-**문자열 — `PROFILE_OFFSETS`** (게임 빌드 `P2D:J:B:A:2026080500` 기준)
-- `djName`(`0x697cfe`, utf8), `iidxId`(`0x697cf0`, utf8). 14 bytes 간격 인접 — 같은 player profile struct 필드.
-- **게임 패치로 `.data` section layout 이 바뀌면 깨짐** → MemoryScanner 로 재스캔. 이동 이력: 2026-04-22 +0x80(`0x690cbe→0x690d3e`), 2026-08-05 +0x6fc0(`0x690d3e→0x697cfe`).
+**문자열 — `PROFILE_OFFSETS`** (게임 빌드 `P2D:J:B:A:2026111100` 기준)
+- `djName`(`0x699d4e`, utf8), `iidxId`(`0x699d40`, utf8). 14 bytes 간격 인접 — 같은 player profile struct 필드.
+- **게임 패치로 `.data` section layout 이 바뀌면 깨짐** → MemoryScanner 로 재스캔. 이동 이력: 2026-04-22 +0x80(`0x690cbe→0x690d3e`), 2026-08-05 +0x6fc0(`0x690d3e→0x697cfe`), 2026-11-11 +0x2050(`0x697cfe→0x699d4e`).
 
 **숫자 — `PROFILE_NUMERIC_OFFSETS`** (int32 배열로 읽음, `memory:read-ints`)
-- `radar`(`0x699790`, 12개, scale 100) — 노트레이더. 축마다 **[SP, DP] 쌍이 연속**입니다:
+- `radar`(`0x69b7e0`, 12개, scale 100) — 노트레이더. 축마다 **[SP, DP] 쌍이 연속**입니다:
   `SP.NOTES DP.NOTES | SP.PEAK DP.PEAK | SP.SCRATCH DP.SCRATCH | SP.SOF-LAN DP.SOF-LAN | SP.CHARGE DP.CHARGE | SP.CHORD DP.CHORD`
   (`RADAR_AXIS_ORDER`). 값은 100 배 정수(`9234` = `92.34`). **합계 레이더 스코어는 메모리에 없고 6개 합**입니다.
-- `dan`(`0x697d1c`, 2개) — 단위 `[SP, DP]`. 값은 `DAN_NAMES` 의 index(0=七級 … 6=一級, 7=初段 … 16=十段, 17=中伝, 18=皆伝), **미취득은 `-1`**.
-  같은 struct 의 DJ POINT 도 `[SP=0x697d14, DP=0x697d18]` 순서라 SP→DP 배치가 일관됩니다.
+- `dan`(`0x699d6c`, 2개) — 단위 `[SP, DP]`. 값은 `DAN_NAMES` 의 index(0=七級 … 6=一級, 7=初段 … 16=十段, 17=中伝, 18=皆伝), **미취득은 `-1`**.
+  같은 struct 의 DJ POINT 도 `[SP=0x699d64, DP=0x699d68]` 순서라 SP→DP 배치가 일관됩니다.
 - `danIndexToRankInt()` — 게임 index → supabase `users.sp_rank/dp_rank` 스케일(`idx - 6`. 一級 이 양쪽 0). 미취득/범위 밖은 `null`.
 
 > **옛 `spRank`/`dpRank` 문자열 offset(`0x58d9f8`/`0x58d9f0`)은 제거했습니다.** 그 주소는 플레이어 값이 아니라
@@ -208,7 +208,7 @@ URL: `gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw
 
 실행 게임 빌드가 gist의 build와 매칭되면 해당 빌드 값을 적용하며 다운그레이드도 허용합니다. 매칭하지 못했을 때만 아래 후보 버전의 최댓값을 비교합니다:
 1. **디스크** offsets.txt 의 버전(헤더 끝 10자리, `offsetsVersionNum` `src/main/reflux.ts:73-77`).
-2. **번들** `BUNDLED_OFFSETS`(코드 fallback, `BUNDLED_OFFSETS_VERSION = 2026080500`, `src/main/reflux.ts:88`).
+2. **번들** `BUNDLED_OFFSETS`(코드 fallback, `BUNDLED_OFFSETS_VERSION = 2026111100`, `src/main/reflux.ts:89`).
 3. **우리 gist** `offsets.json` 의 reflux(`refluxObjToTxt` 로 텍스트 변환, `src/main/reflux.ts:79-87`).
 4. **olji/Reflux master** 의 `offsets.txt`(`src/main/reflux.ts:459-468`).
 
