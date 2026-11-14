@@ -20,16 +20,30 @@ const shared = load(read('../../shared/uploadSnapshot.ts'));
 const keys = Array.from(shared.PLAY_CSV_SPEED_KEYS);
 const source = read('./supabaseSync.ts');
 function sync(globals = {}) {
+  const diagnostics = globals.diagnostics || [];
   return load(source, { '../../shared/uploadSnapshot': shared,
     '../../shared/match': { norm: x => OhsorryNorm.norm(x), slotToDiff: x => x }, '../../shared/dataSource': { DATA_BASE: 'https://fixture.invalid' },
     './dbr-history': { getDbrRecentData: () => ({ complete: true, rows: [] }), getDbrRecentDates: () => ({ complete: true, dates: [] }), validateDbrHistory: () => true },
-    './diagLog': { addDiagLine() {} } }, globals);
+    './diagLog': { addDiagLine(line) { diagnostics.push(line); } } }, globals);
 }
 const row = i => Object.fromEntries(keys.map(key => [key, key === 'timestamp' ? String(i) : key === 'title' ? '??, "?" \\ ??\n?? ?' : key === 'difficulty' ? ['SPN', 'DPA', 'SPA'][i % 3] : key === 'battle_flag' ? String(i % 2) : key === 'source' ? (i % 2 ? 'currentsong' : 'playdata') : key === 'play_speed' ? '1.00' : '001']));
 const csvLine = value => keys.map(key => `"${value[key].replaceAll('"', '""')}"`).join(',') + '\r\n';
 const csv = rows => keys.join(',') + '\n' + rows.map(csvLine).join('');
 const csvRows = (rows, lengths) => keys.join(',') + '\n' + rows.map((value, i) => Array.from({length:lengths[i]}, (_, j) => shared.PLAY_CSV_SPEED_KEYS[j]).map(key => `"${value[key].replaceAll('"', '""')}"`).join(',')).join('\n') + '\n';
 const plain = x => JSON.parse(JSON.stringify(x));
+
+test('Recent play detail layout stays in one column and wraps narrow content', () => {
+  const css = read('./index.css');
+  assert.match(css, /\.__uprofile_play_sections\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/s);
+  assert.doesNotMatch(css, /\.__uprofile_play_head_(?:title|chart)\s*\{/);
+  assert.match(css, /\.__uprofile_playdetail_summary\s*\{[^}]*display:\s*flex[^}]*flex-wrap:\s*wrap/s);
+  assert.match(css, /\.__uprofile_playdetail_summary > span\s*\{[^}]*display:\s*inline-flex[^}]*gap:\s*4px/s);
+  assert.doesNotMatch(css, /__uprofile_play_score/);
+  assert.match(css, /\.__uprofile_play_controller\s*\{[^}]*display:\s*flex/s);
+  assert.doesNotMatch(css, /\.__uprofile_play_keydetail_row\s*\{/);
+  assert.match(css, /\.__uprofile_play_inactive\s*\{[^}]*color:\s*var\(--text-secondary\)[^}]*opacity:\s*\.82/s);
+  assert.match(css, /\.__uprofile_play_controller \.?__uprofile_play_inactive/);
+});
 
 test('19/21/22 정확한 헤더만 허용하고 추가 열은 헤더 오류', () => {
   const api = sync();
@@ -251,6 +265,51 @@ test('전송 순간 재확인: serviceStatus 대기 중 게임이 종료되어�
     plays: [row(0)], gameRecognized: async () => recognized })).ok, true);
   assert.equal(body, undefined);
 });
+test('19/21/22/24 headers and mixed complete rows preserve only fields present in each row', () => {
+  const api = sync();
+  const base = row(1); base.title = 'plain';
+  const rowsByLength = [19, 21, 22, 24].map((length, i) => {
+    const value = { ...base, timestamp: String(i + 1), play_speed: '1.00', lane_order_p1: 'P1 lanes', lane_order_p2: '' };
+    return Array.from({ length }, (_, j) => shared.PLAY_CSV_LANE_KEYS[j]).map(key => value[key] ?? '');
+  });
+  const header = shared.PLAY_CSV_LANE_KEYS.join(',');
+  const mixed = api.parsePlayHistoryDetailed(`${header}\n${rowsByLength.map(values => values.join(',')).join('\n')}\n`);
+  assert.equal(mixed.errorCode, undefined);
+  assert.deepEqual(plain(mixed.rows.map(x => x.timestamp)), ['1', '2', '3', '4']);
+  for (const i of [0, 1]) assert.equal(Object.hasOwn(mixed.rows[i], 'play_speed'), false);
+  assert.deepEqual([mixed.rows[2].play_speed, mixed.rows[2].lane_order_p1, mixed.rows[2].lane_order_p2], ['1.00', undefined, undefined]);
+  assert.deepEqual([mixed.rows[3].play_speed, mixed.rows[3].lane_order_p1, mixed.rows[3].lane_order_p2], ['1.00', 'P1 lanes', '']);
+  const laneHeaders = [shared.PLAY_CSV_LEGACY_KEYS, shared.PLAY_CSV_KEYS, shared.PLAY_CSV_SPEED_KEYS, shared.PLAY_CSV_LANE_KEYS];
+  for (const keysForHeader of laneHeaders) assert.equal(api.parsePlayHistoryDetailed(`${keysForHeader.join(',')}\n`).errorCode, undefined);
+  const twentyThree = rowsByLength[3].slice(0, 23);
+  const invalid = api.parsePlayHistoryDetailed(`${header}\n${rowsByLength[0].join(',')}\n${twentyThree.join(',')}\n${rowsByLength[3].join(',')}\n`);
+  assert.deepEqual(plain(invalid.lastCompleteError), null);
+  assert.equal(invalid.rows.length, 2);
+  const finalInvalid = api.parsePlayHistoryDetailed(`${header}\n${rowsByLength[3].join(',')}\n${twentyThree.join(',')}\n`);
+  assert.deepEqual(plain(finalInvalid.lastCompleteError), { columns: 23 });
+});
+test('mixed CSV tokenizer keeps quoted commas and newlines, ignores unfinished tail, and attaches details across latest 100 rows', () => {
+  const api = sync();
+  const header = shared.PLAY_CSV_LANE_KEYS.join(',');
+  const detail = { v: 1, timestamp: '100', complete: false, samples: 1, dt_ms: 16, p1: {}, p2: {} };
+  const rows = Array.from({ length: 101 }, (_, i) => {
+    const length = i === 100 ? 24 : [19, 21, 22, 24][i % 4];
+    const value = { ...row(i), timestamp: String(i), title: i === 100 ? 'comma, and "quote"\nnext line' : `song ${i}`, play_speed: '1.00', lane_order_p1: '1234567', lane_order_p2: '' };
+    return Array.from({ length }, (_, j) => shared.PLAY_CSV_LANE_KEYS[j]).map(key => `"${String(value[key] ?? '').replaceAll('"', '""')}"`).join(',');
+  });
+  const invalid23 = Array.from({ length: 23 }, (_, i) => `bad${i}`).join(',');
+  const input = `${header}\n${rows.join('\n')}\n${invalid23}\n"unfinished`;
+  const parsed = api.parsePlayHistoryDetailed(input);
+  assert.equal(parsed.rows.length, 101);
+  assert.deepEqual(plain(parsed.lastCompleteError), { columns: 23 });
+  assert.equal(parsed.rows[100].title, 'comma, and "quote"\nnext line');
+  assert.deepEqual([parsed.rows[100].play_speed, parsed.rows[100].lane_order_p1, parsed.rows[100].lane_order_p2], ['1.00', '1234567', '']);
+  const upload = api.buildUploadPlays({ ok: true, csv: input, details: [detail] });
+  assert.equal(upload.length, 100);
+  assert.equal(upload[0].timestamp, '1'); assert.equal(upload.at(-1).timestamp, '100');
+  assert.equal(upload.at(-1).title, 'comma, and "quote"\nnext line');
+  assert.deepEqual(upload.at(-1).detail, detail);
+});
 test('옛 19·21열 DBR은 허용하고 plays에 속도를 합성하지 않음', async () => {
   const api = sync({ AbortController, setTimeout, clearTimeout }); const base = actualRows()[0];
   const old19 = { ...base, ...Object.fromEntries(shared.PLAY_CSV_LEGACY_KEYS.map(k => [k, base[k]])) };
@@ -328,6 +387,69 @@ test('diff 매핑, EX·notes 원값, 잘못된 입력은 null', () => {
   assert.deepEqual(plain(api.decodeBattleRandomPlay({ ...first, notes: '1662' })), { diff: 3, lamp: 1, ex_score: 1637 });
   for (const patch of [{ song_id: '' }, { song_id: 'bad' }, { song_id: '-1' }, { ex_score: '' }, { ex_score: 'bad' }, { ex_score: '-1' }, { notes: '' }, { notes: 'bad' }, { notes: '0' }, { gauge_p2_w78: '' }, { gauge_p2_w78: 'bad' }, { gauge_p2_w78: '-1' }, { settings_p1_11: '1 1 1' }, { settings_p1_11: '1 1 bad 0 5 1 0 0 0 0 1' }]) assert.equal(api.decodeBattleRandomPlay({ ...first, ...patch }), null);
 });
+test('DBR 후보는 AUTO SCRATCH와 RANDOM 설정을 유지하고 제외 사유를 판정 로직과 맞춘다', async () => {
+  const diagnostics = []; const api = sync({ diagnostics }); const base = { ...row(1), timestamp: '2026-11-03T12:00:00+09:00', title: 'Fixture Song', song_id: '80121', difficulty: 'SPA', ex_score: '1637', notes: '1662', battle_flag: '1', settings_p1_11: '1 1 1 0 5 1 0 0 0 0 1', gauge_p1_w77: '100', gauge_p2_w78: '80', play_speed: '1.00' };
+  const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]);
+  const bodies = [];
+  await api.uploadAutomaticDbr([base, { ...base, timestamp: '2', settings_p1_11: '1 1 0 0 5 1 0 0 0 0 1' }, { ...base, timestamp: '3', settings_p1_11: '0 1 1 0 5 1 0 0 0 0 1' }, { ...base, timestamp: '4', battle_flag: '0' }], 'C123456789012', async () => true, undefined, async () => 'token', async (_url, options) => { bodies.push(JSON.parse(options.body)); return { ok: true, status: 200, json: async () => ({}) }; }, songs);
+  assert.equal(bodies.length, 1); assert.equal(api.decodeBattleRandomPlay(base).ex_score, 1637); assert.equal(api.decodeBattleRandomPlay({ ...base, settings_p1_11: '1 1 0 0 5 1 0 0 0 0 1' }), null);
+  assert.equal(diagnostics.filter(line => line.includes('reason=auto_scratch')).length, 1);
+  assert.equal(diagnostics.some(line => line.includes('timestamp=3') || line.includes('timestamp=4')), false);
+});
+test('DBR 진단은 HTTP 코드·응답 결과·민감값을 안전하게 구분한다', async () => {
+  const diagnostics = []; const api = sync({ diagnostics }); const base = { ...row(1), timestamp: '2026-11-03T12:00:00+09:00', title: 'title token=do-not-log\npassword secret', song_id: '80121', difficulty: 'SPA', ex_score: '1637', notes: '1662', battle_flag: '1', settings_p1_11: '1 1 1 0 5 1 0 0 0 0 1', gauge_p2_w78: '80', play_speed: '1.00' };
+  const titles = ['HTTP', 'UNKNOWN', 'SAVED', 'UNCHANGED', 'BADJSON', 'THROW']; const bodies = [];
+  const songs = async () => new Map(titles.map(title => [OhsorryNorm.norm(title), [{ song_id: 9001, title, ac: 2, legen: 0 }]]));
+  const items = titles.map((title, timestamp) => ({ ...base, title, timestamp: String(timestamp) }));
+  let posted = 0;
+  await api.uploadAutomaticDbr(items, 'C123456789012', async () => true, () => ({ diff: 3, lamp: 1, ex_score: 1637 }), async () => 'super-secret-cookie-token', async (_url, options) => {
+    const title = titles[posted++]; bodies.push(JSON.parse(options.body));
+    if (title === 'THROW') throw new Error('password response-secret');
+    if (title === 'HTTP') return { ok: false, status: 400, json: async () => ({ error: 'bad_request', detail: 'response-secret' }) };
+    if (title === 'UNKNOWN') return { ok: false, status: 418, json: async () => ({ error: 'other-secret' }) };
+    if (title === 'SAVED') return { ok: true, status: 200, json: async () => ({ scores: {}, updatedAt: 'now' }) };
+    if (title === 'UNCHANGED') return { ok: true, status: 200, json: async () => ({ unchanged: true }) };
+    if (title === 'BADJSON') return { ok: true, status: 200, json: async () => { throw new Error('secret'); } };
+    return { ok: true, status: 200, json: async () => ({}) };
+  }, songs);
+  assert.equal(bodies.length, titles.length);
+  assert.ok(diagnostics.some(line => line.includes('status=400 code=bad_request')));
+  assert.ok(diagnostics.some(line => line.includes('status=418 code=unknown')));
+  for (const reason of ['saved', 'unchanged', 'unknown', 'candidate_exception']) assert.ok(diagnostics.some(line => line.includes(`reason=${reason}`)));
+  assert.equal(diagnostics.join('\n').includes('super-secret-cookie-token'), false);
+  assert.equal(diagnostics.join('\n').includes('response-secret'), false);
+  assert.equal(diagnostics.join('\n').includes('do-not-log'), false);
+});
+test('DBR POST는 게임 ID 대신 INF 내부 ID와 계산 score를 보내고 진단에 식별값을 남긴다', async () => {
+  const diagnostics = []; const api = sync({ diagnostics }); const base = { ...row(1), timestamp: '2026-11-03T12:00:00+09:00', title: 'Fixture Song', song_id: '80121', difficulty: 'SPA', ex_score: '1637', notes: '1662', battle_flag: '1', settings_p1_11: '1 1 1 0 5 1 0 0 0 0 1', gauge_p2_w78: '80', play_speed: '1.00' };
+  const calls = [];
+  const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]);
+  await api.uploadAutomaticDbr([base], 'C123456789012', async () => true, undefined, async () => 'secret-token', async (url, options) => { calls.push({ url, body: JSON.parse(options.body) }); return { ok: true, status: 200, json: async () => ({ scores: {}, updatedAt: 'now' }) }; }, songs);
+  assert.deepEqual(calls, [{ url: 'https://iidx.in/api/me/dbr-scores', body: { song_id: 9001, diff: 3, lamp: 3, ex_score: 1637, improvements_only: true } }]);
+  const line = diagnostics.find(value => value.includes('reason=saved'));
+  for (const field of ['timestamp=2026-11-03T12:00:00+09:00', 'title=Fixture Song', 'game_song_id=80121', 'internal_song_id=9001', 'diff=3', 'lamp=3', 'ex_score=1637']) assert.ok(line.includes(field));
+});
+test('DBR 사유 로그는 speed·format·gauge와 곡 매칭·게임·Bearer 종료를 구분한다', async () => {
+  const diagnostics = []; const api = sync({ diagnostics }); const base = { ...row(1), timestamp: '1', title: 'Fixture Song', song_id: '80121', difficulty: 'SPA', ex_score: '1637', notes: '1662', battle_flag: '1', settings_p1_11: '1 1 1 0 5 1 0 0 0 0 1', gauge_p2_w78: '80', play_speed: '1.00' };
+  const { play_speed: _missingSpeed, ...legacyBase } = base;
+  assert.notEqual(api.decodeBattleRandomPlay(legacyBase), null);
+  assert.notEqual(api.decodeBattleRandomPlay({ ...base, play_speed: '1.00' }), null);
+  const rejected = [
+    { ...base, timestamp: 'speed-empty', play_speed: '' }, { ...base, timestamp: 'speed-other', play_speed: '0.70' },
+    { ...base, timestamp: 'format', difficulty: 'DPA' }, { ...base, timestamp: 'format-id', song_id: 'bad' },
+    { ...base, timestamp: 'gauge', gauge_p2_w78: 'bad' }, { ...base, timestamp: 'gauge-kind', settings_p1_11: '1 5 1 0 5 1 0 0 0 0 1' },
+  ];
+  await api.uploadAutomaticDbr(rejected, 'C123456789012', async () => true, undefined, async () => 'unused-token', async () => ({ ok: true, status: 200, json: async () => ({}) }), async () => new Map());
+  for (const reason of ['speed', 'format', 'gauge']) assert.ok(diagnostics.some(line => line.includes(`reason=${reason}`)));
+  const matchRows = [ { ...base, title: 'Missing' }, { ...base, title: 'Duplicate' }, { ...base, title: 'Fixture Song' } ];
+  const matchMap = new Map([[OhsorryNorm.norm('Duplicate'), [{ song_id: 1, title: 'Duplicate', ac: 2, legen: 0 }, { song_id: 2, title: 'Duplicate', ac: 2, legen: 0 }]], [OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]);
+  await api.uploadAutomaticDbr(matchRows, 'C123456789012', async () => true, undefined, async () => 'secret-token', async () => ({ ok: true, status: 200, json: async () => ({ scores: {}, updatedAt: 'now' }) }), async () => matchMap);
+  assert.ok(diagnostics.some(line => line.includes('reason=song_not_found'))); assert.ok(diagnostics.some(line => line.includes('reason=ambiguous_song')));
+  let requests = 0;
+  await api.uploadAutomaticDbr([base], 'C123456789012', async () => false, undefined, async () => 'secret-token', async () => { requests++; }, async () => matchMap);
+  await api.uploadAutomaticDbr([base], 'C123456789012', async () => true, undefined, async () => null, async () => { requests++; }, async () => matchMap);
+  assert.equal(requests, 0); assert.ok(diagnostics.some(line => line.includes('reason=game_unrecognized'))); assert.ok(diagnostics.some(line => line.includes('reason=bearer_missing')));
+});
 test('확정 후보 테스트 경계: 기존 Bearer API에 improvements_only:true로 클라이언트 전체 직렬 전송', async () => {
   const api = sync(); const calls = []; let active = 0; let maxActive = 0;
   const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
@@ -337,7 +459,7 @@ test('확정 후보 테스트 경계: 기존 Bearer API에 improvements_only:tru
     maxActive = Math.max(maxActive, ++active);
     await new Promise(resolve => setTimeout(resolve, 5));
     calls.push({ url, options, body: JSON.parse(options.body) }); active--;
-    return { ok: true };
+    return { ok: true, status: 200, json: async () => ({ ok: true, scores: {}, updatedAt: 'now' }) };
   };
   await Promise.all([
     api.uploadAutomaticDbr(rows([1, 2]), 'C123456789012', async () => true, decode, async () => 'existing-bearer', send, songs),
@@ -357,13 +479,134 @@ test('자동 DBR은 게임 미인식/전송 중 종료에서 생략', async () =
   const api = sync(); let requests = 0; let recognized = false;
   const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
   const bearer = async () => 'token';
-  const send = async () => { requests++; recognized = false; return { ok: true }; };
+  const send = async () => { requests++; recognized = false; return { ok: true, status: 200, json: async () => ({ ok: true, scores: {}, updatedAt: 'now' }) }; };
   const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]);
   await api.uploadAutomaticDbr([{ ...row(1), title: 'Fixture Song' }], 'C123456789012', async () => recognized, decode, bearer, send, songs);
   assert.equal(requests, 0);
   recognized = true;
   await api.uploadAutomaticDbr([{ ...row(1), title: 'Fixture Song' }, { ...row(2), title: 'Fixture Song' }], 'C123456789012', async () => recognized, decode, bearer, send, songs);
   assert.equal(requests, 1);
+});
+test('DBR 실제 저장 완료 콜백은 묶음당 한 번이며 조기 종료와 콜백 예외에도 잠금을 해제', async () => {
+  const api = sync(); const base = { ...row(1), title: 'Fixture Song', song_id: '80121' };
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
+  const songs = async () => new Map([1, 2, 3].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const calls = []; const notices = [];
+  const mixedRows = [1, 2, 3].map(id => ({ ...base, timestamp: String(id), title: `Fixture ${id}` }));
+  const mixedReplies = [{ ok: true, scores: {}, updatedAt: 'now' }, { unchanged: true }, { updatedAt: 'later' }];
+  await api.uploadAutomaticDbr(mixedRows, 'C123456789012', async () => true, decode, async () => 'token', async (_url, options) => {
+    calls.push(JSON.parse(options.body)); return { ok: true, status: 200, json: async () => mixedReplies[calls.length - 1] };
+  }, songs, id => notices.push(id));
+  assert.deepEqual(notices, ['C123456789012']);
+  assert.deepEqual(calls.map(body => body.song_id), [9001, 9002, 9003]);
+  assert.equal(calls[0].improvements_only, true);
+
+  for (const response of [
+    { ok: true, json: async () => ({ unchanged: true }) }, { ok: false, status: 500, json: async () => ({}) },
+    { ok: true, json: async () => ({}) }, { ok: true, json: async () => { throw new Error('bad json'); } },
+  ]) {
+    let count = 0;
+    await api.uploadAutomaticDbr([base], 'C123456789012', async () => true, decode, async () => 'token', async () => response,
+      async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]), () => count++);
+    assert.equal(count, 0);
+  }
+  let count = 0;
+  await api.uploadAutomaticDbr([base], 'C123456789012', async () => true, decode, async () => 'token', async () => { throw new Error('request'); },
+    async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]), () => count++);
+  assert.equal(count, 0);
+  await api.uploadAutomaticDbr([{ ...base, title: 'Missing' }], 'C123456789012', async () => true, decode, async () => 'token', async () => { throw new Error('unused'); }, async () => new Map(), () => count++);
+  await api.uploadAutomaticDbr([base], 'C123456789012', async () => false, decode, async () => 'token', async () => { throw new Error('unused'); }, songs, () => count++);
+  await api.uploadAutomaticDbr([base], 'C123456789012', async () => true, decode, async () => null, async () => { throw new Error('unused'); }, songs, () => count++);
+  assert.equal(count, 0);
+
+  let recognizedCalls = 0; const savedNotices = [];
+  await api.uploadAutomaticDbr([1, 2].map(id => ({ ...base, title: `Fixture ${id}` })), 'C123456789012', async () => ++recognizedCalls < 3, decode,
+    async () => 'token', async () => ({ ok: true, json: async () => ({ scores: {} }) }), songs, id => savedNotices.push(id));
+  assert.deepEqual(savedNotices, ['C123456789012']);
+
+  const throwsInCallback = () => { throw new Error('callback'); };
+  await api.uploadAutomaticDbr([base], 'C123456789012', async () => true, decode, async () => 'token', async () => ({ ok: true, json: async () => ({ scores: {} }) }), songs, throwsInCallback);
+  let nextRequests = 0;
+  await api.uploadAutomaticDbr([{ ...base, title: 'Fixture 1' }], 'C123456789012', async () => true, decode, async () => 'token', async () => { nextRequests++; return { ok: true, json: async () => ({ updatedAt: 'now' }) }; }, songs);
+  assert.equal(nextRequests, 1);
+});
+test('DBR 직렬 전송 중 우회 전송은 진행한다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; });
+  let aStarted = false; let bStarted = 0; let bCompleted = false;
+  const send = async (_url, options) => {
+    const id = JSON.parse(options.body).song_id;
+    if (id === 9001) { aStarted = true; await gateA; }
+    if (id === 9002) { bStarted++; bCompleted = true; }
+    return { ok: true, json: async () => ({ scores: {} }) };
+  };
+  const songs = async () => new Map([1, 2].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
+  const a = api.uploadAutomaticDbr([{ ...row(1), title: 'Fixture 1' }], 'A', async () => true, decode, async () => 't', send, songs);
+  while (!aStarted) await Promise.resolve();
+  const b = api.uploadAutomaticDbr([{ ...row(2), title: 'Fixture 2' }], 'B', async () => true, decode, async () => 't', send, songs, undefined, false);
+  let timer;
+  try {
+    const completed = await Promise.race([b.then(() => true), new Promise(resolve => { timer = setTimeout(() => resolve(false), 200); })]);
+    assert.equal(completed, true, '우회 전송이 직렬 잠금을 기다렸다');
+    assert.equal(bStarted, 1); assert.equal(bCompleted, true);
+  } finally {
+    clearTimeout(timer); releaseA(); await Promise.all([a, b]);
+  }
+});
+test('DBR 우회 완료는 전체 잠금을 해제하지 않는다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; });
+  let aStarted = false; const posted = [];
+  const send = async (_url, options) => { const id = JSON.parse(options.body).song_id; posted.push(id); if (id === 9001) { aStarted = true; await gateA; } return { ok: true, json: async () => ({ scores: {} }) }; };
+  const songs = async () => new Map([1, 2, 3].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 }); const call = (id, serialize) => api.uploadAutomaticDbr([{ ...row(id), title: `Fixture ${id}` }], String(id), async () => true, decode, async () => 't', send, songs, undefined, serialize);
+  const a = call(1); while (!aStarted) await Promise.resolve(); await call(2, false);
+  const c = call(3);
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(posted, [9001, 9002]);
+  } finally {
+    releaseA(); await Promise.all([a, c]);
+  }
+  assert.deepEqual(posted, [9001, 9002, 9003]);
+});
+test('DBR 전체 전송은 기본 직렬화를 유지한다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; }); let aStarted = false; const posted = [];
+  const send = async (_url, options) => { const id = JSON.parse(options.body).song_id; posted.push(id); if (id === 9001) { aStarted = true; await gateA; } return { ok: true, json: async () => ({ scores: {} }) }; };
+  const songs = async () => new Map([1, 2].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 }); const call = id => api.uploadAutomaticDbr([{ ...row(id), title: `Fixture ${id}` }], String(id), async () => true, decode, async () => 't', send, songs);
+  const a = call(1); while (!aStarted) await Promise.resolve(); const c = call(2); await Promise.resolve(); await Promise.resolve(); assert.deepEqual(posted, [9001]);
+  releaseA(); await Promise.all([a, c]); assert.deepEqual(posted, [9001, 9002]);
+});
+test('DBR 우회 실패는 전체 잠금을 보존한다', async () => {
+  const api = sync(); let releaseA; const gateA = new Promise(resolve => { releaseA = resolve; }); let aStarted = false; const posted = [];
+  const send = async (_url, options) => { const id = JSON.parse(options.body).song_id; posted.push(id); if (id === 9001) { aStarted = true; await gateA; } if (id === 9002) throw new Error('우회 실패'); return { ok: true, json: async () => ({ scores: {} }) }; };
+  const songs = async () => new Map([1, 2, 3].map(id => [OhsorryNorm.norm(`Fixture ${id}`), [{ song_id: 9000 + id, title: `Fixture ${id}`, ac: 2, legen: 0 }]]));
+  const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 }); const call = (id, serialize) => api.uploadAutomaticDbr([{ ...row(id), title: `Fixture ${id}` }], String(id), async () => true, decode, async () => 't', send, songs, undefined, serialize);
+  const a = call(1); while (!aStarted) await Promise.resolve(); await call(2, false); const c = call(3); await Promise.resolve(); await Promise.resolve(); assert.deepEqual(posted, [9001, 9002]);
+  releaseA(); await Promise.all([a, c]); assert.deepEqual(posted, [9001, 9002, 9003]);
+});
+test('DBR 우회 저장 응답에서만 완료 통지한다', async () => {
+  const api = sync(); const base = { ...row(1), title: 'Fixture Song' }; const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]); const decode = () => ({ diff: 3, lamp: 5, ex_score: 100 });
+  const replies = [
+    { send: async () => ({ ok: true, json: async () => ({ scores: {} }) }), expected: 1 },
+    { send: async () => ({ ok: true, json: async () => ({ unchanged: true }) }), expected: 0 },
+    { send: async () => ({ ok: false, status: 500, json: async () => ({}) }), expected: 0 },
+    { send: async () => { throw new Error('전송 실패'); }, expected: 0 },
+  ];
+  for (const { send, expected } of replies) { let count = 0; await api.uploadAutomaticDbr([base], 'A', async () => true, decode, async () => 't', send, songs, () => count++, false); assert.equal(count, expected); }
+});
+test('DBR 우회도 저장 자격과 개선 전용을 유지한다', async () => {
+  const api = sync(); const actual = actualRows()[0]; const valid = { ...actual, title: 'Fixture Song', song_id: '80121', difficulty: 'SPA', play_speed: '1.00', settings_p1_11: '1 1 1 0 5 1 0 0 0 0 1', gauge_p2_w78: '80' };
+  const songs = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]); const bodies = [];
+  await api.uploadAutomaticDbr([valid], 'A', async () => true, undefined, async () => 't', async (_url, options) => { bodies.push(JSON.parse(options.body)); return { ok: true, json: async () => ({ scores: {} }) }; }, songs, undefined, false);
+  assert.equal(bodies.length, 1); assert.equal(bodies[0].improvements_only, true);
+  for (const rejected of [
+    { ...valid, settings_p1_11: '1 1 0 0 5 1 0 0 0 0 1' },
+    { ...valid, settings_p1_11: '0 1 1 0 5 1 0 0 0 0 1' },
+    { ...valid, play_speed: '0.70' },
+  ]) {
+    let requests = 0; await api.uploadAutomaticDbr([rejected], 'A', async () => true, undefined, async () => 't', async () => { requests++; return { ok: true, json: async () => ({ scores: {} }) }; }, songs, undefined, false); assert.equal(requests, 0);
+  }
 });
 test('DBR은 0개/복수 후보만 건너뛰고 제목 정규화 후 단일 내부 ID를 전송', async () => {
   const api = sync(); const calls = [];
@@ -376,7 +619,7 @@ test('DBR은 0개/복수 후보만 건너뛰고 제목 정규화 후 단일 내�
   ]);
   await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true,
     () => ({ diff: 3, lamp: 1, ex_score: 99 }), async () => 'token', async (url, options) => {
-      calls.push(JSON.parse(options.body)); return { ok: true };
+      calls.push(JSON.parse(options.body)); return { ok: true, status: 200, json: async () => ({ saved: true }) };
     }, songs);
   assert.deepEqual(calls, [{ song_id: 9001, diff: 3, lamp: 1, ex_score: 99, improvements_only: true }]);
 });
@@ -388,7 +631,7 @@ test('DBR은 SPA에 ac, SPL에 legen 비트를 적용하고 LEG 후보가 없으
   ]]]);
   await api.uploadAutomaticDbr(rows, 'C123456789012', async () => true,
     r => ({ diff: r.difficulty === 'SPL' ? 4 : 3, lamp: 1, ex_score: 99 }), async () => 'token', async (url, options) => {
-      calls.push(JSON.parse(options.body)); return { ok: true };
+      calls.push(JSON.parse(options.body)); return { ok: true, status: 200, json: async () => ({ saved: true }) };
     }, both);
   assert.deepEqual(calls, [
     { song_id: 9001, diff: 3, lamp: 1, ex_score: 99, improvements_only: true },
@@ -398,7 +641,7 @@ test('DBR은 SPA에 ac, SPL에 legen 비트를 적용하고 LEG 후보가 없으
   const acOnly = async () => new Map([[OhsorryNorm.norm('Fixture Song'), [{ song_id: 9001, title: 'Fixture Song', ac: 2, legen: 0 }]]]);
   await api.uploadAutomaticDbr([rows[1]], 'C123456789012', async () => true,
     () => ({ diff: 4, lamp: 1, ex_score: 99 }), async () => 'token', async (url, options) => {
-      calls.push(JSON.parse(options.body)); return { ok: true };
+      calls.push(JSON.parse(options.body)); return { ok: true, status: 200, json: async () => ({ saved: true }) };
     }, acOnly);
   assert.equal(calls.length, 0);
 });

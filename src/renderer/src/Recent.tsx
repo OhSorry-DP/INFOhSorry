@@ -10,7 +10,8 @@
 // (index.css 에 복사). 헤더 < 날짜 > N곡, 6 컬럼 grid (lamp / LV / 곡명 / LAMP변동 / DJ변동 / SCORE변동).
 //
 // 행 클릭 → DP 탭으로 이동 + 해당 곡 검색 (App.tsx 의 scrollTarget 패턴).
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import type { ChartSlot, SongRow } from '../../shared/types';
 import { DP_SLOTS } from '../../shared/types';
 import { norm } from '../../shared/match';
@@ -19,12 +20,28 @@ import {
   fetchRecentCharts,
   fetchUserLatestCharts,
   loadDbrMap,
+  ensureTextageMeta,
   buildUploadPlays,
   type RecentChartRow,
   type LatestChartEntry,
 } from './supabaseSync';
 import { isPlayErrorRow, type PlayCsvRow, type PlayDetail, type SideDetail } from '../../shared/uploadSnapshot';
 import { LAMP_NUM_TO_ABBR } from './lampStyle';
+import { lampStyle } from './lampStyle';
+
+function playLampLabel(value: unknown): string {
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return '—';
+  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  if (!Number.isInteger(number) || number < 0 || number > 7) return '—';
+  const abbr = LAMP_NUM_TO_ABBR[number];
+  return abbr ? lampStyle(abbr as import('../../shared/types').Lamp).label : '—';
+}
+
+function playMissLabel(value: unknown): string {
+  if (value == null || (typeof value === 'string' && value.trim() === '')) return '—';
+  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : NaN;
+  return Number.isInteger(number) && number >= 0 ? String(number) : '—';
+}
 
 // diff (NORMAL/HYPER/ANOTHER/LEGGENDARIA) → slot 색 (오소리웹 DIFF_COLOR 동일).
 const DIFF_COLOR: Record<string, string> = {
@@ -275,9 +292,191 @@ function detailSideHidden(side: SideDetail | null | undefined): boolean {
   return side.fs === null || (side.fs != null && [side.fs.fast_great, side.fs.fast_good, side.fs.slow_great, side.fs.slow_good].every((value) => typeof value === 'number' && value === 0));
 }
 
-function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | null {
+function playChartLevel(play: PlayCsvRow, rows: SongRow[], textage: Awaited<ReturnType<typeof ensureTextageMeta>>): number | null {
+  const diff = play.difficulty?.replace(/^(SP|DP)/, '');
+  const mode = play.difficulty?.startsWith('DP') ? 'DP' : 'SP';
+  const slot = diff ? `${mode}${diff}` as ChartSlot : null;
+  const title = norm(play.title || '');
+  if (!slot || !title) return null;
+  const matches = rows.filter((row) => norm(row.title) === title);
+  if (matches.length === 1) {
+    const level = matches[0].charts[slot]?.level;
+    if (typeof level === 'number' && Number.isFinite(level)) return level;
+  }
+  if (matches.length > 1) return null;
+  const key: Record<string, string> = mode === 'DP'
+    ? { N: 'DN', H: 'DH', A: 'DA', L: 'DX' }
+    : { N: 'SN', H: 'SH', A: 'SA', L: 'SX' };
+  const metaKey = key[diff || ''];
+  if (!metaKey || !textage?.songs) return null;
+  const songs = Object.values(textage.songs).filter((song) => norm(song.title || '') === title);
+  const levels = songs.map((song) => song.levels?.[metaKey]).filter((level): level is number => typeof level === 'number' && Number.isFinite(level));
+  return levels.length === 1 ? levels[0] : null;
+}
+
+function playOptionInfo(play: PlayCsvRow): string {
+  const parse = (raw: string | undefined): number[] | null => {
+    if (!raw || !/^\s*\d+(?:\s+\d+)*\s*$/.test(raw)) return null;
+    return raw.trim().split(/\s+/).map(Number);
+  };
+  const p1 = parse(play.settings_p1_11);
+  const p2 = parse(play.settings_p2_11);
+  const battle = play.battle_flag === '1';
+  const dp = play.difficulty?.startsWith('DP');
+  const label = (n: number | undefined) => Number.isInteger(n) && n! >= 0 && n! <= 6 ? ['OFF', 'RAN', 'R-RAN', 'S-RAN', 'MIR', 'SYNCHRONIZE RANDOM', 'SYMMETRY RANDOM'][n!] : '—';
+  const items: string[] = [];
+  if (battle) items.push('BATTLE');
+  if (p1?.[3] === 1) items.push('FLIP');
+  if (battle || dp) items.push(`${label(p1?.[0])} / ${label(p1?.[5])}`);
+  else items.push(`${label(p1?.[0])} / ${label(p2?.[0])}`);
+  return items.join(', ');
+}
+
+type RecentPlayListState = { accountId: string; rows: PlayCsvRow[]; signature: string; openKeys: Set<string> };
+
+function recentPlayRows(rows: PlayCsvRow[], normalizedId: string): { play: PlayCsvRow; rowKey: string }[] {
+  const occurrences = new Map<string, number>();
+  return rows.map((play) => {
+    const rowText = JSON.stringify(play);
+    const occurrence = occurrences.get(rowText) ?? 0;
+    occurrences.set(rowText, occurrence + 1);
+    return { play, rowKey: JSON.stringify([normalizedId, rowText, occurrence]) };
+  });
+}
+
+function initialRecentOpenKeys(rows: PlayCsvRow[], normalizedId: string): Set<string> {
+  const keyedRows = recentPlayRows(rows, normalizedId);
+  const latest = keyedRows[keyedRows.length - 1];
+  return latest && !isPlayErrorRow(latest.play) ? new Set([latest.rowKey]) : new Set();
+}
+
+function playOptionDisplay(play: PlayCsvRow): string {
+  if (play.battle_flag === '1' || play.difficulty?.startsWith('DP')) return playOptionInfo(play);
+  const side = playSideActivity(play);
+  if (side !== 'P1' && side !== 'P2') return playOptionInfo(play);
+  const raw = side === 'P1' ? play.settings_p1_11 : play.settings_p2_11;
+  if (!raw || !/^\s*\d+(?:\s+\d+)*\s*$/.test(raw)) return '—';
+  const value = Number(raw.trim().split(/\s+/)[0]);
+  return Number.isInteger(value) && value >= 0 && value <= 6
+    ? ['OFF', 'RANDOM', 'R-RANDOM', 'S-RANDOM', 'MIRROR', 'SYNCHRONIZE RANDOM', 'SYMMETRY RANDOM'][value]
+    : '—';
+}
+
+function playSideActivity(play: PlayCsvRow): 'P1' | 'P2' | 'BOTH' | null {
+  if (play.battle_flag === '1' || play.difficulty?.startsWith('DP')) return 'BOTH';
+  const parts = play.judge_16?.trim().split(/\s+/) ?? [];
+  if (parts.length !== 16 || parts.some((value) => !/^\d+$/.test(value))) return null;
+  const sums = [parts.slice(0, 5), parts.slice(5, 10)].map((side) => side.reduce((sum, value) => sum + Number(value), 0));
+  return sums[0] > 0 && sums[1] === 0 ? 'P1' : sums[1] > 0 && sums[0] === 0 ? 'P2' : null;
+}
+
+function displayLaneOrder(raw: string | undefined, side: 'P1' | 'P2', play: PlayCsvRow): string {
+  const activity = playSideActivity(play);
+  if (!raw || activity == null || (activity !== 'BOTH' && activity !== side)) return '—';
+  const order = raw.trim().split('').map(Number);
+  if (!/^\d{7}$/.test(raw.trim()) || [...order].sort((a, b) => a - b).join('') !== '0123456') return '—';
+  const settings = (side === 'P1' ? play.settings_p1_11 : play.settings_p2_11);
+  const parsed = settings && /^\s*\d+(?:\s+\d+)*\s*$/.test(settings) ? settings.trim().split(/\s+/).map(Number) : null;
+  const option = play.battle_flag === '1' || play.difficulty?.startsWith('DP') ? parsed?.[side === 'P1' ? 0 : 5] : parsed?.[0];
+  if (option === 3) return '—';
+  return order.map((value) => value + 1).join('');
+}
+
+function laneCounterIndex(key: number | 'scratch'): number {
+  return key === 'scratch' ? 7 : Number.isInteger(key) && key >= 1 && key <= 7 ? key - 1 : -1;
+}
+
+function laneEvaluation(side: SideDetail | null | undefined): { notes: number; ex: number; rank: string; rate: string } | null {
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  if (!side?.lanes_ok || !Array.isArray(side.lanes) || side.lanes.length !== 8 || side.lanes.some((lane) => !Array.isArray(lane) || lane.length !== 6 || lane.some((value) => !valid(value)))) return null;
+  const sums = [0, 0, 0, 0, 0];
+  for (const lane of side.lanes) for (let i = 0; i < 5; i++) sums[i] += lane[i];
+  const notes = sums.reduce((a, b) => a + b, 0);
+  if (notes === 0) return { notes, ex: 0, rank: '—', rate: '—' };
+  const ex = sums[0] * 2 + sums[1];
+  const ratio = ex / (notes * 2);
+  const rank = ex === 0 ? 'F' : ratio >= 8 / 9 ? 'AAA' : ratio >= 7 / 9 ? 'AA' : ratio >= 6 / 9 ? 'A' : ratio >= 5 / 9 ? 'B' : ratio >= 4 / 9 ? 'C' : ratio >= 3 / 9 ? 'D' : ratio >= 2 / 9 ? 'E' : 'F';
+  return { notes, ex, rank, rate: `${(ratio * 100).toFixed(2)}%` };
+}
+
+function laneKeyEvaluation(side: SideDetail | null | undefined, index: number): { notes: number; ex: number; rank: string; rate: string } | null {
+  const lane = side?.lanes?.[index];
+  const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  if (side?.lanes_ok === false || !Array.isArray(side?.lanes) || !Array.isArray(lane) || lane.length < 5 || lane.slice(0, 5).some((value) => !valid(value))) return null;
+  const notes = lane.slice(0, 5).reduce((sum, value) => sum + value, 0);
+  if (notes === 0) return null;
+  const ex = lane[0] * 2 + lane[1];
+  if (ex > 2 * notes) return null;
+  const rank = ex === 0 ? 'F' : djLevelFromScore(ex, notes) || '—';
+  return { notes, ex, rank, rate: `${(ex / (notes * 2) * 100).toFixed(2)}%` };
+}
+
+function placeLaneDetail(anchor: { left: number; top: number; bottom: number }, box: { width: number; height: number }, viewportW: number, viewportH: number): { top: number; left: number } {
+  const gap = 8;
+  const width = Math.min(box.width, viewportW - gap * 2);
+  const height = Math.min(box.height, viewportH - gap * 2);
+  const left = Math.max(gap, Math.min(anchor.left, viewportW - width - gap));
+  const below = viewportH - anchor.bottom - gap;
+  const top = below >= height || below >= anchor.top - gap ? anchor.bottom + gap : anchor.top - height - gap;
+  return { left, top: Math.max(gap, Math.min(top, viewportH - height - gap)) };
+}
+
+type LaneSelection = { rowKey: string; player: 'P1' | 'P2'; lane: number | 'scratch'; side: SideDetail; button: HTMLButtonElement; touch: boolean };
+
+function PlayLaneController({ side, player, activity = null, rowKey = '', selection = null, onSelect = () => {} }: { side: SideDetail | null | undefined; player: 'P1' | 'P2'; activity?: 'P1' | 'P2' | 'BOTH' | null; rowKey?: string; selection?: LaneSelection | null; onSelect?: (selection: LaneSelection | null) => void }): JSX.Element {
+  const inactive = side == null || activity == null || (activity !== 'BOTH' && activity !== player);
+  const key = (number: number | 'scratch', className: string, label: string) => {
+    const index = laneCounterIndex(number);
+    const id = `play-key-detail-${encodeURIComponent(rowKey)}-${player}-${number}`;
+    const active = selection?.rowKey === rowKey && selection.player === player && selection.lane === number;
+    const labelText = `${player} ${label === 'SCRATCH' ? '스크래치' : `건반 ${label}`}`;
+    const open = (button: HTMLButtonElement, touch: boolean) => { if (side != null) onSelect({ rowKey, player, lane: number, side, button, touch }); };
+    const evaluation = index >= 0 && side?.lanes?.length === 8 ? laneKeyEvaluation(side, index) : null;
+    const rankClass = number === 'scratch' ? '__uprofile_play_rank_scratch' : Number(number) % 2 === 0 ? '__uprofile_play_rank_black' : '__uprofile_play_rank_white';
+    const tileClass = number === 'scratch' ? '' : `__uprofile_play_pattern_tile ${Number(number) % 2 === 1 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black'}`;
+    return <button type="button" className={`__uprofile_play_unit ${className}${inactive ? ' __uprofile_play_inactive' : ''}`} key={String(number)} data-key={number === 'scratch' ? 8 : number} aria-label={side != null ? labelText : undefined} aria-expanded={side != null ? active : undefined} aria-describedby={side != null && active ? id : undefined} onPointerOver={side != null ? (event) => { if (event.pointerType !== 'touch') open(event.currentTarget, false); } : undefined} onPointerDown={side != null ? (event) => { if (event.pointerType === 'touch') { event.preventDefault(); if (!active) open(event.currentTarget, true); } } : undefined} onPointerOut={side != null ? (event) => { const target = event.relatedTarget as Element | null; if (!selection?.touch && !target?.closest('.__uprofile_play_keydetail') && selection?.button === event.currentTarget) onSelect(null); } : undefined} onFocus={side != null ? (event) => open(event.currentTarget, false) : undefined}>
+      {number !== 'scratch' && <span className={tileClass}><span className="__uprofile_play_pattern_digit" /></span>}
+      <span className={`__uprofile_play_rank ${rankClass}${inactive ? ' __uprofile_play_rank_inactive' : ''}`} aria-hidden="true">{evaluation?.rank ?? '—'}</span>
+    </button>;
+  };
+  const keys = Array.from({ length: 7 }, (_, index) => index + 1);
+  return <div className="__uprofile_play_controller" data-player={player}>
+    {player === 'P1' && key('scratch', '__uprofile_play_unit_scratch', 'SCRATCH')}
+    <div className="__uprofile_play_keyboard">{keys.map((number) => key(number, `__uprofile_play_unit_${number % 2 === 1 ? 'white' : 'black'}`, String(number)))}</div>
+    {player === 'P2' && key('scratch', '__uprofile_play_unit_scratch', 'SCRATCH')}
+  </div>;
+}
+
+function PlayLaneDetail({ side, index }: { side: SideDetail | null | undefined; index: number }): JSX.Element {
+  const evaluation = laneKeyEvaluation(side, index);
+  const value = (item: unknown) => item == null ? '—' : String(item);
+  const lane = side?.lanes?.[index];
+  const fs = side?.lane_fs?.[index];
+  const cells = [0, 1, 2, 3, 4, 5].map((column) => value(lane?.[column]));
+  cells.push(...(side?.lane_fs == null ? ['—', '—', '—', '—'] : [0, 1, 2, 3].map((column) => value(fs?.[column]))));
+  const text = `${index === 7 ? 'scratch' : `key ${index + 1}`} · ${cells.join(' · ')} · ${evaluation?.rank ?? '—'} · ${evaluation?.rate ?? '—'}${side?.lanes_ok === false ? ' · 레인 검증 불일치' : ''}`;
+  return <>{text}</>;
+}
+
+function renderPlayDetail(detail: PlayDetail | null | undefined, play: PlayCsvRow, level: number | null, rowKey = '', selection: LaneSelection | null = null, onSelect: (selection: LaneSelection | null) => void = () => {}): JSX.Element {
+  const head = <div className="__uprofile_play_head"><span className="__uprofile_play_head_level">{level ?? '—'}</span><span className="__uprofile_play_head_options">{playOptionDisplay(play)}</span></div>;
+  const renderLanePattern = (side: 'P1' | 'P2') => {
+    const order = displayLaneOrder(side === 'P1' ? play.lane_order_p1 : play.lane_order_p2, side, play);
+    const activity = playSideActivity(play);
+    const inactive = activity === 'P1' || activity === 'P2' ? activity !== side : false;
+    const tiles = inactive ? Array.from({ length: 7 }, () => '') : order === '—' ? null : [...order];
+    return <div key={side} className={`__uprofile_play_pattern_row${inactive ? ' __uprofile_play_pattern_inactive' : ''}`}><span className="__uprofile_play_pattern_tiles">{tiles === null ? '—' : tiles.map((digit, index) => <span key={index} className={`__uprofile_play_pattern_tile ${digit === '' ? (index % 2 === 0 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black') : Number(digit) % 2 === 1 ? '__uprofile_play_pattern_tile_white' : '__uprofile_play_pattern_tile_black'}`}><span className="__uprofile_play_pattern_digit">{digit}</span></span>)}</span><span className="__uprofile_play_pattern_label">PLAYER {side === 'P1' ? '1' : '2'} LANE</span></div>;
+  };
+  const renderLanePatternGroup = () => <div className="__uprofile_play_pattern_scale"><div className="__uprofile_play_pattern_scroll"><div className="__uprofile_play_pattern_groups">{(['P1', 'P2'] as const).map(renderLanePattern)}</div></div></div>;
+  const summary = <div className="__uprofile_playdetail_summary">
+    <span><span>램프</span> <b>{playLampLabel(play.clear_lamp)}</b></span>
+    <span><span>EX 스코어</span> <b>{play.ex_score == null || play.ex_score === '' ? '—' : play.ex_score}</b></span>
+    <span><span>Rate</span> <b>{play.dj_rate_pct == null || play.dj_rate_pct === '' ? '—' : `${play.dj_rate_pct}%`}</b></span>
+    <span><span>DJ LEVEL</span> <b>{play.dj_rank == null || play.dj_rank === '' ? '—' : play.dj_rank}</b></span>
+    <span><span>BP</span> <b>{playMissLabel(play.miss_count)}</b></span>
+  </div>;
+  if (!detail) return <div className="__uprofile_play_sections">{head}{summary}<section className="__uprofile_playdetail_judge __uprofile_play_inactive"><p>상세 기록 없음</p></section><div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section><section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => <div key={side}><PlayLaneController side={undefined} player={side} activity={playSideActivity(play)} rowKey={rowKey} selection={selection} onSelect={onSelect} /></div>)}</div></div></div></section></div></div>;
   const sides = ([['P1', detail.p1], ['P2', detail.p2]] as const).filter(([, side]) => !detailSideHidden(side));
-  if (!sides.length) return null;
   const valid = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
   const aggregate = (index: number) => {
     const values = sides.flatMap(([, side]) => side.lanes?.map((lane) => lane?.[index]));
@@ -286,16 +485,13 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
   const fsValues = sides.map(([, side]) => side.fs);
   const hasFs = fsValues.every((fs) => fs != null && [fs.fast_great, fs.fast_good, fs.slow_great, fs.slow_good].every(valid));
   const sumFs = (key: 'fast_great' | 'fast_good' | 'slow_great' | 'slow_good') => hasFs ? fsValues.reduce((sum, fs) => sum + (fs?.[key] ?? 0), 0) : null;
-  const unresolved = sides.every(([, side]) => valid(side.fs_unresolved)) ? sides.reduce((sum, [, side]) => sum + side.fs_unresolved, 0) : null;
   const values = [aggregate(0), aggregate(1), aggregate(2), aggregate(3), aggregate(4), aggregate(5)] as const;
   const scoreValues = values.slice(0, 5);
   const total = scoreValues.every(valid) ? scoreValues.reduce<number>((sum, value) => sum + (valid(value) ? value : 0), 0) : null;
+  const evaluations = sides.map(([label, side]) => [label, laneEvaluation(side)] as const);
   const cbParts = (play.judge_16 || '').trim().split(/\s+/);
-  const cb = cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
+  const cb = sides.length > 0 && cbParts.length === 16 && [cbParts[10], cbParts[11]].every((value) => /^\d+$/.test(value))
     ? sides.reduce((sum, [label]) => sum + Number(cbParts[label === 'P1' ? 10 : 11]), 0) : null;
-  const lampRaw = play.clear_lamp;
-  const lampNum = lampRaw == null || lampRaw.trim() === '' ? null : Number(lampRaw);
-  const lamp = lampNum == null ? '—' : Number.isInteger(lampNum) && LAMP_NUM_TO_ABBR[lampNum] ? LAMP_NUM_TO_ABBR[lampNum] : lampRaw;
   const fmt = (value: unknown) => valid(value) ? String(value) : '—';
   const rows: { kind: string; tag?: string; name: string; value: number | null; pct?: boolean; bar?: boolean }[] = [];
   const add = (kind: string, name: string, value: number | null, tag?: string, pct = true, bar = true) => rows.push({ kind, tag, name, value, pct, bar });
@@ -306,28 +502,77 @@ function renderPlayDetail(detail: PlayDetail, play: PlayCsvRow): JSX.Element | n
   rows.push({ kind: 'sep', name: '', value: null });
   add('k-bad', 'BAD', values[3]); add('k-poor', 'POOR', values[4]); add('k-empty', '空POOR', values[5], undefined, false); add('k-cb', 'COMBO BREAK', cb, undefined, false, false);
   const percent = (value: number | null) => total != null && total > 0 && valid(value) ? `${Math.round(value / total * 100)}%` : '—';
-  return <div className="__uprofile_playdetail_judge">
-    <div className="__uprofile_playdetail_summary">{[['램프', lamp], ['EX', play.ex_score], ['DJ RATE', play.dj_rate_pct ? `${play.dj_rate_pct}%${play.dj_rank ? ` ${play.dj_rank}` : ''}` : '—'], ['미스', play.miss_count], ['콤보 브레이크', fmt(cb)]].map(([label, value]) => <span key={label}>{label} <b>{value || '—'}</b></span>)}{sides.length === 2 && <span>P1+P2 합산</span>}{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}{sides.some(([, side]) => side.lanes_ok === false) && <span className="__uprofile_playdetail_badge">레인 검증 불일치</span>}</div>
-    <div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>
-    <small className="__uprofile_playdetail_foot">{hasFs ? `FAST/SLOW 미확정 ${fmt(unresolved)} (GREAT·GOOD 중 짝짓지 못한 수)` : 'FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판'}</small>
-    <label className="__uprofile_playdetail_toggle"><input type="checkbox" onChange={(event) => { const lanes = event.currentTarget.closest('.__uprofile_playdetail_judge')?.querySelector('.__uprofile_playdetail_lanes'); if (lanes) (lanes as HTMLElement).hidden = !event.currentTarget.checked; }} />레인별 판정 보기</label>
-    <div className="__uprofile_playdetail_lanes">{sides.map(([label, side]) => <section key={label}><h4>{label} · 레인 미확정 {fmt(side.lane_fs_unresolved)}</h4><div className="__uprofile_playdetail_tablebox"><table className="__uprofile_playdetail_lanetable"><thead><tr>{['레인','PG','GR','GD','BD','PR','空PR','F-GR','F-GD','S-GR','S-GD'].map((name, index) => <th key={name} className={index === 7 ? 'g-fs' : undefined}>{name}</th>)}</tr></thead><tbody>{Array.from({ length: 8 }, (_, lane) => <tr key={lane}><th>{lane}</th>{Array.from({ length: 6 }, (_, col) => <td key={col}>{fmt(side.lanes?.[lane]?.[col])}</td>)}{Array.from({ length: 4 }, (_, col) => <td key={`fs${col}`} className={col === 0 ? 'g-fs' : undefined}>{side.lane_fs == null ? '—' : fmt(side.lane_fs[lane]?.[col])}</td>)}</tr>)}</tbody></table></div></section>)}</div>
+  return <div className="__uprofile_play_sections">
+    {head}
+    {summary}
+    <section className="__uprofile_playdetail_judge __uprofile_play_tiles"><div className="__uprofile_playdetail_summary">{!detail.complete && <span className="__uprofile_playdetail_badge">부분 기록</span>}{sides.some(([, side]) => side.fs_ok === false) && <span className="__uprofile_playdetail_badge">FAST/SLOW 검증 불일치</span>}</div><div className="__uprofile_playdetail_bars">{rows.map((row, index) => row.kind === 'sep' ? <span key="sep" className="__uprofile_playdetail_sep" /> : <div key={`${row.kind}-${index}`} className={`__uprofile_playdetail_barrow ${row.kind}`}><span className="__uprofile_playdetail_lab">{row.tag && <span className={`__uprofile_playdetail_tag ${row.tag === 'FAST' ? 't-fast' : 't-slow'}`}>{row.tag}</span>}{row.name}</span><span className="__uprofile_playdetail_n">{fmt(row.value)}</span><span className="__uprofile_playdetail_pct">{row.pct ? percent(row.value) : '—'}</span><span className="__uprofile_playdetail_track">{row.bar && total != null && total > 0 && valid(row.value) && <span className="__uprofile_playdetail_fill" style={{ width: `${Math.min(100, row.value / total * 100)}%` }} />}</span></div>)}</div>{!hasFs && <small className="__uprofile_playdetail_foot">FAST/SLOW 기록 없음 — 플레이 시작부터 관찰하지 못한 판</small>}</section>
+    <div className="__uprofile_play_lane_layout"><section className="__uprofile_play_pattern"><h4>랜덤 레인 패턴</h4>{renderLanePatternGroup()}</section>
+    <section className="__uprofile_play_rating"><h4>레인별 평가</h4><div className="__uprofile_play_rating_scale"><div className="__uprofile_play_panel_scroll"><div className="__uprofile_play_panel">{(['P1', 'P2'] as const).map((side) => { const sideDetail = detail[side === 'P1' ? 'p1' : 'p2']; return <div key={side}><PlayLaneController side={sideDetail} player={side} activity={playSideActivity(play)} rowKey={rowKey} selection={selection} onSelect={onSelect} /></div>; })}</div></div></div></section></div>
   </div>;
 }
 
 export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element {
-  const [recentPlays, setRecentPlays] = useState<PlayCsvRow[]>([]);
+  const [listState, setListState] = useState<RecentPlayListState>(() => ({ accountId: '', rows: [], signature: '', openKeys: new Set() }));
   const [playReadError, setPlayReadError] = useState<string | null>(null);
+  const [textage, setTextage] = useState<Awaited<ReturnType<typeof ensureTextageMeta>>>(null);
+  const [selection, setSelection] = useState<LaneSelection | null>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+  const detailRef = useRef<HTMLDivElement | null>(null);
   const normalizedId = useMemo(() => iidxId?.replace(/-/g, '').trim() || '', [iidxId]);
 
+  const recentPlays = listState.accountId === normalizedId ? listState.rows : [];
+  const renderedRows = recentPlayRows(recentPlays, normalizedId).reverse();
+  const selectedRow = selection && selection.rowKey === renderedRows.find(({ rowKey }) => rowKey === selection.rowKey)?.rowKey && listState.openKeys.has(selection.rowKey)
+    ? renderedRows.find(({ rowKey }) => rowKey === selection.rowKey)?.play : undefined;
+  const selectedSide = selectedRow?.detail?.[selection?.player === 'P1' ? 'p1' : 'p2'];
+
+  useEffect(() => { setSelection(null); }, [normalizedId, listState.signature]);
+  useEffect(() => { if (selection && (!listState.openKeys.has(selection.rowKey) || !renderedRows.some(({ rowKey }) => rowKey === selection.rowKey))) setSelection(null); }, [selection, listState.openKeys, renderedRows]);
   useEffect(() => {
-    setRecentPlays([]);
+    if (!selection) return;
+    const close = () => setSelection(null);
+    const outside = (event: PointerEvent) => { const target = event.target as Element | null; if (target && !target.closest('.__uprofile_play_unit') && !target.closest('.__uprofile_play_keydetail')) close(); };
+    const focusOutside = (event: FocusEvent) => { const target = event.target as Element | null; if (target && !target.closest('.__uprofile_play_unit') && !target.closest('.__uprofile_play_keydetail')) close(); };
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.preventDefault(); selection.button.focus(); close(); } };
+    document.addEventListener('keydown', escape);
+    document.addEventListener('pointerdown', outside);
+    document.addEventListener('focusin', focusOutside);
+    window.addEventListener('scroll', close, true);
+    window.addEventListener('resize', close);
+    return () => { document.removeEventListener('keydown', escape); document.removeEventListener('pointerdown', outside); document.removeEventListener('focusin', focusOutside); window.removeEventListener('scroll', close, true); window.removeEventListener('resize', close); };
+  }, [selection]);
+  useEffect(() => {
+    if (!selection || !detailRef.current) { setPosition(null); return; }
+    const detail = detailRef.current;
+    const viewportW = document.documentElement.clientWidth || window.innerWidth;
+    const viewportH = document.documentElement.clientHeight || window.innerHeight;
+    const gap = 8;
+    detail.style.maxWidth = `${Math.max(0, viewportW - gap * 2)}px`;
+    detail.style.maxHeight = `${Math.max(0, viewportH - gap * 2)}px`;
+    detail.style.visibility = 'hidden';
+    const anchor = selection.button.getBoundingClientRect();
+    const box = detail.getBoundingClientRect();
+    setPosition(placeLaneDetail(anchor, box, viewportW, viewportH));
+    detail.style.visibility = '';
+  }, [selection]);
+
+  useEffect(() => {
+    setListState({ accountId: normalizedId, rows: [], signature: '', openKeys: new Set() });
     setPlayReadError(null);
+    setTextage(null);
     if (!normalizedId) return;
-    return subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
-      setRecentPlays(nextRows);
+    let active = true;
+    void ensureTextageMeta().then((meta) => { if (active) setTextage(meta); });
+    const unsubscribe = subscribeRecentPlays(normalizedId, (nextRows, nextError) => {
+      const signature = JSON.stringify(nextRows);
+      setListState((current) => {
+        if (!active || current.accountId !== normalizedId) return current;
+        if (current.signature === signature) return current;
+        return { accountId: normalizedId, rows: nextRows, signature, openKeys: initialRecentOpenKeys(nextRows, normalizedId) };
+      });
       setPlayReadError(nextError);
     });
+    return () => { active = false; unsubscribe(); };
   }, [normalizedId]);
 
   return <section className="__uprofile_recentplays" aria-label="최근 플레이">
@@ -338,24 +583,35 @@ export function RecentPlays({ iidxId }: { iidxId: string | null }): JSX.Element 
       <p className="__uprofile_tabempty">플레이 기록이 없습니다.</p>
     ) : (
       <div className="__uprofile_recentplays_list">
-        {[...recentPlays].reverse().map((play, index) => isPlayErrorRow(play) ? (
-          <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={`error-${index}`}>
+        {renderedRows.map(({ play, rowKey }) => isPlayErrorRow(play) ? (
+          <div className="__uprofile_recentplays_row __uprofile_recentplays_error" key={rowKey}>
             기록 오류 (코드 {play.song_id})
           </div>
         ) : (
-          play.detail != null ? <details className="__uprofile_recentplays_item" key={`${play.timestamp}-${index}`}>
+          <details className="__uprofile_recentplays_item" key={rowKey} open={listState.openKeys.has(rowKey)} onToggle={(event) => {
+            const shouldOpen = event.currentTarget.open;
+            setListState((current) => {
+              if (current.accountId !== normalizedId || current.signature !== listState.signature) return current;
+              const isOpen = current.openKeys.has(rowKey);
+              if (isOpen === shouldOpen) return current;
+              const openKeys = new Set(current.openKeys);
+              if (shouldOpen) openKeys.add(rowKey); else openKeys.delete(rowKey);
+              return { ...current, openKeys };
+            });
+          }}>
             <summary className="__uprofile_recentplays_row">
               <span>{recentPlayTime(play.timestamp)}</span>
               <span title={play.title}>{play.title || '—'}</span>
               <span>{play.difficulty || '—'}</span>
-              <span>{play.ex_score || '—'}</span>
+              <span>{play.ex_score === '' ? '—' : play.ex_score}</span>
               <span className="__uprofile_recentplays_chev">›</span>
             </summary>
-            {renderPlayDetail(play.detail, play)}
-          </details> : <div className="__uprofile_recentplays_item __uprofile_recentplays_plain" key={`${play.timestamp}-${index}`}><div className="__uprofile_recentplays_row"><span>{recentPlayTime(play.timestamp)}</span><span title={play.title}>{play.title || '—'}</span><span>{play.difficulty || '—'}</span><span>{play.ex_score || '—'}</span><span /></div></div>
+            {renderPlayDetail(play.detail, play, playChartLevel(play, [], textage), rowKey, selection, setSelection)}
+          </details>
         ))}
       </div>
     )}
+    {selection && selectedSide && createPortal(<div ref={detailRef} id={`play-key-detail-${encodeURIComponent(selection.rowKey)}-${selection.player}-${selection.lane}`} role="tooltip" aria-label={`레인별 평가: ${selection.player} ${selection.lane === 'scratch' ? '스크래치' : `건반 ${selection.lane}`}`} className="__uprofile_play_keydetail" onPointerOut={(event) => { if (!selection.touch && !event.currentTarget.contains(event.relatedTarget as Node) && !selection.button.contains(event.relatedTarget as Node)) setSelection(null); }} style={{ position: 'fixed', zIndex: 10000, left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? 'visible' : 'hidden' }}><PlayLaneDetail side={selectedSide} index={laneCounterIndex(selection.lane)} /></div>, document.body)}
   </section>;
 }
 

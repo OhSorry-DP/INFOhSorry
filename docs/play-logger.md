@@ -95,13 +95,13 @@ Reflux `Utils.FetchGameState` 와 같은 규칙입니다.
 
 ## 6. CSV 열
 
-한 줄 = 결과 화면 한 번. 신규 CSV 헤더는 22개 열입니다. 기존 19·21열 헤더도 유지하며 업로드 파서는 19/21/22열 혼합 행을 모두 허용합니다.
+한 줄 = 결과 화면 한 번. 신규 CSV 헤더는 24개 열입니다. 기존 19·21·22열 헤더는 첫 줄만 24열로 승격하고 기존 행은 고치지 않습니다. 업로드 파서는 19/21/22/24열 혼합 행을 허용하고 23열은 거부합니다.
 
 ```csv
-timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version,play_speed
+timestamp,song_id,title,difficulty,notes,ex_score,pgreat,great,miss_count,clear_lamp,dj_rate_pct,dj_rank,judge_16,settings_p1_11,settings_p2_11,battle_flag,gauge_p1_w77,gauge_p2_w78,source,app_version,game_version,play_speed,lane_order_p1,lane_order_p2
 ```
 
-기존 19개 열 뒤에 `app_version`, `game_version`, `play_speed`가 추가됩니다. 19열 레거시 행은 세 버전 값을 빈 문자열로 정규화합니다. 19/21칸 행은 파서 내부에서 `play_speed` 속성을 생략하며, 22칸 행의 속도 값은 빈 값과 공백을 포함해 문자열 그대로 보존합니다. 버전 확보에 실패해도 오류 코드나 offsets fallback 버전을 넣지 않고 빈 문자열을 사용합니다.
+기존 19개 열 뒤에 `app_version`, `game_version`, `play_speed`, 두 레인 배치 열이 추가됩니다. 19열 레거시 행은 두 버전 값을 빈 문자열로 정규화합니다. 19/21칸 행은 파서 내부에서 `play_speed` 속성을 생략하며, 22/24칸 행의 속도 값은 빈 값과 공백을 포함해 문자열 그대로 보존합니다. 버전 확보에 실패해도 오류 코드나 offsets fallback 버전을 넣지 않고 빈 문자열을 사용합니다.
 
 기록·업로드 오류 행도 21개 문자열 필드입니다. `timestamp`는 오류 발생 시각 또는 업로드 시각의 실제 ISO 시각이고, `song_id`부터 `source`까지 18개 칸은 같은 음수 정수 문자열입니다. 마지막 두 버전 칸은 확보한 실제 버전이며 확보하지 못하면 빈 문자열입니다. 오류 판별은 timestamp와 버전을 제외한 18개 값이 같은 음수 정수 문자열인지로 합니다. `clear_lamp=-1` 하나만으로 오류로 판정하지 않습니다. INF 배틀 기록에는 `clear_lamp=-1`인 정상 행이 있습니다.
 
@@ -127,7 +127,7 @@ renderer는 fresh 읽기와 정규식 검증을 통과한 ID를 `{pid, iidxId}`�
 
 기존 500ms/1500ms 타이밍과 실제 판 경계 계산은 유지됩니다. 기록기는 기존 결과 전환 조건으로 판을 저장하며 타이밍 설명은 변경하지 않습니다.
 
-> **play_speed 추가(22번째 열)**: 위 21개 열 뒤에 `play_speed` 가 붙습니다. 공용 `PLAY_CSV_KEYS` 는 21열 그대로이며 기록기 헤더만 22열입니다. 자세한 내용은 11장.
+> `play_speed`는 22번째 열입니다. 23·24번째 열의 레인 배치는 아래 설명을, 속도는 11장을 참조하세요.
 
 | 열 | 값의 출처 | 설명 |
 |----|-----------|------|
@@ -149,6 +149,7 @@ renderer는 fresh 읽기와 정규식 검증을 통과한 ID를 `{pid, iidxId}`�
 | `gauge_p1_w77` / `gauge_p2_w78` | judgeData 77, 78 | 게이지 원본 값 (아래 한계 참고) |
 | `source` | 계산 | `playdata` = 일반 플레이(PlayData), `currentsong` = 배틀(CurrentSong + 판정 블록, 5장) |
 | `play_speed` | playSettings + 0x17A0 (int32 단계) → `1.5 - 0.05 x 값` | 곡 재생 속도 배율. `0.70` = 0.7배, `1.00` = 등속. 못 읽으면 빈 값. 속도 ≠ 1.00 판의 저장 방식은 11.3 |
+| `lane_order_p1` / `lane_order_p2` | `playSettings + 0x37CC` / `+0x37EC` | int32 앞 7개를 0기반 그대로 이은 7자리. 0–6의 유효 순열이 아니거나 읽기 실패면 빈 문자열. 8번째 값(실측에서 항상 7)은 저장하지 않음 |
 
 - `settings_p1_11` 의 워드 8 은 Reflux 가 배틀로 읽는 칸이지만 이 빌드에서는 배틀과 무관합니다. 배틀 판정은 `battle_flag` 열을 쓰세요.
 ### 6.1 옵션 값 해석
@@ -265,13 +266,13 @@ DBR 변환은 `decodeBattleRandomPlay`에 격리합니다. 19열 CSV에서 `batt
 
 ## 11. play_speed 열 (곡 재생 속도) — 변경 내역과 서버 작업 안내
 
-INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과 화면의 `PLAY SPEED 0.70`)을 CSV 마지막에 기록합니다. **하이스피드와 무관**하고 곡 자체를 느리게/빠르게 하는 배율입니다. 다른 PC 에서 받아 서버를 고칠 때 이 장만 보면 됩니다.
+INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과 화면의 `PLAY SPEED 0.70`)을 CSV 22열에 기록합니다. **하이스피드와 무관**하고 곡 자체를 느리게/빠르게 하는 배율입니다.
 
 ### 11.1 열 정의
 
 | 항목 | 내용 |
 |------|------|
-| 열 이름 | `play_speed` (CSV 22번째, 맨 끝) |
+| 열 이름 | `play_speed` (CSV 22번째) |
 | 값 | `0.70`, `1.00`, `1.05` 처럼 **소수 둘째 자리 문자열**. 1.00 = 등속, 0.70 = 0.7배 |
 | 빈 값 | 속도를 읽지 못했거나 범위 밖. **NULL 로 받을 것** |
 | 오류 행(-1…-11) | 맨 끝에 열이 없을 수 있다(21칸). 오류 행은 `play_speed` 가 없는 것으로 처리 |
@@ -300,6 +301,8 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 
 ### 11.4 바뀐 파일
 
+아래는 속도 열 도입 당시의 변경 기록이다. 현재 헤더와 호환 범위는 6장을 따른다.
+
 | 파일 | 변경 |
 |------|------|
 | `src/main/playLog.ts` | `playSpeedFromSettings = 0x17a0`, `playSpeedFromSettingValue()`, `formatPlaySpeed()`, `PLAY_LOG_HEADER_V2`(21열)·`PLAY_LOG_HEADER`(22열), `PlaySnapshot.playSpeed`, `resolvePlay` 의 `speedChanged`/`chartNotes` 분기 |
@@ -310,9 +313,9 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 ### 11.5 업로드·점수 정책
 
 
-1. 업로드 파서는 19·21·22열의 정확한 헤더와 각 길이의 행을 지원합니다. 22칸 행은 끝의 `play_speed` 를 보존하고, 19/21칸 행은 해당 속성 자체를 생략합니다. 다른 길이의 완성 행은 기존처럼 제외하며 마지막 행 오류 처리를 유지합니다.
+1. 업로드 파서는 19·21·22·24열의 정확한 헤더와 혼합 행을 지원합니다. 22·24칸 행은 `play_speed` 를 보존하고, 19/21칸 행은 해당 속성 자체를 생략합니다. 23칸을 비롯한 다른 길이의 완성 행은 제외하며 마지막 행 오류 처리를 유지합니다.
 2. 현재 INFOhSorry의 직접 R2 경로(`PUT /api/me/plays`)는 CSV의 `play_speed` 를 저장하는 별도 서버 스키마 변경이 필요하지 않습니다. 앱은 최근 plays에 속도 판과 속도 결측 행도 모두 포함합니다.
-3. CSV 행 길이가 19/21칸이면 파서 내부에서 `play_speed` 속성을 생략하고 자동 배치·DBR 판정에서 등속으로 취급합니다. 22열 헤더 아래의 옛 짧은 행도 동일합니다. 옛 기록기는 속도 조절 판을 정상 기록하지 못했기 때문입니다(사용자 결정 2026-10-28). 22칸 행의 빈 값·공백·잘못된 속도값은 읽기 실패로 취급해 제외합니다.
+3. CSV 행 길이가 19/21칸이면 파서 내부에서 `play_speed` 속성을 생략하고 자동 배치·DBR 판정에서 등속으로 취급합니다. 24열 헤더 아래의 옛 짧은 행도 동일합니다. 옛 기록기는 속도 조절 판을 정상 기록하지 못했기 때문입니다(사용자 결정 2026-10-28). 속도 열의 빈 값·공백·잘못된 값은 읽기 실패로 취급해 해당 판정에서 제외합니다.
 4. plays에는 옛 행의 속도를 합성하지 않으며, 웹 수신부는 누락을 빈 문자열로 정규화합니다. 일반 점수 후보·전송은 앱에서 차단하지 않으며, 게임이 1.00 외 속도 판을 베스트에 저장하지 않는 동작에 맡깁니다(사용자 결정 2026-10-28; 베스트 불변은 실기 확인 대기).
 
 ### 11.6 검증 상태 (2026-10-28)
@@ -334,7 +337,7 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 
 ### 12.1 무엇을 저장하나
 
-`plays.csv` 와 같은 계정 폴더(`users/<IIDX ID>/`)의 **`plays_detail.jsonl`** 에 판마다 한 줄(JSON)을 추가합니다. `plays.csv` 의 원본 `timestamp` 와 정확히 같은 값으로 연결합니다. 읽기·업로드 경로는 같은 계정의 timestamp 가 일치하는 상세만 선택적으로 붙이며, 상세 파일이 없거나 해당 timestamp 의 상세가 없으면 `detail` 필드를 생략합니다. CSV 의 열(19·21·22칸 검사)은 바꾸지 않았습니다.
+`plays.csv` 와 같은 계정 폴더(`users/<IIDX ID>/`)의 **`plays_detail.jsonl`** 에 판마다 한 줄(JSON)을 추가합니다. `plays.csv` 의 원본 `timestamp` 와 정확히 같은 값으로 연결합니다. 읽기·업로드 경로는 같은 계정의 timestamp 가 일치하는 상세만 선택적으로 붙이며, 상세 파일이 없거나 해당 timestamp 의 상세가 없으면 `detail` 필드를 생략합니다. CSV 호환 범위는 6장을 따릅니다.
 
 업로드는 기존 `PUT /api/me/plays` 경로를 사용하며, 서버는 `plays/{id}.json` R2 객체에 `v: 1` 형식으로 저장합니다. 업로드 묶음은 최대 100행, 본문은 최대 262144바이트입니다. `detail` 은 선택 필드이므로 상세가 없는 기존 행도 같은 경로로 업로드됩니다. Recent 는 최근 최대 100판을 표시하고, 각 행에 상세가 있으면 펼쳐 FAST/SLOW 와 레인별 판정을 보여 줍니다. 판 완료 훅은 없습니다.
 
@@ -382,3 +385,17 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 - 주소는 `judgeData` 기준 **고정 오프셋**입니다. 게임 업데이트로 구조가 바뀌면 어긋나며, 그 신호가 `lanes_ok=false` 입니다. 이 경우 12.2 의 방법(플레이 중 `judgeData` 주변을 스캔해 판정 칸과 같은 틱에 오르는 칸 찾기)으로 다시 찾으세요.
 - 상세 읽기에 실패해도 `plays.csv` 기록은 그대로 저장됩니다(로그에 `detail sampling stopped`).
 - 실제 앱에서의 동작(샘플링 간격·CPU 부하)은 이 문서 작성 시점에 확인하지 않았습니다. 빌드한 뒤 한 판 쳐서 로그의 `dt`·`unresolved` 와 `lanes_ok=true/true` 를 확인하세요.
+
+## 13. 레인 배치와 레인별 평가 (2026-11-03)
+
+INF PLAY LOG와 웹 Play Log는 머리 줄(레벨·곡명·채보·옵션), 스코어 정보(CLEAR TYPE·SCORE=EX·DJ RANK·레이트·다음 등급 차이·MISS COUNT), 판정 상세, 랜덤 레인 패턴, 레인별 평가 순으로 세로 한 열에 표시한다. 기존 「레인별 판정 보기」 표는 삭제했다. 웹 제목은 `i18n/playdata.js`의 `pd.plays.*`를 사용한다.
+
+옵션 문자열은 `BATTLE, FLIP, 왼쪽/오른쪽` 순서이며 OFF·RAN·R-RAN·S-RAN·MIR로 줄이고 SYNCHRONIZE RANDOM·SYMMETRY RANDOM은 축약하지 않는다. SP 2P 옵션은 `settings_p2_11[0]`이다. 일반 SP의 사이드는 `judge_16`의 P1(0–4)·P2(5–9) 합으로 판별한다.
+
+배치 타일 숫자는 저장값 + 1이다. 이는 칸=건반·값=레인이라는 사용자 결정(A)에 따른 미실측 표시이므로 틀리면 표시 함수만 수정한다. S-RAN 쪽 타일은 `—`다. 판정 카운터 0–6=건반 1–7, 7=스크래치도 미실측 사용자 가정이며 배치 문자열로 카운터를 재정렬하지 않는다.
+
+건반별 EX는 `2×PG+GR`, 최대 EX는 `2×(PG+GR+GD+BD+POOR)`이고 空POOR는 제외한다. DJ RANK 경계를 적용하며 노트 0 또는 `lanes_ok=false`면 랭크는 `—`다. 마우스·탭·포커스로 건반 하나의 판정과 랭크·EX 비율을 확인한다. 상세가 없거나 `lane_fs`가 없는 값은 `—`로 표시하고, 불완전·미확정 품질 안내를 유지한다.
+
+웹 PUT은 두 배치 필드를 수용하되 코치 `getPlays`는 `coach.js`의 `preserveDetail`에서 두 필드를 제외한다. 코치 응답·OpenAPI·Knowledge는 불변이다. 배포는 웹(코치 제외·PUT 수용) 다음 INF 릴리스 순서다.
+
+실측은 C머신 Sonnet이 정배·미러 스캔의 교집합을 찾고 랜덤으로 확인했다. 보고서는 INF Git의 `origin/feat/play-logger:tools/scan/REPORT.md`다. SP 1P 판정·배열, 배틀, S-RAN 배열 동작, 방향(A)·건반 인덱스 가정과 실제 화면은 실기 확인 대기다.

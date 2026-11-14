@@ -1,4 +1,4 @@
-import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, PLAY_CSV_SPEED_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
+import { PLAY_CSV_KEYS, PLAY_CSV_LEGACY_KEYS, PLAY_CSV_SPEED_KEYS, PLAY_CSV_LANE_KEYS, buildPlayErrorRow, isPlayErrorRow, type PlayCsvReadResult, type PlayCsvRow } from '../../shared/uploadSnapshot';
 // Supabase 새 디비 (users + scores) upsert — Reflux 데이터 갱신 시마다 무조건 덮어쓰기.
 // ohSorry / INFOhSorry 가 같은 DB 공유 (iidx_id text PK 라 namespace 호환).
 //
@@ -1299,13 +1299,18 @@ export function parsePlayHistoryDetailed(csv: string): PlayHistoryParse {
   const legacyHeader = !!header && header.length === PLAY_CSV_LEGACY_KEYS.length && PLAY_CSV_LEGACY_KEYS.every((key, i) => header[i] === key);
   const currentHeader = !!header && header.length === PLAY_CSV_KEYS.length && PLAY_CSV_KEYS.every((key, i) => header[i] === key);
   const speedHeader = !!header && header.length === PLAY_CSV_SPEED_KEYS.length && PLAY_CSV_SPEED_KEYS.every((key, i) => header[i] === key);
-  if (!legacyHeader && !currentHeader && !speedHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
+  const laneHeader = !!header && header.length === PLAY_CSV_LANE_KEYS.length && PLAY_CSV_LANE_KEYS.every((key, i) => header[i] === key);
+  if (!legacyHeader && !currentHeader && !speedHeader && !laneHeader) return { rows: [], lastCompleteError: null, errorCode: -9 };
   const valid: PlayCsvRow[] = [];
   let lastCompleteError: { columns: number } | null = null;
   for (const row of records) {
-    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length && row.length !== PLAY_CSV_SPEED_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
+    if (row.length !== PLAY_CSV_LEGACY_KEYS.length && row.length !== PLAY_CSV_KEYS.length && row.length !== PLAY_CSV_SPEED_KEYS.length && row.length !== PLAY_CSV_LANE_KEYS.length) { lastCompleteError = { columns: row.length }; continue; }
     const mapped = Object.fromEntries(PLAY_CSV_KEYS.map((key, i) => [key, row[i] ?? ''])) as unknown as PlayCsvRow;
-    if (row.length === PLAY_CSV_SPEED_KEYS.length) mapped.play_speed = row[21];
+    if (row.length === PLAY_CSV_SPEED_KEYS.length || row.length === PLAY_CSV_LANE_KEYS.length) mapped.play_speed = row[21];
+    if (row.length === PLAY_CSV_LANE_KEYS.length) {
+      mapped.lane_order_p1 = row[22];
+      mapped.lane_order_p2 = row[23];
+    }
     valid.push(mapped);
     lastCompleteError = null;
   }
@@ -1408,28 +1413,35 @@ export function playsForGame(plays: PlayCsvRow[] | null | undefined, gameRecogni
 // DBR 후보 조건과 옵션 값은 사용자 지정 명세를 따른다.
 export const GAUGE_COLUMN = 'gauge_p2_w78';
 export interface BattleRandomScore { diff: number; lamp: number; ex_score: number }
-export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
-  if (isPlayErrorRow(row) || !isNormalSpeedPlay(row)) return null;
+type BattleRandomDecode = { score: BattleRandomScore; reason: null } | { score: null; reason: 'auto_scratch' | 'speed' | 'format' | 'gauge' | null };
+function decodeBattleRandomPlayResult(row: PlayCsvRow): BattleRandomDecode {
+  if (isPlayErrorRow(row) || row.battle_flag !== '1') return { score: null, reason: null };
   const p1 = row.settings_p1_11.split(' ').map(Number);
-  if (p1.length !== 11 || p1.some(value => !Number.isInteger(value))
-    || row.battle_flag !== '1' || p1[0] !== 1 || p1[5] !== 1 || p1[2] !== 1) return null;
+  if (p1.length !== 11 || p1.some(value => !Number.isInteger(value)) || p1[0] !== 1 || p1[5] !== 1) return { score: null, reason: null };
+  if (p1[2] !== 1) return { score: null, reason: 'auto_scratch' };
+  if (!isNormalSpeedPlay(row)) return { score: null, reason: 'speed' };
   const diffs: Record<string, number> = { SPB: 0, SPN: 1, SPH: 2, SPA: 3, SPL: 4 };
   if (!row.song_id.trim() || !/^\d+(?:\.\d+)?$/.test(row.song_id) || !row.ex_score.trim()
-    || !row.notes.trim() || !row[GAUGE_COLUMN].trim()) return null;
+    || !row.notes.trim()) return { score: null, reason: 'format' };
   const songId = Number(row.song_id); const diff = diffs[row.difficulty];
-  const exScore = Number(row.ex_score); const notes = Number(row.notes); const gauge = Number(row[GAUGE_COLUMN]);
+  const exScore = Number(row.ex_score); const notes = Number(row.notes);
   if (!Number.isSafeInteger(songId) || songId < 0 || !Number.isInteger(diff)
-    || !Number.isFinite(exScore) || exScore < 0 || !Number.isFinite(notes) || notes <= 0
-    || !Number.isFinite(gauge) || gauge < 0) return null;
+    || !Number.isFinite(exScore) || exScore < 0 || !Number.isFinite(notes) || notes <= 0) return { score: null, reason: 'format' };
+  if (!row[GAUGE_COLUMN].trim()) return { score: null, reason: 'gauge' };
+  const gauge = Number(row[GAUGE_COLUMN]);
+  if (!Number.isFinite(gauge) || gauge < 0) return { score: null, reason: 'gauge' };
   let lamp: number;
   switch (p1[1]) {
     case 1: case 2: lamp = gauge >= 80 ? 3 : gauge >= 60 ? 2 : 1; break;
     case 0: lamp = gauge >= 80 ? 4 : 1; break;
     case 3: lamp = gauge > 0 ? 5 : 1; break;
     case 4: lamp = gauge > 0 ? 6 : 1; break;
-    default: return null;
+    default: return { score: null, reason: 'gauge' };
   }
-  return { diff, lamp, ex_score: exScore };
+  return { score: { diff, lamp, ex_score: exScore }, reason: null };
+}
+export function decodeBattleRandomPlay(row: PlayCsvRow): BattleRandomScore | null {
+  return decodeBattleRandomPlayResult(row).score;
 }
 function matchAutomaticSong(songs: Map<string, SongEntry[]>, title: string, diff: number):
   { songId: number } | { skipped: 'song_not_found' | 'ambiguous_song' } {
@@ -1508,26 +1520,67 @@ let dbrSending: Promise<void> | null = null;
 export async function uploadAutomaticDbr(plays: PlayCsvRow[], iidxId: string, gameRecognized: () => Promise<boolean>,
   decode: (row: PlayCsvRow) => BattleRandomScore | null = decodeBattleRandomPlay,
   bearer: (id: string) => Promise<string | null> = existingRemoteBearer,
-  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache): Promise<void> {
-  while (dbrSending) await dbrSending;
+  send: typeof fetch = fetch, songs: () => Promise<Map<string, SongEntry[]>> = getSongsCache,
+  onSaved?: (iidxId: string) => void, serialize = true): Promise<void> {
+  let ownsLock = false;
   let finish!: () => void;
-  dbrSending = new Promise<void>(resolve => { finish = resolve; });
+  if (serialize) {
+    while (dbrSending) await dbrSending;
+    dbrSending = new Promise<void>(resolve => { finish = resolve; });
+    ownsLock = true;
+  }
+  let saved = false;
+  const diag = (reason: string, row?: PlayCsvRow, score?: BattleRandomScore, extra = '') => {
+    const clean = (value: unknown, max: number) => String(value ?? '').replace(/[\x00-\x1f\x7f]/g, '').replace(/(?:bearer|token|cookie|password|passwd|authorization|secret)[^\s]*/gi, '[redacted]').slice(0, max);
+    const parts = ['[dbr-upload]', `reason=${reason}`];
+    if (row) parts.push(`timestamp=${clean(row.timestamp, 40)}`, `title=${clean(row.title, 80)}`, `game_song_id=${clean(row.song_id, 24)}`);
+    if (score) parts.push(`diff=${score.diff}`, `lamp=${score.lamp}`, `ex_score=${score.ex_score}`);
+    if (extra) parts.push(extra);
+    try { addDiagLine(parts.join(' ')); } catch {}
+  };
   try {
-    const candidates = plays.map(row => ({ row, score: decode(row) })).filter((item): item is { row: PlayCsvRow; score: BattleRandomScore } => item.score !== null);
-    if (!candidates.length || !await gameRecognized()) return;
-    const token = await bearer(iidxId);
-    if (!token) return;
-    const songMap = await songs();
-    for (const { row, score } of candidates) {
-      const match = matchAutomaticSong(songMap, row.title, score.diff);
-      if ('skipped' in match) continue;
-      if (!await gameRecognized()) return;
-      const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ song_id: match.songId, diff: score.diff, lamp: score.lamp, ex_score: score.ex_score, improvements_only: true }) });
-      if (!response.ok) throw new Error(`DBR HTTP ${response.status}`);
+    const candidates: Array<{ row: PlayCsvRow; score: BattleRandomScore }> = [];
+    for (const row of plays) {
+      try {
+        const result = decode === decodeBattleRandomPlay ? decodeBattleRandomPlayResult(row) : { score: decode(row), reason: null };
+        if (result.score) candidates.push({ row, score: result.score });
+        else if (result.reason) diag(result.reason, row);
+      } catch { diag('candidate_exception', row); }
     }
-  } finally { dbrSending = null; finish(); }
+    if (!candidates.length) return;
+    if (!await gameRecognized()) { diag('game_unrecognized'); return; }
+    const token = await bearer(iidxId);
+    if (!token) { diag('bearer_missing'); return; }
+    let songMap: Map<string, SongEntry[]>;
+    try { songMap = await songs(); } catch { for (const { row } of candidates) diag('candidate_exception', row); return; }
+    for (const { row, score } of candidates) {
+      try {
+        const match = matchAutomaticSong(songMap, row.title, score.diff);
+        if ('skipped' in match) { diag(match.skipped, row, score); continue; }
+        if (!await gameRecognized()) { diag('game_unrecognized', row, score); return; }
+        const response = await send(`${REMOTE_API_ORIGIN}/api/me/dbr-scores`, { method: 'POST', credentials: 'omit',
+          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ song_id: match.songId, diff: score.diff, lamp: score.lamp, ex_score: score.ex_score, improvements_only: true }) });
+        let body: unknown;
+        try { body = await response.json(); } catch { body = null; }
+        if (!response.ok) {
+          const code = body && typeof body === 'object' && 'error' in body && typeof body.error === 'string'
+            && ['method_not_allowed', 'bad_request', 'service_unavailable', 'unauthorized', 'no_user', 'needs_setup'].includes(body.error) ? body.error : 'unknown';
+          diag('http_failure', row, score, `status=${Number.isInteger(response.status) ? response.status : 0} code=${code}`);
+          continue;
+        }
+        if (body && typeof body === 'object' && 'unchanged' in body && body.unchanged === true) diag('unchanged', row, score, `internal_song_id=${match.songId}`);
+        else if (body && typeof body === 'object' && !('unchanged' in body) && ('scores' in body || 'updatedAt' in body)) { saved = true; diag('saved', row, score, `internal_song_id=${match.songId}`); }
+        else diag('unknown', row, score, `internal_song_id=${match.songId}`);
+      } catch { diag('candidate_exception', row, score); }
+    }
+  } finally {
+    if (ownsLock) {
+      dbrSending = null;
+      finish();
+    }
+    if (saved) { try { onSaved?.(iidxId); } catch {} }
+  }
 }
 
 // 자동 배열은 현재 완주 행 하나만 원격 배열로 upsert한다. 애매한 곡명은 전송하지 않는다.

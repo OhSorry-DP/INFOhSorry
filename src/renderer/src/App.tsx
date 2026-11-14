@@ -1297,6 +1297,10 @@ export default function App() {
 
   const remotePlaysRef = useRef<{ iidxId: string; plays: ReturnType<typeof buildUploadPlays> } | null>(null);
   const [remotePlaysSig, setRemotePlaysSig] = useState('');
+  const [dbrSavedRevisionByAccount, setDbrSavedRevisionByAccount] = useState<Record<string, number>>({});
+  const onDbrSaved = useCallback((iidxId: string): void => {
+    setDbrSavedRevisionByAccount((current) => ({ ...current, [iidxId]: (current[iidxId] ?? 0) + 1 }));
+  }, []);
   const remotePlaysRequestRef = useRef(0);
   const remotePlaysScopeRef = useRef({ iidxId: profile.iidxId, generation: session.generation });
   remotePlaysScopeRef.current = { iidxId: profile.iidxId, generation: session.generation };
@@ -1448,7 +1452,7 @@ export default function App() {
         return { kind: 'http-failure', error: result.error ?? 'upload failed', durationMs };
       }
       if ((trigger === 'auto' || trigger === 'initial') && snapshot.plays) {
-        try { await uploadAutomaticDbr(snapshot.plays, snapshot.iidxId, gameRecognized); }
+        try { await uploadAutomaticDbr(snapshot.plays, snapshot.iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved); }
         catch (e) { console.warn('[upload] automatic DBR failed:', e); }
       }
       const clearPending = window.infohsorry.upload.clearPending;
@@ -1471,7 +1475,7 @@ export default function App() {
       addDiagLine(`업로드 실패: 서버 전송 오류(${error}) — 다음 시도에서 재전송`);
       return { kind: 'http-failure', error, durationMs };
     }
-  }, []);
+  }, [onDbrSaved]);
 
   // IIDX ID 전환은 세션(pid/generation) 전환과 별도의 축으로 감지한다.
   // Reflux 재기동 직후 tracker.tsv 는 부분적으로만 쓰일 수 있으므로, 안정화 전 스냅샷을 막는다.
@@ -1678,7 +1682,21 @@ export default function App() {
           const normalize = (id: string) => id.trim().replace(/-/g, '').toUpperCase();
           return !fresh.processMissing && normalize(fresh.iidxId ?? '') === normalize(iidxId);
         };
-        await uploadAutomaticPlays(plays, iidxId, gameRecognized);
+        try {
+          await uploadAutomaticPlays(plays, iidxId, gameRecognized);
+        } catch {
+          addDiagLine('플레이 기록 업로드 실패');
+        }
+        try {
+          if (result.ok && result.found !== false) {
+            const parsed = parsePlayHistoryDetailed(result.csv ?? '');
+            if (parsed.errorCode == null && parsed.lastCompleteError == null && parsed.rows.length > 0) {
+              await uploadAutomaticDbr([parsed.rows[parsed.rows.length - 1]], iidxId, gameRecognized, undefined, undefined, undefined, undefined, onDbrSaved, false);
+            }
+          }
+        } catch {
+          addDiagLine('DBR 자동 저장 실패');
+        }
       }).catch((error: unknown) => { console.warn(`[upload] automatic plays append failed id=${iidxId}:`, error); });
       playsChainByAccount.set(iidxId, next);
       void next.finally(() => { if (playsChainByAccount.get(iidxId) === next) playsChainByAccount.delete(iidxId); }).catch(() => {});
@@ -1773,6 +1791,7 @@ export default function App() {
     const sig = [
       profile.iidxId,
       remotePlaysSig,
+      dbrSavedRevisionByAccount[gate.id] ?? 0,
       dp12StarResult.star.toFixed(3),
       part('c', dp12Match.charts),
       part('u', dp12Match.unclassifiedCharts),
@@ -1796,7 +1815,7 @@ export default function App() {
     const plays = remotePlays?.iidxId === gate.id ? remotePlays.plays : [];
     const remoteUser = buildRemoteUser(profile, dp12StarResult, userRStar, dp12Match.charts, dp12Match.unclassifiedCharts, spAllCharts, spTierData, spStarResult, textageByTitle ?? undefined, dpAllCharts) as Record<string, unknown>;
     void window.infohsorry.remote.setUser(Object.assign(remoteUser, { plays }));
-  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, dpAllCharts, spAllCharts, spTierData, spStarResult, textageByTitle, remotePlaysSig]);
+  }, [profile, session.pid, dp12StarResult, userRStar, dp12Match, dpAllCharts, spAllCharts, spTierData, spStarResult, textageByTitle, remotePlaysSig, dbrSavedRevisionByAccount]);
 
   // 추천곡 — stage 별 reroll 카운터 (각 카드의 ↻ 버튼이 자기 stage 만 새로 뽑게).
   // 캐싱 동작:
@@ -2326,7 +2345,7 @@ export default function App() {
                 }}
               />
             ) : tab === 'plays' ? (
-              <RecentPlays iidxId={profile.iidxId} />
+              <RecentPlays iidxId={cardId} />
             ) : tab === 'playdata' ? (
               <PlayData
                 rows={rows}
