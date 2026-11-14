@@ -32,17 +32,19 @@ export const PROFILE_OFFSETS: {
   //   2026-06-03 패치(refluxVersion 2026060300)에서는 djName/iidxId 메모리 offset 변동 없음 — 버전 문자열만 갱신.
   //   2026-08-05 패치에서 struct 가 +0x6fc0 이동 (djName 0x690d3e→0x697cfe, iidxId 0x690d30→0x697cf0).
   //     실행 중인 게임 메모리 직접 스캔으로 확인 (2026-08-15).
-  refluxVersion: 'P2D:J:B:A:2026080500',
+  //   2026-11-11 패치(2026111100)에서 다시 +0x2050 이동 (djName 0x697cfe→0x699d4e, iidxId 0x697cf0→0x699d40).
+  //     radar/dan 도 같은 +0x2050. 실행 중 게임 메모리를 화면 값(DJ NAME / ID / 레이더 / 단위 / DJ POINT)과 대조해 확인 (2026-11-15).
+  refluxVersion: 'P2D:J:B:A:2026111100',
   // DJ NAME — 정적 버퍼, 보통 16~64 byte 길이
   djName: {
-    offset: '0x697cfe',
+    offset: '0x699d4e',
     encoding: 'utf8',
     maxBytes: 64,
   },
   // INFINITAS ID — "C-XXXX-XXXX-XXXX" 형식 14자 (하이픈 포함은 17자)
   // 발견된 메모리에서는 하이픈 없이 13자 (예: "C293036891870")
   iidxId: {
-    offset: '0x697cf0',
+    offset: '0x699d40',
     encoding: 'utf8',
     maxBytes: 32,
   },
@@ -85,11 +87,11 @@ export const PROFILE_NUMERIC_OFFSETS: {
   radar?: ProfileNumericEntry;
   dan?: ProfileNumericEntry;
 } = {
-  // 게임 빌드 2026080500 기준 (위 refluxVersion 과 동일 스캔에서 확인).
-  radar: { offset: '0x699790', count: 12, scale: 100 },
+  // 게임 빌드 2026111100 기준 (위 refluxVersion 과 동일 스캔에서 확인).
+  radar: { offset: '0x69b7e0', count: 12, scale: 100 },
   // 단위 — [SP, DP] 인접 int32. 값은 아래 DAN_NAMES 의 index, 미취득은 -1.
-  //   같은 struct 의 DJ POINT 도 [SP=0x697d14, DP=0x697d18] 순서라 SP→DP 배치가 일관된다.
-  dan: { offset: '0x697d1c', count: 2 },
+  //   같은 struct 의 DJ POINT 도 [SP=0x699d64, DP=0x699d68] 순서라 SP→DP 배치가 일관된다.
+  dan: { offset: '0x699d6c', count: 2 },
 };
 
 // 게임 내부 단위 index → 표기. 게임 메모리의 이름 테이블 (bm2dx+0x592970, 8바이트 stride) 과 동일 순서.

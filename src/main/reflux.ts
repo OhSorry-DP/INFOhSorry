@@ -76,17 +76,17 @@ const REFLUX_PREFERRED_BASE = 0x140000_0000n;
 //   ※ songList 는 OffsetSearcher 가 보고하는 값보다 0x100 앞이다. 2026-08-05 패치로 곡 제목이
 //     UTF-16LE 가 되면서, "5.1.1." 의 ASCII 패턴이 title1 이 아니라 title2(LED ticker)에 걸린다.
 //     Reflux fork 1.17.0 은 보정된 base 를 기대하므로 여기도 보정값을 넣는다.
-const BUNDLED_OFFSETS = `P2D:J:B:A:2026080500
-songList = 0x1431D4870
-unlockdata = 0x1429089E0
-playSettings = 0x1425D9154
-playData = 0x1425D9404
-currentsong = 0x142886370
-judgeData = 0x14288618C
-datamap = 0x1435BAB88
+const BUNDLED_OFFSETS = `P2D:J:B:A:2026111100
+songList = 0x1431D6910
+unlockdata = 0x14290AA50
+playSettings = 0x1425DB154
+playData = 0x1425DB404
+currentsong = 0x142888370
+judgeData = 0x14288818C
+datamap = 0x1435BCC38
 `;
 // 첫 줄 헤더 `P2D:J:B:A:YYYYMMDDxx` 끝 10자리 숫자 = 버전. 클수록 최신.
-const BUNDLED_OFFSETS_VERSION = 2026080500;
+const BUNDLED_OFFSETS_VERSION = 2026111100;
 function offsetsVersionNum(content: string): number {
   const first = content.split(/\r?\n/)[0]?.trim() || '';
   const m = first.match(/(\d{10})\s*$/);
