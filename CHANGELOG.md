@@ -5,7 +5,7 @@ INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [R
 ### 0.0.162 — 2026-11-15 INFINITAS 2026111100 빌드 메모리 offset 갱신
 
 - 2026-11-11 패치(게임 빌드 `P2D:J:B:A:2026111100`)에 맞춰 메모리 offset 을 갱신했다. 프로필(DJ NAME·ID·노트레이더·단위)은 2026080500 대비 +0x2050, Reflux 블록(songList·unlockdata·datamap·playSettings·playData·currentsong·judgeData)은 새 빌드에서 실측했다. DP 플레이 결과 화면·프로필 화면 값과 대조해 확인했다.
-- 코드 fallback(`BUNDLED_OFFSETS`·`profileOffsets.ts`)과 gist `offsets.json` 을 같은 값으로 맞췄다. gist 원본은 [docs/offsets.json](docs/offsets.json) 이며, 이전 빌드 항목(2026101400·2026080500·2026060300)은 그대로 둔다.
+- 코드 fallback(`BUNDLED_OFFSETS`·`profileOffsets.ts`)과 gist `offsets.json` 을 같은 값으로 맞췄다. 이전 빌드 항목(2026101400·2026080500·2026060300)은 그대로 둔다.
 - gist 를 이미 갱신했으므로 이전 버전도 다음 실행 때 새 offset 을 받는다. 이 버전은 gist 를 못 받는 오프라인 환경에서도 새 빌드를 읽는다.
 - 레인 배치 메모리 실측 도구와 보고서(`tools/scan-lanes.ps1`·`tools/scan/`)를 함께 합쳤다. 앱 빌드에는 들어가지 않는다.
 - 검증: `typecheck` 통과.
