@@ -77,6 +77,9 @@ declare global {
           profile: RemoteProfileMap | null;
           buildVersion: string | null;
           confidence: 'matched' | 'latest' | 'blind' | 'legacy' | null;
+          profilePolicy: 'normal' | 'constants-only' | 'blocked';
+          session: { pid: number | null; generation: number };
+          gameDatecode: string | null;
         } | null>;
       };
       portable: {
