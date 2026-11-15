@@ -194,13 +194,16 @@ INFINITAS 패치로 메모리 offset 이 이동하면, **gist `offsets.json` 한
 
 ### gist 구조 (`src/main/offsetsRemote.ts:9-21`)
 
-URL: `gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw/offsets.json`.
+새 앱의 유일한 gist 원본은 새 secret gist `https://gist.githubusercontent.com/OhSorry-DP/b586710a7a6efc3a245da2c85db8d1f2/raw/offsets.json` 이다. 기존 gist `30c3ba6f87df9847291c42ea216a8d2a` 는 구버전 앱용으로 동결하며 앞으로 갱신하지 않는다. 이 문서는 gist에 새 값을 이미 반영했다는 뜻이 아니다.
 `RemoteOffsets`:
+- `schema: 2`; 최상위 `version`/`reflux`/`profile` 은 `builds[0]` 미러로 구버전 호환을 유지한다. `playLogger` 는 `builds[]` 안에만 둔다.
 - `version`: `'P2D:J:B:A:YYYYMMDDxx'` — 끝 10자리가 클수록 최신.
 - `reflux?`: `{ songList, unlockdata, ... }` = 절대주소 문자열.
 - `profile?`: `{ djName, iidxId, spRank, dpRank }` 각각 `{ offset, encoding, maxBytes }`.
 
 `getRemoteOffsets(force)`(`src/main/offsetsRemote.ts:26-43`) — fetch + 메모리 캐시(`_cache`). 실패 시 이전 캐시(or null). `getRemoteProfileOffsets()`(`46-49`) 가 IPC `offsets:getProfile` 로 노출되어 useProfile 의 기본값이 됨.
+
+새 앱은 위 URL 하나만 fetch 한다. 플레이 기록기 layout은 `builds[]` 에서 실제 게임 버전과 끝 10자리 datecode가 정확히 일치하는 항목만 사용한다. `playLogger` 생략은 코드 상수, `null`/오류는 전체 기록 보류, 미지 키는 진단 대상이다. 기존 `resolveBuild`의 Reflux/profile latest/blind 정책과 `pickDef`의 생략/null 구분은 별도 유지한다.
 
 ### Reflux offsets.txt 자동 갱신 (`ensureOffsetsFile`, `src/main/reflux.ts:433-478`)
 

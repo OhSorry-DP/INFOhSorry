@@ -2,6 +2,11 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
+### 0.0.163 — 2026-11-15 플레이 기록기 빌드별 상대 layout 연결
+
+- 새 secret gist만 새 앱의 원본으로 사용하며, 구버전용 기존 gist는 동결한다. 빌드별 정확한 상대 offset을 선택하고 생략 키는 상수 fallback, null/오류 layout은 기록을 차단한다.
+- attach 준비는 최대 1000ms 기다리고 확정 layout을 연결 단위로 고정한다. 늦은 응답은 재attach 때 반영한다. offsets.txt 생성, 다섯 앵커, Reflux/profile 블록, CSV 형식, 4ms 상세 샘플, 기록 흐름은 바꾸지 않았다.
+
 ### 0.0.162 — 2026-11-15 INFINITAS 2026111100 빌드 메모리 offset 갱신
 
 - 2026-11-11 패치(게임 빌드 `P2D:J:B:A:2026111100`)에 맞춰 메모리 offset 을 갱신했다. 프로필(DJ NAME·ID·노트레이더·단위)은 2026080500 대비 +0x2050, Reflux 블록(songList·unlockdata·datamap·playSettings·playData·currentsong·judgeData)은 새 빌드에서 실측했다. DP 플레이 결과 화면·프로필 화면 값과 대조해 확인했다.

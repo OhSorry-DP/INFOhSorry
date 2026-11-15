@@ -21,7 +21,7 @@ import { InfinitasSessionMonitor } from './infinitasSession';
 import { snapshotTsv, listAccounts, readAccountTsv, readAccountPlayCsv, getLastSelected, setLastSelected } from './accountTsvStore';
 import type { AccountSnapshotRequest } from '../shared/account';
 import { PROFILE_OFFSETS, isRemoteStringOffset, type RemoteProfileMap } from '../shared/profileOffsets';
-import { getRemoteProfileOffsets } from './offsetsRemote';
+import { getRemoteProfileOffsets, startPlayLoggerOffsetsPreparation, selectPlayLoggerLayout } from './offsetsRemote';
 import {
   getEreterData,
   getCacheStatus as getEreterCacheStatus,
@@ -797,6 +797,7 @@ app.whenReady().then(() => {
   appendDiagLine(appStartMarkerLine(app.getVersion()));
   stopMainHeartbeat = startMainHeartbeat();
   // 플레이 기록기: 결과 화면마다 plays.csv 에 한 줄 추가 (docs/play-logger.md)
+  startPlayLoggerOffsetsPreparation();
   stopPlayLogger = startPlayLogger({
     getAccount: getPlayAccount,
     appVersion: app.getVersion(),
@@ -807,6 +808,7 @@ app.whenReady().then(() => {
     onAppend: (event) => { if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('play:appended', event); },
     offsetsPath: join(app.getPath('userData'), 'Reflux', 'offsets.txt'),
     log: appendDiagLine,
+    selectPlayLoggerLayout,
   } as Parameters<typeof startPlayLogger>[0] & { appVersion: string; getGameVersion: () => string });
   recordGpuStatus(gpuInfoReady ? 'startup-ready' : 'startup-pending');
   createWindow();
