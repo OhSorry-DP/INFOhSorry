@@ -69,7 +69,7 @@ export type PlayLoggerSelection =
 
 const PLAYLOGGER_DEFAULTS: PlayLoggerLayout = {
   log: { markerScanFromJudge: 144, markerDelta: 24, settingsStateDelta: 0x18, p2SettingsDelta: 0x48, battleFlagDelta: 0x28, gaugeWordP1: 77, gaugeWordP2: 78, playSpeedFromSettings: 0x17a0, laneOrderP1FromSettings: 0x37cc, laneOrderP2FromSettings: 0x37ec, songStride: 0x730, songIdOffset: 0x5b0, songNoteOffset: 0x370 },
-  detail: { laneWordsP1: 3448349, laneWordsP2: 3452263 },
+  detail: { laneWordsP1: 3448385, laneWordsP2: 3452299 },
 };
 const PLAYLOGGER_KEYS: Record<keyof PlayLoggerLayout, string[]> = {
   log: Object.keys(PLAYLOGGER_DEFAULTS.log), detail: Object.keys(PLAYLOGGER_DEFAULTS.detail),

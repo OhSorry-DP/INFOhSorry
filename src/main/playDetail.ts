@@ -7,9 +7,9 @@ import type { FsCounts, PlayDetail, SideDetail } from '../shared/uploadSnapshot'
 export type { FsCounts, PlayDetail, SideDetail } from '../shared/uploadSnapshot';
 
 export const PLAY_DETAIL_LAYOUT = {
-  // judgeData 기준 int32 word 위치 (2026101400 빌드 실측). 레인 8개 x 6칸
-  laneWordsP1: 3448349,
-  laneWordsP2: 3452263,
+  // judgeData 기준 int32 word 위치 (2026111100 빌드 실측; 2026101400 은 3448349 / 3452263 이었다 — 둘 다 +36). 레인 8개 x 6칸
+  laneWordsP1: 3448385,
+  laneWordsP2: 3452299,
   lanes: 8,
   laneStride: 6,   // [PGREAT, GREAT, GOOD, BAD, POOR, 공POOR]
 } as const;

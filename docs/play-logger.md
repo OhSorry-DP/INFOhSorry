@@ -62,7 +62,7 @@
 | `songNoteOffset` | 0x370 | 난이도별 노트 수 int32 × 10 (SPB, SPN, SPH, SPA, SPL, DPB, DPN, DPH, DPA, DPL) |
 | `songTitleBytes` | 0x100 | 곡 제목 (UTF-16LE) |
 
-빌드별 키와 단위: `log.markerScanFromJudge=144`, `markerDelta=24`, `settingsStateDelta=0x18`, `p2SettingsDelta=0x48`, `battleFlagDelta=0x28`, `playSpeedFromSettings=0x17a0`, `laneOrderP1FromSettings=0x37cc`, `laneOrderP2FromSettings=0x37ec`, `songStride=0x730`, `songIdOffset=0x5b0`, `songNoteOffset=0x370`은 바이트 기준이다. `log.gaugeWordP1=77`, `gaugeWordP2=78`, `detail.laneWordsP1=3448349`, `laneWordsP2=3452263`은 judgeData 기준 int32 워드 인덱스다. 2026111100·2026101400은 실측 기본값이며 2026080500·2026060300은 미실측 `null` 예정이다. 비음수 안전 정수·32비트 범위와 정렬, 곡 엔트리 범위, 배틀 인덱스, 인접 gauge, 상세 블록 비중첩을 검증한다.
+빌드별 키와 단위: `log.markerScanFromJudge=144`, `markerDelta=24`, `settingsStateDelta=0x18`, `p2SettingsDelta=0x48`, `battleFlagDelta=0x28`, `playSpeedFromSettings=0x17a0`, `laneOrderP1FromSettings=0x37cc`, `laneOrderP2FromSettings=0x37ec`, `songStride=0x730`, `songIdOffset=0x5b0`, `songNoteOffset=0x370`은 바이트 기준이다. `log.gaugeWordP1=77`, `gaugeWordP2=78`, `detail.laneWordsP1=3448385`, `laneWordsP2=3452299`은 judgeData 기준 int32 워드 인덱스다(2026111100 기준. 2026101400 은 `3448349`·`3452263`). 2026111100·2026101400은 실측 기본값이며 2026080500·2026060300은 미실측 `null` 예정이다. 비음수 안전 정수·32비트 범위와 정렬, 곡 엔트리 범위, 배틀 인덱스, 인접 gauge, 상세 블록 비중첩을 검증한다.
 
 준비는 공용 remote 캐시를 사용한다. 한 PID attach 준비 구간은 최대 1000ms이며 재시도마다 연장되지 않는다. 캐시가 있거나 fetch가 실패하면 즉시 확정하고, 대기 중에는 기존 재시도를 한다. 기한에 상수 layout을 확정한 뒤 늦게 온 응답은 현재 연결 snapshot을 바꾸지 않고 다음 attach에서 적용한다. 확정 진단은 `[playlog] layout pid=<pid> version=<버전 또는 ?> build=<빌드 또는 ?> applied=<키=값 목록 또는 -> defaults=<키:사유 목록 또는 -> unknown=<경로 목록 또는 ->`, 차단은 `[playlog] layout blocked pid=<pid> version=<버전 또는 ?> build=<빌드 또는 ?> issues=<키:사유 목록> unknown=<경로 목록 또는 ->`, 기한은 `[playlog] layout timeout pid=<pid> after=1000ms` 형식이다. 차단 로그는 같은 PID·같은 issues에 한 번만 남고 샘플마다 기록하지 않는다.
 
@@ -371,7 +371,7 @@ INFINITAS 의 옵션창 「楽曲再生速度変更」(곡 재생 속도, 결과
 - **FAST/SLOW 는 GREAT 와 GOOD 에서만 오릅니다.** PGREAT·BAD·POOR 는 포함되지 않습니다. 매 판 `FAST+SLOW = GREAT+GOOD` 가 쪽별로 정확히 맞았습니다.
 - **등급별 FAST/SLOW 카운터는 메모리에 없습니다.** `judgeData` 주변 ±16MB 를 플레이 중 스캔해 FAST/SLOW 와 같은 틱에 따라 오르는 칸을 찾았지만, 합계 칸(`judgeData` 12~15)과 판정 칸 외에는 없었습니다.
 - **판정 카운터는 플레이 중 실시간으로 올라가고** 판 시작 때 0 으로 리셋되며, 결과 화면까지 값이 유지됩니다. 1P/2P 는 별도 칸입니다.
-- **레인별 판정 카운터가 있습니다.** `judgeData` 기준 word 위치 P1 `3448349`, P2 `3452263` 부터 레인 8개가 6칸 간격(`[PGREAT, GREAT, GOOD, BAD, POOR, 공POOR]`)으로 이어집니다. 8개 합이 `judge_16` 의 쪽별 판정 합과 4판 모두 정확히 일치했고, POOR 는 `POOR + 공POOR` 가 총 POOR 였습니다. **레인 0~7 이 어느 건반·스크래치인지는 아직 확인하지 못했습니다.**
+- **레인별 판정 카운터가 있습니다.** `judgeData` 기준 word 위치 P1 `3448385`, P2 `3452299` 부터(2026111100 빌드 실측. 2026101400 은 `3448349` / `3452263`) 레인 8개가 6칸 간격(`[PGREAT, GREAT, GOOD, BAD, POOR, 공POOR]`)으로 이어집니다. 8개 합이 `judge_16` 의 쪽별 판정 합과 4판 모두 정확히 일치했고, POOR 는 `POOR + 공POOR` 가 총 POOR 였습니다. **레인 0~7 이 어느 건반·스크래치인지는 아직 확인하지 못했습니다.**
 
 ### 12.3 등급별 FAST/SLOW 를 복원하는 방법
 
