@@ -13,7 +13,7 @@
 import { getGameDatecode, datecodeNum } from './gameBuild';
 
 const GIST_OFFSETS_URL =
-  'https://gist.githubusercontent.com/OhSorry-DP/30c3ba6f87df9847291c42ea216a8d2a/raw/offsets.json';
+  'https://gist.githubusercontent.com/OhSorry-DP/b586710a7a6efc3a245da2c85db8d1f2/raw/offsets.json';
 
 // profile 맵 항목 = 문자열 offset({offset, encoding, maxBytes}) 또는 숫자 offset({offset, count, scale}).
 //   djName/iidxId 는 전자, radar/dan 은 후자. 값이 null 이면 "이 빌드에서는 그 주소를 아직 모른다" 는 뜻이고,
@@ -55,10 +55,98 @@ export interface ResolvedBuild {
 }
 
 let _cache: RemoteOffsets | null = null;
+let _request: Promise<RemoteOffsets | null> | null = null;
+let _requestSettled = false;
+
+export interface PlayLoggerLayout {
+  log: { markerScanFromJudge: number; markerDelta: number; settingsStateDelta: number; p2SettingsDelta: number; battleFlagDelta: number; gaugeWordP1: number; gaugeWordP2: number; playSpeedFromSettings: number; laneOrderP1FromSettings: number; laneOrderP2FromSettings: number; songStride: number; songIdOffset: number; songNoteOffset: number };
+  detail: { laneWordsP1: number; laneWordsP2: number };
+}
+export type PlayLoggerSelection =
+  | { state: 'waiting' }
+  | { state: 'blocked'; build: string | null; issues: string[]; unknownKeys: string[] }
+  | { state: 'ready'; build: string | null; layout: PlayLoggerLayout; applied: string[]; defaults: { key: string; reason: 'remote-unavailable' | 'build-not-found' | 'key-omitted' | 'version-unavailable' }[]; unknownKeys: string[]; timedOut: boolean };
+
+const PLAYLOGGER_DEFAULTS: PlayLoggerLayout = {
+  log: { markerScanFromJudge: 144, markerDelta: 24, settingsStateDelta: 0x18, p2SettingsDelta: 0x48, battleFlagDelta: 0x28, gaugeWordP1: 77, gaugeWordP2: 78, playSpeedFromSettings: 0x17a0, laneOrderP1FromSettings: 0x37cc, laneOrderP2FromSettings: 0x37ec, songStride: 0x730, songIdOffset: 0x5b0, songNoteOffset: 0x370 },
+  detail: { laneWordsP1: 3448349, laneWordsP2: 3452263 },
+};
+const PLAYLOGGER_KEYS: Record<keyof PlayLoggerLayout, string[]> = {
+  log: Object.keys(PLAYLOGGER_DEFAULTS.log), detail: Object.keys(PLAYLOGGER_DEFAULTS.detail),
+};
+const PLAYLOGGER_WORD_KEYS = new Set(['log.gaugeWordP1', 'log.gaugeWordP2', 'detail.laneWordsP1', 'detail.laneWordsP2']);
+
+export function startPlayLoggerOffsetsPreparation(): void {
+  void getRemoteOffsets();
+}
+
+export function selectPlayLoggerLayout(gameVersion: string, startedAt: number, now: number): PlayLoggerSelection {
+  const timedOut = now - startedAt >= 1000;
+  if (!_cache && !_requestSettled && _request && !timedOut) return { state: 'waiting' };
+  const versionNum = datecodeNum(gameVersion);
+  if (!_cache) return defaultsOnly('remote-unavailable', null, timedOut);
+  if (!versionNum) return defaultsOnly('version-unavailable', null, false);
+  const builds = Array.isArray(_cache.builds) ? _cache.builds : [];
+  const build = builds.find((candidate) => candidate && datecodeNum(candidate.version) === versionNum);
+  if (!build) return defaultsOnly('build-not-found', null, false);
+  const raw = (build as RemoteBuild & { playLogger?: unknown }).playLogger;
+  if (raw === null) return { state: 'blocked', build: build.version, issues: ['playLogger:null'], unknownKeys: [] };
+  if (raw === undefined) return defaultsOnly('key-omitted', build.version, false);
+  if (typeof raw !== 'object' || Array.isArray(raw)) return { state: 'blocked', build: build.version, issues: ['playLogger:type'], unknownKeys: [] };
+  const unknownKeys: string[] = [];
+  const issues: string[] = [];
+  const applied: string[] = [];
+  const defaults: { key: string; reason: 'remote-unavailable' | 'build-not-found' | 'key-omitted' | 'version-unavailable' }[] = [];
+  const layout = structuredClone(PLAYLOGGER_DEFAULTS);
+  for (const group of Object.keys(raw as object)) if (!(group in PLAYLOGGER_KEYS)) unknownKeys.push(`playLogger.${group}`);
+  for (const group of ['log', 'detail'] as const) {
+    const groupValue = (raw as Record<string, unknown>)[group];
+    if (groupValue === null) { issues.push(`playLogger.${group}:null`); continue; }
+    if (groupValue === undefined) {
+      for (const key of PLAYLOGGER_KEYS[group]) defaults.push({ key: `${group}.${key}`, reason: 'key-omitted' });
+      continue;
+    }
+    if (typeof groupValue !== 'object' || Array.isArray(groupValue)) { issues.push(`playLogger.${group}:type`); continue; }
+    const obj = groupValue as Record<string, unknown>;
+    for (const key of Object.keys(obj)) if (!PLAYLOGGER_KEYS[group].includes(key)) unknownKeys.push(`playLogger.${group}.${key}`);
+    for (const key of PLAYLOGGER_KEYS[group]) {
+      const path = `${group}.${key}`;
+      const value = obj[key];
+      if (value === undefined) { defaults.push({ key: path, reason: 'key-omitted' }); continue; }
+      if (value === null) { issues.push(`${path}:null`); continue; }
+      const word = PLAYLOGGER_WORD_KEYS.has(path);
+      if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0 || value > 0x7fffffff || (word && value > Math.floor(0x7fffffff / 4))) { issues.push(`${path}:range`); continue; }
+      if (!word && path !== 'log.songStride' && value % 4 !== 0) { issues.push(`${path}:alignment`); continue; }
+      (layout[group] as Record<string, number>)[key] = value;
+      applied.push(`${path}=${value}`);
+    }
+  }
+  const l = layout.log;
+  const check = (condition: boolean, issue: string) => { if (!condition) issues.push(issue); };
+  check(l.songStride > 0 && l.songStride % 4 === 0, 'log.songStride:stride');
+  check(0x100 <= l.songStride && l.songIdOffset + 4 <= l.songStride && l.songNoteOffset + 40 <= l.songStride, 'log.songStride:fields');
+  check(2600 * l.songStride <= 0x7fffffff, 'log.songStride:capacity');
+  check(l.battleFlagDelta / 4 < 11, 'log.battleFlagDelta:range');
+  check(l.gaugeWordP2 === l.gaugeWordP1 + 1, 'log.gaugeWordP2:pair');
+  check(l.markerScanFromJudge + l.markerDelta + 96 <= 0x7fffffff, 'log.markerDelta:range');
+  const d = layout.detail;
+  check(d.laneWordsP1 + 48 <= d.laneWordsP2 || d.laneWordsP2 + 48 <= d.laneWordsP1, 'detail.laneWords:overlap');
+  check(Math.max(d.laneWordsP1, d.laneWordsP2) + 48 <= Math.floor(0x7fffffff / 4), 'detail.laneWords:range');
+  if (issues.length) return { state: 'blocked', build: build.version, issues, unknownKeys };
+  return { state: 'ready', build: build.version, layout, applied, defaults, unknownKeys, timedOut: false };
+}
+
+function defaultsOnly(reason: 'remote-unavailable' | 'build-not-found' | 'key-omitted' | 'version-unavailable', build: string | null, timedOut: boolean): PlayLoggerSelection {
+  const defaults = Object.entries(PLAYLOGGER_DEFAULTS).flatMap(([group, values]) => Object.keys(values).map((key) => ({ key: `${group}.${key}`, reason })));
+  return { state: 'ready', build, layout: structuredClone(PLAYLOGGER_DEFAULTS), applied: [], defaults, unknownKeys: [], timedOut };
+}
 
 // gist 에서 offsets.json fetch. 성공 시 캐시 갱신 후 반환, 실패 시 이전 캐시(or null).
 export async function getRemoteOffsets(force = false): Promise<RemoteOffsets | null> {
   if (_cache && !force) return _cache;
+  if (_request && !force) return _request;
+  _requestSettled = false;
+  const pending = (async (): Promise<RemoteOffsets | null> => {
   try {
     const res = await fetch(`${GIST_OFFSETS_URL}?t=${Date.now()}`, {
       headers: { 'User-Agent': 'INFOhSorry (+https://github.com/yenkara/INFOhSorry)' },
@@ -73,7 +161,13 @@ export async function getRemoteOffsets(force = false): Promise<RemoteOffsets | n
   } catch (e) {
     console.warn('[offsets] gist offsets.json fetch 실패:', (e as Error).message);
     return _cache;
+  } finally {
+    _requestSettled = true;
+    _request = null;
   }
+  })();
+  _request = pending;
+  return pending;
 }
 
 // 실행 중인 게임에 맞는 build 를 고른다.
