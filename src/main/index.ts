@@ -61,6 +61,45 @@ let sessionOpChain: Promise<void> = Promise.resolve();
 let abortFinalUpload: (() => void) | null = null;
 let playAccountSource: { pid: number; iidxId: string } | null = null;
 let probedGameVersion: { pid: number; generation: number; value: string } | null = null;
+type ProfilePolicy = 'normal' | 'constants-only' | 'blocked';
+type ProfileSession = { pid: number; generation: number };
+type ProfilePreparation = { session: ProfileSession; state: 'pending' | 'ready' | 'failed'; promise: Promise<void>; result: Awaited<ReturnType<typeof getRemoteProfileOffsets>> };
+let profilePreparation: ProfilePreparation | null = null;
+
+function sameProfileSession(a: { pid: number | null; generation: number } | null, b: { pid: number | null; generation: number } | null): boolean {
+  return !!a && !!b && a.pid !== null && a.pid === b.pid && a.generation === b.generation;
+}
+
+function prepareSessionProfile(session: ProfileSession): void {
+  const preparation: ProfilePreparation = { session: { ...session }, state: 'pending', promise: Promise.resolve(), result: null };
+  profilePreparation = preparation;
+  // Datecode here is a fresh measurement for this session; do not use getPlayGameVersion's cached value.
+  let datecode: string | null = null;
+  try { datecode = probeGameDatecode(); } catch { /* measured value is unavailable */ }
+  preparation.promise = getRemoteProfileOffsets(preparation.session, datecode).then((result) => {
+    if (profilePreparation !== preparation || !sameProfileSession(sessionMonitor.getState(), preparation.session)) return;
+    if (!result || !sameProfileSession(result.session, preparation.session)) {
+      preparation.state = 'failed';
+      return;
+    }
+    preparation.result = result;
+    preparation.state = 'ready';
+    playProfileOffsets = result.profile;
+  }).catch(() => {
+    if (profilePreparation === preparation) preparation.state = 'failed';
+  });
+}
+
+function blockedProfileResult(session: ProfileSession | null) {
+  return {
+    profile: { iidxId: null, djName: null, radar: null, dan: null, spRank: null, dpRank: null },
+    buildVersion: null,
+    confidence: null,
+    profilePolicy: 'blocked' as const,
+    session,
+    gameDatecode: null,
+  };
+}
 
 function getPlayGameVersion(pid: number): string {
   const session = sessionMonitor.getState();
@@ -76,6 +115,9 @@ function getPlayGameVersion(pid: number): string {
 function getPlayAccount(game: { pid: number; handle: unknown; modBaseAddr: bigint }): string | null {
   const before = sessionMonitor.getState();
   if (before.pid !== game.pid) return null;
+  const preparation = profilePreparation;
+  if (!preparation || preparation.state !== 'ready' || !sameProfileSession(preparation.session, before)
+    || !preparation.result || (preparation.result.profilePolicy !== 'normal' && preparation.result.profilePolicy !== 'constants-only')) return null;
   let ownValue: string | null = null;
   try {
     const entry = playProfileOffsets?.iidxId;
@@ -218,7 +260,15 @@ export const ipcHandlers: Record<string, (...args: never[]) => unknown> = {
   'rating:status': async () => getRatingCacheStatus(),
 
   // gist offsets.json 의 프로필 메모리 offset — useProfile 이 기본값으로 사용 (없으면 profileOffsets.ts 상수 fallback)
-  'offsets:getProfile': async () => { const result = await getRemoteProfileOffsets(); playProfileOffsets = result?.profile ?? null; return result; },
+  'offsets:getProfile': async () => {
+    const session = sessionMonitor.getState();
+    const preparation = profilePreparation;
+    if (!session.pid || !preparation || !sameProfileSession(preparation.session, session)) return blockedProfileResult(session.pid ? { pid: session.pid, generation: session.generation } : null);
+    await preparation.promise;
+    if (profilePreparation !== preparation || !sameProfileSession(sessionMonitor.getState(), preparation.session)
+      || preparation.state !== 'ready' || !preparation.result) return blockedProfileResult(sessionMonitor.getState().pid ? { pid: sessionMonitor.getState().pid!, generation: sessionMonitor.getState().generation } : null);
+    return preparation.result;
+  },
 
   // GitHub 최신 릴리즈 체크 — "v0.0.X 있음 → 다운로드" 알림용 (자동 다운로드 X)
   'update:check': async () => checkForUpdate(),
@@ -813,9 +863,9 @@ app.whenReady().then(() => {
   recordGpuStatus(gpuInfoReady ? 'startup-ready' : 'startup-pending');
   createWindow();
   // start 는 pid!=null 을 즉시 통보(뷰어가 "게임 ON" 을 빨리 인지) — Reflux 기동은 chain 에서 이어짐.
-  sessionMonitor.on('start', () => { playAccountSource = null; probedGameVersion = null; abortFinalUpload?.(); pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
+  sessionMonitor.on('start', (session: ProfileSession) => { playAccountSource = null; probedGameVersion = null; profilePreparation = null; prepareSessionProfile(session); abortFinalUpload?.(); pushSessionState(); sessionOpChain = sessionOpChain.then(() => onSessionStart()); });
   // end 는 즉시 통보하지 않는다 — onSessionEnd 가 final upload 를 끝낸 뒤 pid=null 을 push(provenance 유실 방지).
-  sessionMonitor.on('end', () => { playAccountSource = null; probedGameVersion = null; sessionOpChain = sessionOpChain.then(() => onSessionEnd()); });
+  sessionMonitor.on('end', () => { playAccountSource = null; probedGameVersion = null; profilePreparation = null; playProfileOffsets = null; sessionOpChain = sessionOpChain.then(() => onSessionEnd()); });
   sessionMonitor.start();
 
   // 자기 실행 파일이 portable 패턴이면 같은 폴더 내 옛 portable 정리 (자기 패턴만, 안전)

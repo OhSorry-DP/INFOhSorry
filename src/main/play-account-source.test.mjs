@@ -25,11 +25,13 @@ function loadFunction(name, globals) {
 }
 
 function accountHarness({ session = { pid: 123, generation: 1 }, direct = 'A123456789012', readThrows = false } = {}) {
-  const context = { session, stored: null, direct, readThrows };
+  const context = { session, stored: null, direct, readThrows, policy: { session: { pid: session.pid, generation: session.generation }, state: 'ready', result: { profilePolicy: 'normal' } } };
   const sessionMonitor = { getState: () => context.session };
   const mainWindow = { webContents: { id: 'main' } };
   const values = {
     sessionMonitor,
+    sameProfileSession: (a, b) => !!a && !!b && a.pid !== null && a.pid === b.pid && a.generation === b.generation,
+    get profilePreparation() { return context.policy; },
     playProfileOffsets: { iidxId: { mode: 'direct', offset: '16', encoding: 'ascii', maxBytes: 32 } },
     PROFILE_OFFSETS: { iidxId: { offset: '8', encoding: 'ascii', maxBytes: 32 } },
     isRemoteStringOffset: (entry) => entry?.mode === 'direct' && entry.offset !== '16',
@@ -83,6 +85,8 @@ test('session pid changes before or during direct read block results and lifecyc
   context.session = { pid: 123, generation: 3 };
   const readBytes = loadFunction('getPlayAccount', {
     sessionMonitor: { getState: () => context.session },
+    profilePreparation: context.policy,
+    sameProfileSession: (a, b) => !!a && !!b && a.pid !== null && a.pid === b.pid && a.generation === b.generation,
     playProfileOffsets: { iidxId: { mode: 'direct', offset: '16', encoding: 'ascii', maxBytes: 32 } },
     PROFILE_OFFSETS: { iidxId: { offset: '8', encoding: 'ascii', maxBytes: 32 } },
     isRemoteStringOffset: () => false,
@@ -90,13 +94,41 @@ test('session pid changes before or during direct read block results and lifecyc
     decodeString: () => 'A123456789012',
   }).fn;
   assert.equal(readBytes({ pid: 123, handle: {}, modBaseAddr: 0n }), null);
-  assert.match(indexSource, /sessionMonitor\.on\('start',\s*\(\)\s*=>\s*\{\s*playAccountSource = null;\s*probedGameVersion = null;/);
-  assert.match(indexSource, /sessionMonitor\.on\('end',\s*\(\)\s*=>\s*\{\s*playAccountSource = null;\s*probedGameVersion = null;/);
+  assert.match(indexSource, /sessionMonitor\.on\('start',\s*\(session: ProfileSession\)\s*=>\s*\{\s*playAccountSource = null;\s*probedGameVersion = null;\s*profilePreparation = null;\s*prepareSessionProfile\(session\)/);
+  assert.match(indexSource, /sessionMonitor\.on\('end',\s*\(\)\s*=>\s*\{\s*playAccountSource = null;\s*probedGameVersion = null;\s*profilePreparation = null;/);
 });
 
 test('missing renderer ID and two failed sources return null', () => {
   const { getAccount } = accountHarness({ direct: 'invalid' });
   assert.equal(getAccount({ pid: 123, handle: {}, modBaseAddr: 0n }), null);
+});
+
+test('pending and blocked profile policy prevents direct and renderer ID sources', () => {
+  for (const policy of [
+    { session: { pid: 123, generation: 1 }, state: 'pending', result: null },
+    { session: { pid: 123, generation: 1 }, state: 'ready', result: { profilePolicy: 'blocked' } },
+    { session: { pid: 123, generation: 0 }, state: 'ready', result: { profilePolicy: 'normal' } },
+  ]) {
+    const { context, getAccount, setAccount } = accountHarness();
+    context.policy = policy;
+    setAccount({ sender: context.mainWindow.webContents }, { pid: 123, iidxId: 'B123456789012' });
+    assert.equal(getAccount({ pid: 123, handle: {}, modBaseAddr: 0n }), null);
+  }
+});
+
+test('constants-only matching policy permits existing direct and renderer ID reads', () => {
+  const { context, getAccount, setAccount } = accountHarness({ readThrows: true });
+  context.policy.result.profilePolicy = 'constants-only';
+  setAccount({ sender: context.mainWindow.webContents }, { pid: 123, iidxId: 'B123456789012' });
+  assert.equal(getAccount({ pid: 123, handle: {}, modBaseAddr: 0n }), 'B123456789012');
+  context.readThrows = false;
+  assert.equal(getAccount({ pid: 123, handle: {}, modBaseAddr: 0n }), 'A123456789012');
+});
+
+test('session start independently begins profile preparation and end invalidates it', () => {
+  assert.match(indexSource, /sessionMonitor\.on\('start',[\s\S]*?prepareSessionProfile\(session\)/);
+  assert.match(indexSource, /sessionMonitor\.on\('end',[\s\S]*?profilePreparation = null/);
+  assert.match(indexSource, /function prepareSessionProfile\(session: ProfileSession\)[\s\S]*?probeGameDatecode\(\)[\s\S]*?getRemoteProfileOffsets\(preparation\.session, datecode\)/);
 });
 
 test('game version is probed once per pid generation and metadata uses real app version', () => {
