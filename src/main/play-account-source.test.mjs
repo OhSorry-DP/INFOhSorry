@@ -24,6 +24,93 @@ function loadFunction(name, globals) {
   return { fn: context.exports.fn, context };
 }
 
+function loadSessionHarness() {
+  const declarations = new Map(sourceFile.statements
+    .filter(ts.isFunctionDeclaration)
+    .filter((node) => node.name)
+    .map((node) => [node.name.text, node]));
+  const extract = (name) => {
+    const node = declarations.get(name);
+    assert.ok(node, `missing function ${name}`);
+    return node.getFullText(sourceFile);
+  };
+  const getProfileProperty = sourceFile.statements
+    .find((node) => ts.isVariableStatement(node) && node.declarationList.declarations.some((item) => item.name.getText(sourceFile) === 'ipcHandlers'))
+    ?.declarationList.declarations[0].initializer.properties.find((property) => ts.isPropertyAssignment(property) && property.name.getText(sourceFile).includes('offsets:getProfile'));
+  assert.ok(getProfileProperty, 'missing offsets:getProfile handler');
+  const startCalls = [];
+  const visitStartCalls = (child) => {
+    if (ts.isCallExpression(child) && child.expression.getText(sourceFile) === 'sessionMonitor.on'
+      && child.arguments[0]?.getText(sourceFile) === "'start'") startCalls.push(child);
+    ts.forEachChild(child, visitStartCalls);
+  };
+  visitStartCalls(sourceFile);
+  const startCall = startCalls.find((call) => call.arguments[1]?.getText(sourceFile).includes('playAccountSource = null'));
+  assert.ok(startCall, 'missing session start listener');
+  const startCallback = startCall.arguments[1].getText(sourceFile);
+  const source = [
+    'let profilePreparation = null;',
+    'let playProfileOffsets = null;',
+    'let playAccountSource = null;',
+    'let mainWindow = null;',
+    'let probedGameVersion = null;',
+    'let abortFinalUpload = null;',
+    extract('sameProfileSession'),
+    extract('prepareSessionProfile'),
+    extract('blockedProfileResult'),
+    extract('getPlayAccount'),
+    `const offsetsGetProfile = ${getProfileProperty.initializer.getText(sourceFile)};`,
+    `const startListener = (${startCallback});`,
+    'exports.api = { startListener, getPlayAccount, offsetsGetProfile, getProfilePreparation: () => profilePreparation, getPlayProfileOffsets: () => playProfileOffsets, setPlayAccountSource: value => { playAccountSource = value; } };',
+  ].join('\n');
+  const compiled = ts.transpileModule(source, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const pending = [];
+  const listeners = {};
+  const contextState = { session: { pid: 123, generation: 1 }, probes: 0, reads: 0, decodes: 0 };
+  const globals = {
+    exports: {},
+    sessionMonitor: {
+      getState: () => contextState.session,
+      on: (name, fn) => { listeners[name] = fn; },
+    },
+    probeGameDatecode: () => { contextState.probes++; return `date-${contextState.session.generation}`; },
+    getRemoteProfileOffsets: (session, datecode) => new Promise((resolve) => pending.push({ session, datecode, resolve })),
+    PROFILE_OFFSETS: { iidxId: { offset: '8', encoding: 'ascii', maxBytes: 32 } },
+    isRemoteStringOffset: (entry) => entry?.mode === 'direct',
+    readBytes: () => { contextState.reads++; return Buffer.alloc(1); },
+    decodeString: () => { contextState.decodes++; return 'A123456789012'; },
+    StringEncoding: {},
+    Buffer,
+    console,
+    pushSessionState: () => {},
+    sessionOpChain: Promise.resolve(),
+    onSessionStart: () => Promise.resolve(),
+  };
+  const context = vm.createContext(globals);
+  vm.runInContext(compiled, context);
+  return {
+    api: context.exports.api,
+    state: contextState,
+    pending,
+    start(session) {
+      contextState.session = session;
+      context.exports.api.startListener(session);
+    },
+    resolve(index, session, profileLabel) {
+      const source = {
+        session,
+        profile: { iidxId: { mode: 'direct', offset: `remote-${profileLabel}`, encoding: 'ascii', maxBytes: 32 }, marker: profileLabel },
+        profilePolicy: 'normal',
+        buildVersion: profileLabel,
+        confidence: profileLabel,
+        gameDatecode: `date-${session.generation}`,
+      };
+      pending[index].resolve(source);
+      return source;
+    },
+  };
+}
+
 function accountHarness({ session = { pid: 123, generation: 1 }, direct = 'A123456789012', readThrows = false } = {}) {
   const context = { session, stored: null, direct, readThrows, policy: { session: { pid: session.pid, generation: session.generation }, state: 'ready', result: { profilePolicy: 'normal' } } };
   const sessionMonitor = { getState: () => context.session };
@@ -114,6 +201,56 @@ test('pending and blocked profile policy prevents direct and renderer ID sources
     setAccount({ sender: context.mainWindow.webContents }, { pid: 123, iidxId: 'B123456789012' });
     assert.equal(getAccount({ pid: 123, handle: {}, modBaseAddr: 0n }), null);
   }
+});
+
+test('generation-only session replacement reprobes and gates account reads while pending', async () => {
+  const harness = loadSessionHarness();
+  harness.start({ pid: 123, generation: 1 });
+  harness.resolve(0, { pid: 123, generation: 1 }, 'A');
+  await harness.api.getProfilePreparation().promise;
+  assert.equal(harness.api.getProfilePreparation().state, 'ready');
+  harness.api.setPlayAccountSource({ pid: 123, iidxId: 'B123456789012' });
+
+  harness.start({ pid: 123, generation: 2 });
+  assert.equal(harness.state.probes, 2);
+  assert.equal(harness.pending.length, 2);
+  assert.equal(harness.api.getProfilePreparation().state, 'pending');
+  assert.equal(harness.api.getPlayAccount({ pid: 123, handle: {}, modBaseAddr: 0n }), null);
+  assert.equal(harness.state.reads, 0);
+  assert.equal(harness.state.decodes, 0);
+});
+
+test('late prior-session result is discarded and waiting IPC returns blocked, new IPC returns the replacement profile', async () => {
+  const harness = loadSessionHarness();
+  const sessionA = { pid: 123, generation: 1 };
+  const sessionB = { pid: 123, generation: 2 };
+  harness.start(sessionA);
+  const ipcFromA = harness.api.offsetsGetProfile();
+  harness.start(sessionB);
+  const bPreparation = harness.api.getProfilePreparation();
+  assert.equal(harness.pending.length, 2);
+
+  harness.resolve(0, sessionA, 'A');
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(bPreparation.state, 'pending');
+  assert.equal(harness.api.getPlayProfileOffsets(), null);
+
+  const expectedB = harness.resolve(1, sessionB, 'B');
+  await bPreparation.promise;
+  const ipcResult = await ipcFromA;
+  assert.equal(bPreparation.state, 'ready');
+  assert.equal(harness.api.getPlayProfileOffsets().marker, 'B');
+  assert.notEqual(ipcResult.profile.marker, 'A');
+  assert.notEqual(ipcResult.buildVersion, 'A');
+  assert.equal(ipcResult.profilePolicy, 'blocked');
+  for (const key of ['iidxId', 'djName', 'radar', 'dan', 'spRank', 'dpRank']) {
+    assert.equal(ipcResult.profile[key], null);
+  }
+  const ipcFromB = await harness.api.offsetsGetProfile();
+  assert.equal(ipcFromB.profile.marker, 'B');
+  assert.equal(ipcFromB.buildVersion, 'B');
+  assert.equal(expectedB.profile.marker, 'B');
 });
 
 test('constants-only matching policy permits existing direct and renderer ID reads', () => {
