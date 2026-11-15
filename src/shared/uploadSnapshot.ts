@@ -55,6 +55,8 @@ export interface SnapshotProfileInfo {
   dpRank: string | null;
   spRankInt: number | null;
   dpRankInt: number | null;
+  spRankReadState?: 'value' | 'none' | 'unread';
+  dpRankReadState?: 'value' | 'none' | 'unread';
   spRadar: SnapshotRadarValues | null;
   dpRadar: SnapshotRadarValues | null;
 }
