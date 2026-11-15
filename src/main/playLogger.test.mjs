@@ -35,7 +35,7 @@ function fixture() {
     findInfinitas: () => s.pid ? { pid: s.pid, handle: s.pid, modBaseAddr: 0x140000000n } : null,
     closeHandle: h => s.closed.push(h),
     readBytes(h, address, size) {
-      if (size !== 192) s.addresses.push({ address, size }); // 상세 레인 블록 이외의 요청 기록
+      s.addresses.push({ address, size });
       const b = Buffer.alloc(size);
       if (address === 0x1400057ccn + BigInt(s.laneOffsetP1 ?? 0)) { if (s.laneFailP1) throw Error('p1 lane read'); s.laneP1.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
       if (address === 0x1400057ecn + BigInt(s.laneOffsetP2 ?? 0)) { if (s.laneFailP2) throw Error('p2 lane read'); s.laneP2.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
@@ -201,6 +201,20 @@ test('플레이 중 샘플링한 상세가 plays.csv 와 같은 timestamp 로 pl
   assert.equal(d.p1.lanes.length, 8); assert.equal(d.p1.lanes_ok, true);
   assert.equal(f.s.logs.filter(x => x.includes('detail saved')).length, 1);
   f.stop();
+});
+
+test('상세 레인 샘플링은 선택된 P1/P2 워드 주소에서 각각 192바이트를 읽는다', () => {
+  const f = fixture(); const L = baseLayout();
+  L.detail.laneWordsP1 += 64;
+  L.detail.laneWordsP2 += 128;
+  f.s.selectLayout = () => ready(L);
+  f.advance(2000); f.advance(2100); // 플레이 중: 4ms 샘플러 동작
+  const judge = 0x140001000n;
+  for (const [side, word] of [['P1', L.detail.laneWordsP1], ['P2', L.detail.laneWordsP2]]) {
+    assert.ok(f.s.addresses.some(x => x.address === judge + BigInt(word * 4) && x.size === 192), `${side} selected lane block`);
+    assert.equal(f.s.addresses.some(x => x.address === judge + BigInt(detail.PLAY_DETAIL_LAYOUT[side === 'P1' ? 'laneWordsP1' : 'laneWordsP2'] * 4) && x.size === 192), false, `${side} must not use constant lane block`);
+  }
+  f.result(); f.stop();
 });
 
 test('상세 읽기가 실패해도 plays.csv 기록은 그대로 저장된다', () => {
