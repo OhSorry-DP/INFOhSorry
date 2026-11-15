@@ -1,7 +1,7 @@
 # 플레이 기록기 — 결과 화면마다 메모리 값을 CSV 로 저장
 
 > 게임(INFINITAS, `bm2dx.exe`)이 저장하지 않는 **배틀 모드 기록**과, 게임이 보여 주는 결과 값(곡명, 노트 수, 점수, DJ 레벨, 게이지, 판정)을 플레이마다 로컬 CSV 로 남기는 기능입니다.
-> 상위 조망: [`../../docs/INFOhSorry.md`](../../docs/INFOhSorry.md) · 인덱스: [README.md](README.md) · 메모리 리딩 기반과 새 secret gist 정책: [memory-reading.md](memory-reading.md)
+> 상위 조망: [`../../docs/INFOhSorry.md`](../../docs/INFOhSorry.md) · 인덱스: [README.md](README.md) · 메모리 리딩 기반과 gist 정책: [memory-reading.md](memory-reading.md)
 
 ---
 
@@ -62,7 +62,7 @@
 | `songNoteOffset` | 0x370 | 난이도별 노트 수 int32 × 10 (SPB, SPN, SPH, SPA, SPL, DPB, DPN, DPH, DPA, DPL) |
 | `songTitleBytes` | 0x100 | 곡 제목 (UTF-16LE) |
 
-빌드별 키와 단위: `log.markerScanFromJudge=144`, `markerDelta=24`, `settingsStateDelta=0x18`, `p2SettingsDelta=0x48`, `battleFlagDelta=0x28`, `playSpeedFromSettings=0x17a0`, `laneOrderP1FromSettings=0x37cc`, `laneOrderP2FromSettings=0x37ec`, `songStride=0x730`, `songIdOffset=0x5b0`, `songNoteOffset=0x370`은 바이트 기준이다. `log.gaugeWordP1=77`, `gaugeWordP2=78`, `detail.laneWordsP1=3448385`, `laneWordsP2=3452299`은 judgeData 기준 int32 워드 인덱스다(2026111100 기준. 2026101400 은 `3448349`·`3452263`). 2026111100·2026101400은 실측 기본값이며 2026080500·2026060300은 미실측 `null` 예정이다. 비음수 안전 정수·32비트 범위와 정렬, 곡 엔트리 범위, 배틀 인덱스, 인접 gauge, 상세 블록 비중첩을 검증한다.
+빌드별 키와 단위: `log.markerScanFromJudge=144`, `markerDelta=24`, `settingsStateDelta=0x18`, `p2SettingsDelta=0x48`, `battleFlagDelta=0x28`, `playSpeedFromSettings=0x17a0`, `laneOrderP1FromSettings=0x37cc`, `laneOrderP2FromSettings=0x37ec`, `songStride=0x730`, `songIdOffset=0x5b0`, `songNoteOffset=0x370`은 바이트 기준이다. `log.gaugeWordP1=77`, `gaugeWordP2=78`, `detail.laneWordsP1=3448385`, `laneWordsP2=3452299`은 judgeData 기준 int32 워드 인덱스다(2026111100 기준. 2026101400 은 `3448349`·`3452263`). 2026111100·2026101400은 실측 기본값이며 2026080500·2026060300은 미실측 `null`이다. 비음수 안전 정수·32비트 범위와 정렬, 곡 엔트리 범위, 배틀 인덱스, 인접 gauge, 상세 블록 비중첩을 검증한다.
 
 준비는 공용 remote 캐시를 사용한다. 한 PID attach 준비 구간은 최대 1000ms이며 재시도마다 연장되지 않는다. 캐시가 있거나 fetch가 실패하면 즉시 확정하고, 대기 중에는 기존 재시도를 한다. 기한에 상수 layout을 확정한 뒤 늦게 온 응답은 현재 연결 snapshot을 바꾸지 않고 다음 attach에서 적용한다. 확정 진단은 `[playlog] layout pid=<pid> version=<버전 또는 ?> build=<빌드 또는 ?> applied=<키=값 목록 또는 -> defaults=<키:사유 목록 또는 -> unknown=<경로 목록 또는 ->`, 차단은 `[playlog] layout blocked pid=<pid> version=<버전 또는 ?> build=<빌드 또는 ?> issues=<키:사유 목록> unknown=<경로 목록 또는 ->`, 기한은 `[playlog] layout timeout pid=<pid> after=1000ms` 형식이다. 차단 로그는 같은 PID·같은 issues에 한 번만 남고 샘플마다 기록하지 않는다.
 

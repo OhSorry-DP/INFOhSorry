@@ -2,14 +2,15 @@
 
 INFINITAS DP 뷰어 앱의 버전별 변경 내역입니다. 사용 방법은 [README.md](README.md) 를 참고하세요.
 
-### 0.0.163 — 2026-11-15 플레이 기록기 빌드별 상대 layout 연결
+### 0.0.163 — 2026-11-15 단위 메모리값 덮어쓰기·빌드 불일치 프로필 주소 차단·플레이 기록기 빌드별 layout
 
-- 새 secret gist만 새 앱의 원본으로 사용하며, 구버전용 기존 gist는 동결한다. 빌드별 정확한 상대 offset을 선택하고 생략 키는 상수 fallback, null/오류 layout은 기록을 차단한다.
+- 빌드별 정확한 상대 offset을 선택하고 생략 키는 상수 fallback, null/오류 layout은 기록을 차단한다.
 - attach 준비는 최대 1000ms 기다리고 확정 layout을 연결 단위로 고정한다. 늦은 응답은 재attach 때 반영한다. offsets.txt 생성, 다섯 앵커, Reflux/profile 블록, CSV 형식, 4ms 상세 샘플, 기록 흐름은 바꾸지 않았다.
-- 플레이 로거 레인별 판정 word 위치를 새 gist에서 갱신할 수 있게 했다. `playLogger.detail.laneWordsP1/P2`가 적용되며 코드값은 기본값이다. 2026111100 빌드 위치는 3448385/3452299.
+- 플레이 로거 레인별 판정 word 위치를 gist에서 갱신할 수 있게 했다. `playLogger.detail.laneWordsP1/P2`가 적용되며 코드값은 기본값이다. 2026111100 빌드 위치는 3448385/3452299.
 - 프로필 판독 정책을 `normal`/`constants-only`/`blocked`로 분리했다. latest에서 상수 빌드와 불일치하면 차단하고, gist fetch 실패 시 상수 빌드 일치만 상수로 읽는다.
 - 유효 ID와 최상위 non-null 레이더가 같은 poll·세션에서 확인된 단위만 권위 있게 반영한다. `none`은 덮어써 지우고 `unread`는 보존하며, 프로필 업로드는 `upsert_user_upload_profile_memory` overwrite 플래그를 사용한다.
 - 카드 교정은 정상 판독 렌더부터, meta·서버 교정은 기존 snapshot·업로드 기회에 반영한다. DB migration 42 선배포 및 PostgREST schema reload 확인 후 배포한다.
+- 검증: 전체 `node --test` 456개 중 실패 12개는 기존 실패(dbr-recent 5·compute 6·scratchpad 1)와 동일, `typecheck` 통과, 변이 8종 검출. Admin SQL 42 운영 적용 완료.
 
 ### 0.0.162 — 2026-11-15 INFINITAS 2026111100 빌드 메모리 offset 갱신
 

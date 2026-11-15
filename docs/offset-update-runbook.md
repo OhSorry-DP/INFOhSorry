@@ -133,8 +133,7 @@ A 한 판으로 offset 은 전부 찾을 수 있고, B~D 는 검증용입니다.
 - `builds[0]` 에 새 빌드 항목(`version`, `note`, `reflux`, `profile`)을 **맨 위에 추가**합니다.
 - 구버전 앱 호환용 최상위 `version` / `reflux` / `profile` 도 같은 값으로 갱신합니다(삭제 금지).
 - 모르는 profile 필드는 키를 빼지 말고 `null` 로 둡니다(키가 없으면 옛 코드 상수로 fallback 해서 엉뚱한 메모리를 읽음).
-- `playLogger.detail.laneWordsP1/P2` 는 새 gist 로 갱신할 수 있으며, 코드값은 기본값으로 사용됩니다.
-- gist 갱신 대상은 새 secret gist `b586710a7a6efc3a245da2c85db8d1f2` 입니다. 기존 `30c3ba6f…` 는 구버전 `≤0.0.162` 전용으로 동결합니다.
+- `playLogger.detail.laneWordsP1/P2` 는 gist 로 갱신할 수 있으며, 코드값은 기본값으로 사용됩니다.
 - gist 경로가 바뀌면 [src](../src) 안의 6개 URL 을 함께 바꿔야 합니다(`offsetsRemote.ts`, `serviceStatus.ts`, `workerResources.ts`, `recommendCore.ts`, `supabaseSync.ts`, `dataSource.ts`).
 
 ## 8. 스크립트로 못 찾을 때
