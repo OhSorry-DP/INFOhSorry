@@ -133,7 +133,8 @@ A 한 판으로 offset 은 전부 찾을 수 있고, B~D 는 검증용입니다.
 - `builds[0]` 에 새 빌드 항목(`version`, `note`, `reflux`, `profile`)을 **맨 위에 추가**합니다.
 - 구버전 앱 호환용 최상위 `version` / `reflux` / `profile` 도 같은 값으로 갱신합니다(삭제 금지).
 - 모르는 profile 필드는 키를 빼지 말고 `null` 로 둡니다(키가 없으면 옛 코드 상수로 fallback 해서 엉뚱한 메모리를 읽음).
-- `playDetail.ts` 의 레인 word 는 gist 에 없고 **앱 코드**라서, 코드 릴리스가 필요합니다.
+- `playLogger.detail.laneWordsP1/P2` 는 새 gist 로 갱신할 수 있으며, 코드값은 기본값으로 사용됩니다.
+- gist 갱신 대상은 새 secret gist `b586710a7a6efc3a245da2c85db8d1f2` 입니다. 기존 `30c3ba6f…` 는 구버전 `≤0.0.162` 전용으로 동결합니다.
 - gist 경로가 바뀌면 [src](../src) 안의 6개 URL 을 함께 바꿔야 합니다(`offsetsRemote.ts`, `serviceStatus.ts`, `workerResources.ts`, `recommendCore.ts`, `supabaseSync.ts`, `dataSource.ts`).
 
 ## 8. 스크립트로 못 찾을 때
@@ -177,7 +178,7 @@ profile: iidxId 0x699d40 / djName 0x699d4e / radar 0x69b7e0 / dan 0x699d6c / DJ 
 
 ## 11. 알려진 함정
 
-- **gist 에 새 빌드가 없으면 옛 주소를 읽습니다.** 그 사이 앱을 켜면 틀린 값(예: SP 단위 六級)이 계정 meta 와 서버에 남을 수 있습니다. 그리고 "미취득이면 저장된 옛 값을 유지"하는 병합 때문에 gist 를 고쳐도 안 지워집니다. 자세한 내용은 [report-sp-rank-stale-meta.md](report-sp-rank-stale-meta.md). **gist 를 먼저 갱신한 뒤** 앱을 켜는 것이 안전합니다.
+- **gist 에 새 빌드가 없으면 프로필 latest 정책을 확인합니다.** 상수 빌드와 실측 빌드가 다르면 profile 판독은 blocked 됩니다. 유효한 단위 판독은 `value` 또는 `none`으로 기존 값을 덮어쓰고, `unread`는 보존합니다. 카드 교정은 정상 판독 렌더부터, meta·서버 교정은 기존 snapshot·업로드 기회에 발생합니다. 자세한 내용은 [report-sp-rank-stale-meta.md](report-sp-rank-stale-meta.md).
 - 레인 블록(⑬)은 offsets.txt 키가 아니라서 빠뜨리기 쉽습니다. `playDetail.ts` 를 꼭 확인하세요.
 - 스캐너(MemoryScanner) 슬롯은 문자열(djName/iidxId) 전용이라 radar/dan 은 gist·코드 상수로만 고칠 수 있습니다.
 - 결과 화면에서 선곡 화면으로 나가면 판정 값이 0 으로 지워집니다. 값을 찾는 동안은 결과 화면에 머무세요.

@@ -284,19 +284,21 @@ findInfinitas('bm2dx.exe') → modBaseAddr / modBaseSize
 
 **매칭 키는 `version` 하나뿐입니다.** 게임에서 읽은 datecode 와 끝 10자리를 비교합니다. 별도 지문 필드는 없습니다.
 
-`profile` 의 필드가 **`null` 이면 "이 빌드에서 그 주소를 아직 모른다"** 는 뜻입니다. 키를 아예 빼는 것(정보 없음 → 코드 상수 fallback)과 구분되며, `null` 이면 **읽기를 건너뜁니다** — 옛 빌드 주소로 엉뚱한 메모리를 읽어 쓰레기 문자열을 표시하느니 비워두는 편이 낫기 때문입니다(`pickDef`, `src/renderer/src/useProfile.ts`).
+`profile` 의 필드가 **`null` 이면 "이 빌드에서 그 주소를 아직 모른다"** 는 뜻입니다. 키 생략은 코드 상수 fallback 이고, `null` 은 `pickDef`/`pickNumericDef`가 그 필드를 읽지 않습니다. 프로필 전체 정책은 `normal | constants-only | blocked`이며 Reflux의 별도 선택 정책과 혼동하지 않습니다.
 
 ### 5-A.3 선택 로직 (`resolveBuild`, `src/main/offsetsRemote.ts`)
 
 ```
-1. builds 가 없음(v1 gist)      → top-level 필드를 build 로 사용   [legacy]
-2. datecode 와 version 일치     → 그 build                        [matched]
-3. datecode 는 읽었으나 불일치  → builds[0] + 경고 로그            [latest]
-4. datecode 를 못 읽음          → builds[0]                       [blind]
-5. gist 자체 실패               → 번들 상수(BUNDLED_OFFSETS 등)
+1. builds 가 없음(v1 gist)      → top-level 필드를 build 로 사용   [legacy, normal]
+2. datecode 와 version 일치     → 그 build                        [matched, normal]
+3. datecode 는 읽었으나 불일치  → builds[0]                       [latest]
+4. datecode 를 못 읽음          → builds[0]                       [blind, normal]
+5. gist 자체 실패               → 상수 빌드 일치면 constants-only, 실측 null이면 normal + profile null, 불일치면 blocked
 ```
 
-**미매칭(3) 정책 = 낙관 진행 + 경고.** 새 패치가 나와도 앱이 죽지 않고, 실제로 offset 이 안 바뀐 패치에서는 그대로 동작합니다. 대신 Reflux 로그에 `⚠ 게임 빌드 … 는 미확인` 을 남깁니다.
+matched·blind·legacy 는 `normal`로 선택 profile을 읽으며 사용자 저장 슬롯도 적용합니다. latest는 실측 빌드와 상수 빌드가 같으면 `constants-only`로 코드 상수만 사용하고, 다르면 `blocked`로 읽기를 막습니다. gist를 못 받으면 실측 datecode가 상수 빌드와 같을 때 `constants-only`, 실측값이 null일 때 `normal` 정책과 null profile(기존 상수 fallback), 상수 빌드와 다르면 `blocked`입니다. 이는 Reflux의 matched/latest/blind/legacy offset 선택 정책과 별도입니다.
+
+**프로필 단위 판독의 권위 조건**은 같은 poll·세션의 유효 IIDX ID와 최상위 non-null 레이더입니다. dan 두 값 중 `-1`은 읽힌 미취득(`none`), 유효 index는 `value`, 읽기 실패·범위 밖은 `unread`입니다. 카드 교정은 정상 판독이 반영되는 렌더부터 적용됩니다. meta는 기존 snapshot/profile 업로드 기회에 교정되고, 서버는 `upsert_user_upload_profile_memory` 호출에서 `p_sp_rank_overwrite`/`p_dp_rank_overwrite`로 교정됩니다. `value`와 `none`은 덮어쓰며 `none`은 삭제, `unread`는 보존입니다. 레이더 null은 삭제 명령이 아닙니다. DB migration 42를 먼저 배포하고 PostgREST schema reload를 확인한 뒤 새 INF를 배포해야 하며 구 DB RPC 폴백은 없습니다.
 
 ### 5-A.4 ⚠️ reflux 경로의 비교 축 전환
 

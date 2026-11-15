@@ -6,9 +6,9 @@
 
 - 게임에서 SP 단위는 **미취득**인데 앱 프로필 카드에 SP **六級**이 표시되었습니다.
 - gist 를 새 빌드로 고친 뒤 앱을 재시작해도 六級이 사라지지 않았습니다.
-- 원인은 두 개가 겹친 것입니다.
+- 당시 원인은 두 개가 겹친 것으로 판단했습니다.
   1. gist 에 새 빌드 항목이 없어 **옛 빌드 주소**를 읽었고, 거기서 나온 값 `1` 이 六級으로 해석되어 계정 meta 에 저장되었다.
-  2. 단위를 **미취득(`-1`)으로 새로 읽어도** 저장된 옛 값이 덮어써지지 않는다. 그래서 오프셋이 복구된 뒤에도 틀린 값이 남는다.
+  2. 당시에는 단위 미취득을 기존 값과 구분하지 못해 저장된 옛 값이 남았다.
 - 서버(Supabase)에 틀린 SP 단위가 올라갔는지는 **확인하지 못했습니다.**
 
 ## 증상
@@ -26,7 +26,7 @@
 
 ### 1. gist 에 현재 빌드가 없어 옛 주소를 읽음
 
-`resolveBuild()`(`src/main/offsetsRemote.ts:84-108`)는 실행 중 게임의 datecode 와 같은 build 를 gist 에서 찾고, 없으면 `builds[0]`(최신 항목)을 씁니다. 당시 `builds[0]` 은 `2026101400` 이었습니다.
+당시 `resolveBuild()`는 실행 중 게임의 datecode 와 같은 build 를 gist 에서 찾고, 없으면 `builds[0]`(최신 항목)을 선택했습니다. 당시 `builds[0]` 은 `2026101400` 이었습니다. 현재 프로필 정책은 matched·blind·legacy 에 `normal`, latest 에 상수 빌드 일치 시 `constants-only`·불일치 시 `blocked`를 적용합니다. gist fetch 실패 시에도 상수 빌드와 실측 datecode가 일치하면 `constants-only`, 실측 null이면 `normal` + null profile, 불일치면 `blocked`입니다.
 
 그 항목의 `dan` 주소는 `0x698d5c` 이고 새 빌드의 실제 주소는 `0x699d6c` 입니다. 게임 메모리를 직접 읽어 비교한 값은 이렇습니다.
 
@@ -46,9 +46,9 @@ spRank: profile.spRank ?? cardBase?.spRank ?? null,
 spRankInt: profile.spRankInt ?? cardBase?.spRankInt ?? null,
 ```
 
-`danName(-1)` 과 `danIndexToRankInt(-1)` 은 `null` 을 돌려줍니다(`src/shared/profileOffsets.ts`). 그러면 "미취득"과 "읽지 못함"이 모두 `null` 이 되어 구분되지 않고, `??` 가 저장된 `cardBase` 값으로 넘어갑니다. meta 합치기(`src/shared/account.ts:31`, `96-111`)도 같은 방식으로 null 을 이전 값으로 채웁니다.
+당시에는 `danName(-1)` 과 `danIndexToRankInt(-1)` 이 `null` 을 돌려줘 "미취득"과 "읽지 못함"이 구분되지 않았고, 저장된 `cardBase` 값이 남았습니다. 현재는 같은 poll·세션의 유효 ID와 최상위 non-null 레이더가 있을 때 단위를 권위 있게 판독합니다. `spRankReadState`/`dpRankReadState`는 `value | none | unread`이며 `none`은 삭제, `unread`는 보존입니다. 카드에는 정상 판독이 반영되는 렌더부터 적용하고, meta·서버 교정은 기존 snapshot·업로드 기회에 반영됩니다. 서버 RPC는 `upsert_user_upload_profile_memory`와 `p_sp_rank_overwrite`/`p_dp_rank_overwrite`를 사용합니다. 레이더 null 삭제는 없습니다. DB migration 42 배포와 PostgREST schema reload 확인 뒤 새 INF를 배포하며 구 DB RPC 폴백도 없습니다.
 
-결과적으로 **SP 를 하지 않는 계정은 한 번 잘못 저장된 SP 단위를 스스로 지울 수 없습니다.** 오프셋이 틀렸다가 복구되는 모든 패치에서 같은 일이 생깁니다.
+당시에는 **SP 를 하지 않는 계정이 잘못 저장된 SP 단위를 스스로 지울 수 없었습니다.** 현재는 권위 있는 `none` 판독이 다음 기존 meta snapshot 또는 업로드 기회에 반영되면 해당 값을 지울 수 있습니다.
 
 ## 영향
 
@@ -62,12 +62,12 @@ spRankInt: profile.spRankInt ?? cardBase?.spRankInt ?? null,
 - gist 가 갱신된 것은 gist 원본을 내려받아 `builds[0]` 이 `2026111100` 인지, 미러 필드가 같은지로 확인했습니다.
 - meta.json 이 재실행 후 다시 쓰였는데도 `六級` 이 남아 있다는 점으로 2번 원인(병합)을 추정했습니다. 병합 코드 경로를 코드로 읽었지만 **디버거로 한 줄씩 확인한 것은 아닙니다.**
 
-## 수정 방향 (제안)
+## 후속 구현 및 현재 동작
 
-1. **미취득을 명시적으로 덮어쓰기.** 단위 `-1` 은 "읽었고 미취득"이므로 저장된 값을 지워야 합니다. "읽지 못함(null)"과 구분되는 상태가 필요합니다. 예: 읽은 단위를 `{ state: 'none' | 'value' | 'unread' }` 로 전달하고 `none` 이면 meta 의 SP 단위를 비움.
-2. **빌드 불일치 시 프로필 주소 신뢰도 낮추기.** `confidence` 가 `latest`(일치 항목 없음)일 때는 옛 빌드 `profile` 주소를 쓰지 않고 코드 상수(`PROFILE_OFFSETS` 의 빌드가 현재 빌드와 같을 때)를 쓰거나 읽기를 건너뛴다. 이번 사고의 시작점이 이 경로입니다.
-3. **오독 방지 검증 추가.** 단위는 값 하나로 검증이 안 되므로, 같은 구조체의 DJ POINT(`dan` 주소 −8, SP/DP)가 0 이상 합리적 범위인지 등 함께 읽는 값으로 교차 검증하는 방법이 있습니다.
-4. **데이터 정정.** 이 계정의 meta 는 `spRank`, `spRankInt` 를 `null` 로 되돌리면 됩니다. 서버 값은 확인 후 필요하면 정정합니다.
+1. **미취득 덮어쓰기 구현:** `none`은 삭제 지시, `unread`는 기존 값 보존으로 구분합니다.
+2. **최신 빌드 불일치 차단 구현:** latest에서 상수 빌드와 불일치하면 profile 판독을 막습니다.
+3. **오독 방지 검증:** 동일 poll·세션의 유효 ID와 최상위 non-null 레이더가 단위 판독 권위 조건입니다.
+4. **데이터 정정:** 기존 snapshot·업로드 기회에서 교정됩니다. 당시 서버 상태와 실제 교정 완료 여부는 확인되지 않았습니다.
 
 ## 열린 항목
 
