@@ -2196,9 +2196,6 @@ export default function App() {
           </button>
         </div>
       )}
-      {showRefluxLog && (
-        <RefluxLog state={refluxState} diagLines={diagLines} showProcessLines={showProcessLog} logPath={diagLogPath} />
-      )}
       {rows.length === 0 && accounts.length > 0 && session.pid == null && !selectedViewerId && (
         <AccountSelector accounts={accounts} selectedId={null} liveId={liveIidxId} onSelect={(id) => void loadViewerAccount(id)} />
       )}
@@ -2468,6 +2465,9 @@ export default function App() {
             )}
           </main>
         </>
+      )}
+      {showRefluxLog && (
+        <RefluxLog state={refluxState} diagLines={diagLines} showProcessLines={showProcessLog} logPath={diagLogPath} />
       )}
       </div>
     </div>

@@ -451,18 +451,27 @@ body {
 /* ----- Reflux 로그 (디버깅용 collapsible) ----- */
 .reflux-log {
   margin: 0;
+  margin-top: auto;
   padding: 0 20px;
+  flex-shrink: 0;
   background: var(--bg-panel);
-  border-bottom: 1px solid var(--border-faint);
+  border-top: 1px solid var(--border-faint);
   font-size: 11px;
 }
 .reflux-log summary {
   padding: 6px 0;
+  line-height: 16px;
+  height: 28px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
   cursor: pointer;
   color: var(--text-muted);
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
 }
 .reflux-log summary code {
+  white-space: nowrap;
   color: var(--text-primary);
   background: var(--bg-muted);
   padding: 1px 5px;
@@ -477,7 +486,7 @@ body {
   font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
   font-size: 11px;
   line-height: 1.4;
-  max-height: 240px;
+  height: 240px;
   overflow: auto;
   white-space: pre-wrap;
   word-break: break-all;
