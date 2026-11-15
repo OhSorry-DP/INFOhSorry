@@ -81,7 +81,7 @@ export async function listAccounts(): Promise<AccountMeta[]> {
   const out: AccountMeta[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || !IIDX_RE.test(entry.name)) continue;
-    try { const meta = JSON.parse(await fsp.readFile(join(accountDir(entry.name), 'meta.json'), 'utf8')) as Partial<AccountMeta>; await fsp.stat(join(accountDir(entry.name), 'tracker.tsv')); if (meta.iidxId !== entry.name) continue; out.push({ iidxId: entry.name, djName: meta.djName ?? null, lastUpdatedAt: meta.lastUpdatedAt ?? 0, spRank: meta.spRank, dpRank: meta.dpRank, spRankInt: meta.spRankInt, dpRankInt: meta.dpRankInt, spRadar: meta.spRadar, dpRadar: meta.dpRadar, profileCapturedAt: meta.profileCapturedAt }); } catch { /* 유효하지 않은 계정은 제외 */ }
+    try { const meta = JSON.parse(await fsp.readFile(join(accountDir(entry.name), 'meta.json'), 'utf8')) as Partial<AccountMeta>; await fsp.stat(join(accountDir(entry.name), 'tracker.tsv')); if (meta.iidxId !== entry.name) continue; out.push({ iidxId: entry.name, djName: meta.djName ?? null, lastUpdatedAt: meta.lastUpdatedAt ?? 0, spRank: meta.spRank, dpRank: meta.dpRank, spRankInt: meta.spRankInt, dpRankInt: meta.dpRankInt, spRadar: meta.spRadar, dpRadar: meta.dpRadar, profileCapturedAt: meta.profileCapturedAt, ...(meta.spRankReadState !== undefined ? { spRankReadState: meta.spRankReadState } : {}), ...(meta.dpRankReadState !== undefined ? { dpRankReadState: meta.dpRankReadState } : {}) }); } catch { /* 유효하지 않은 계정은 제외 */ }
   }
   return out.sort((a, b) => b.lastUpdatedAt - a.lastUpdatedAt);
 }

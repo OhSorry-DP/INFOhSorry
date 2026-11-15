@@ -83,3 +83,80 @@ test('missing detail file preserves CSV success without details property', async
   });
   assert.deepEqual({ ...(await read('A123456789012')) }, { ok: true, csv: 'csv' });
 });
+
+function loadListAccounts(files) {
+  const start = source.indexOf('export async function listAccounts()');
+  const end = source.indexOf('\n}', start) + 2;
+  assert.ok(start >= 0 && end > 1, 'listAccounts function exists');
+  const code = ts.transpileModule(source.slice(start, end), { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const context = {
+    exports: {}, IIDX_RE: /^[A-Z]\d{12}$/,
+    usersRoot: () => '/virtual/users',
+    accountDir: id => `/virtual/users/${id}`,
+    join: (...parts) => parts.join('/'),
+    fsp: {
+      readdir: async () => [{ name: 'A123456789012', isDirectory: () => true }],
+      readFile: async path => files.meta,
+      stat: async () => ({}),
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(`${code}; this.listAccounts = listAccounts;`, context);
+  return context.listAccounts;
+}
+
+test('저장 후 목록: rank read states and values are returned', async () => {
+  const list = loadListAccounts({ meta: JSON.stringify({
+    iidxId: 'A123456789012', djName: 'DJ', lastUpdatedAt: 10,
+    spRank: null, spRankInt: null, spRankReadState: 'none',
+    dpRank: 'AAA', dpRankInt: 12, dpRankReadState: 'value',
+  }) });
+  const [account] = await list();
+  assert.equal(account.spRankReadState, 'none');
+  assert.equal(account.spRank, null);
+  assert.equal(account.dpRankReadState, 'value');
+  assert.equal(account.dpRank, 'AAA');
+  assert.equal(account.dpRankInt, 12);
+});
+
+test('legacy meta does not gain inferred rank read states', async () => {
+  const list = loadListAccounts({ meta: JSON.stringify({
+    iidxId: 'A123456789012', djName: 'DJ', lastUpdatedAt: 10, spRank: 'AAA', dpRank: null,
+  }) });
+  const [account] = await list();
+  assert.equal(Object.hasOwn(account, 'spRankReadState'), false);
+  assert.equal(Object.hasOwn(account, 'dpRankReadState'), false);
+});
+
+test('unread input keeps the previously stored value and state', async () => {
+  const accountSource = await readFile(new URL('../shared/account.ts', import.meta.url), 'utf8');
+  const accountCode = ts.transpileModule(accountSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const accountExports = {};
+  vm.runInNewContext(accountCode, { exports: accountExports, require: () => ({}) });
+
+  const start = source.indexOf('async function writeMeta(');
+  const end = source.indexOf('\n}', start) + 2;
+  assert.ok(start >= 0 && end > 1, 'writeMeta function exists');
+  const code = ts.transpileModule(source.slice(start, end), { compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 } }).outputText;
+  let stored;
+  const context = {
+    AccountMeta: undefined,
+    accountDir: () => '/virtual/users/A123456789012',
+    join: (...parts) => parts.join('/'),
+    mergeAccountMeta: accountExports.mergeAccountMeta,
+    Date: { now: () => 20 },
+    fsp: {
+      readFile: async () => JSON.stringify({ iidxId: 'A123456789012', spRank: 'AAA', spRankInt: 5, spRankReadState: 'value' }),
+      writeFile: async (_path, value) => { stored = JSON.parse(value); },
+    },
+    JSON,
+  };
+  vm.createContext(context);
+  vm.runInContext(`${code}; this.writeMeta = writeMeta;`, context);
+  await context.writeMeta('A123456789012', {
+    iidxId: 'A123456789012', djName: 'DJ', spRank: null, spRankInt: null, spRankReadState: 'unread',
+  });
+  assert.equal(stored.spRankReadState, 'value');
+  assert.equal(stored.spRank, 'AAA');
+  assert.equal(stored.spRankInt, 5);
+});
