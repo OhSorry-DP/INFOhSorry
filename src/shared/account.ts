@@ -8,6 +8,8 @@ export interface AccountMeta {
   dpRank?: string | null;
   spRankInt?: number | null;
   dpRankInt?: number | null;
+  spRankReadState?: 'value' | 'none';
+  dpRankReadState?: 'value' | 'none';
   spRadar?: SnapshotRadarValues | null;
   dpRadar?: SnapshotRadarValues | null;
   profileCapturedAt?: number | null;
@@ -57,12 +59,22 @@ export function mergeAccountMeta(
   if (profile?.iidxId === iidxId) {
     result.djName = profile.djName ?? previous.djName ?? null;
     for (const field of profileFields) {
-      const value = profile[field] ?? previous[field] ?? null;
+      const isSpRank = field === 'spRank' || field === 'spRankInt';
+      const isDpRank = field === 'dpRank' || field === 'dpRankInt';
+      const state = isSpRank ? profile.spRankReadState : isDpRank ? profile.dpRankReadState : undefined;
+      const value = state === 'none' ? null : state === 'value'
+        ? profile[field] ?? null
+        : profile[field] ?? previous[field] ?? null;
       Object.assign(result, {
         [field]: field === 'spRadar' || field === 'dpRadar'
           ? value == null ? value : { ...(value as SnapshotRadarValues) }
           : value,
       });
+    }
+    for (const side of ['sp', 'dp'] as const) {
+      const state = profile[`${side}RankReadState`];
+      if (state === 'value' || state === 'none') result[`${side}RankReadState`] = state;
+      else if (previous[`${side}RankReadState`] !== undefined) result[`${side}RankReadState`] = previous[`${side}RankReadState`];
     }
     result.profileCapturedAt = capturedAt;
   }
@@ -92,6 +104,7 @@ export function resolveAccountSnapshotProfile(
   const sameMeta = meta?.iidxId === iidxId ? meta : null;
   let djName: string | null;
   let values: Pick<SnapshotProfileInfo, typeof profileFields[number]>;
+  let states: Pick<SnapshotProfileInfo, 'spRankReadState' | 'dpRankReadState'> = {};
 
   if (sameMeta && typeof sameMeta.profileCapturedAt === 'number' && Number.isFinite(sameMeta.profileCapturedAt)) {
     djName = sameMeta.djName;
@@ -103,6 +116,8 @@ export function resolveAccountSnapshotProfile(
       spRadar: sameMeta.spRadar == null ? null : { ...sameMeta.spRadar },
       dpRadar: sameMeta.dpRadar == null ? null : { ...sameMeta.dpRadar },
     };
+    if (sameMeta.spRankReadState !== undefined) states.spRankReadState = sameMeta.spRankReadState;
+    if (sameMeta.dpRankReadState !== undefined) states.dpRankReadState = sameMeta.dpRankReadState;
   } else if (fallback?.iidxId === iidxId) {
     djName = sameMeta?.djName ?? fallback.djName;
     values = {
@@ -113,8 +128,21 @@ export function resolveAccountSnapshotProfile(
       spRadar: fallback.spRadar == null ? null : { ...fallback.spRadar },
       dpRadar: fallback.dpRadar == null ? null : { ...fallback.dpRadar },
     };
+    if (fallback.spRankReadState !== undefined) states.spRankReadState = fallback.spRankReadState;
+    if (fallback.dpRankReadState !== undefined) states.dpRankReadState = fallback.dpRankReadState;
   } else {
     return null;
+  }
+
+  if (sameMeta && fallback?.iidxId === iidxId) {
+    for (const side of ['sp', 'dp'] as const) {
+      const state = fallback[`${side}RankReadState`];
+      if (state === 'value' || state === 'none') {
+        states[`${side}RankReadState`] = state;
+        values[`${side}Rank`] = state === 'none' ? null : fallback[`${side}Rank`] ?? null;
+        values[`${side}RankInt`] = state === 'none' ? null : fallback[`${side}RankInt`] ?? null;
+      }
+    }
   }
 
   return {
@@ -122,6 +150,7 @@ export function resolveAccountSnapshotProfile(
     iidxIdFormatted: `${iidxId[0]}-${iidxId.slice(1, 5)}-${iidxId.slice(5, 9)}-${iidxId.slice(9, 13)}`,
     djName,
     ...values,
+    ...states,
   };
 }
 
