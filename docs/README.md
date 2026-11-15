@@ -21,6 +21,7 @@
 | [data-flow.md](data-flow.md) | 외부 데이터 소스(ereter/zasa/rating/spTier) 캐시 + TTL, 추천 코어 통합, 계정별 TSV 스냅샷 + 자동 업로드(스냅샷마다 마지막 성공 시각 비교, 최소 3분 간격) + 종료 업로드, LAN 원격 셸/API/SSE, 계정·세션 소유권 가드 |
 | [ipc-reference.md](ipc-reference.md) | main↔renderer IPC 채널 전수 목록 + 각 핸들러 시그니처/역할, preload `window.infohsorry` API 매핑, HTTP `/api/ipc` bridge |
 | [sp.md](sp.md) | **SP(싱글) 데이터 흐름** — SP 5 slot → Supabase `play_style:0` 적재(SP1~12, BEGINNER·EX SCORE 0 이하 제외), 스냅샷마다 최소 3분 간격 판정, 원격 `/api/me`·`/api/me/v3profile` + SSE, SP★/CPI 계산 |
+| [offset-update-runbook.md](offset-update-runbook.md) | **새 INFINITAS 빌드 offset 갱신 절차** — 갱신 대상 체크리스트(레인 블록 포함), `tools/scan/find-offsets.ps1` 로 찾는 방법(-Static/-Profile/-Play), 코드·gist 반영, 앱 검증 체크리스트, 이동 이력, 함정 |
 
 ---
 
