@@ -779,13 +779,15 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
   //   SP 대표 실력값: 표본부족/미산출이면 null → RPC COALESCE 가 기존 sp_cpi/sp_star 보존(절대 덮어 0 안 함).
   const spCpiVal = (typeof spCpi === 'number' && isFinite(spCpi)) ? Math.round(spCpi) : null;
   const spStarVal = (typeof spStar === 'number' && isFinite(spStar)) ? Number(spStar.toFixed(1)) : null;
-  // SP/DP 단위 — 게임 메모리에서 읽은 값 (supabase 스케일 int). 못 읽었거나 미취득이면 null →
-  //   RPC COALESCE 가 기존 DB값 유지 (eagate 배치가 넣어둔 값을 지우지 않음).
-  const spRankVal = typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
-  const dpRankVal = typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
+  // SP/DP 단위 — 메모리에서 value/none 으로 읽은 단위는 overwrite=true 로 null 포함 덮어쓴다(none=미취득).
+  //   unread 또는 상태 없음은 overwrite=false 로 기존 값을 유지한다.
+  const spRankOverwrite = profile.spRankReadState === 'value' || profile.spRankReadState === 'none';
+  const dpRankOverwrite = profile.dpRankReadState === 'value' || profile.dpRankReadState === 'none';
+  const spRankVal = profile.spRankReadState === 'value' && typeof profile.spRankInt === 'number' ? profile.spRankInt : null;
+  const dpRankVal = profile.dpRankReadState === 'value' && typeof profile.dpRankInt === 'number' ? profile.dpRankInt : null;
   try {
     console.log(`[supabase] users upsert 시도 ${iidxIdNorm} — DP★=${starResult ? starResult.star.toFixed(2) : 'null'} r★=${typeof rStar === 'number' ? rStar.toFixed(2) : 'null(보존)'} / SP sp_cpi=${spCpiVal ?? 'null(보존)'} sp_star=${spStarVal ?? 'null(보존)'} / 단위 SP=${spRankVal ?? 'null(보존)'} DP=${dpRankVal ?? 'null(보존)'}`);
-    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_upload_profile`, {
+    const userRes = await fetch(`${SUPABASE_URL}/rest/v1/rpc/upsert_user_upload_profile_memory`, {
       method: 'POST',
       headers: HEADERS,
       body: JSON.stringify({
@@ -793,10 +795,11 @@ export async function uploadProfile(input: UploadInput): Promise<{ ok: boolean; 
         p_dj_name: profile.djName ?? null,
         p_star: null,
         p_ereter_star: ereterStar != null ? Number(ereterStar) : null,
-        // SP/DP 단위 — v0.0.108 부터 게임 메모리에서 직접 읽어 업로드 (프로필 struct 의 정수 index).
-        //   못 읽음/미취득이면 null → RPC COALESCE 가 기존 값 유지 (eagate 배치값을 null 로 덮지 않음).
+        // SP/DP 단위 — value/none 상태는 null 포함 덮어쓰고, unread/상태 없음은 기존 값을 유지한다.
         p_sp_rank: spRankVal,
         p_dp_rank: dpRankVal,
+        p_sp_rank_overwrite: spRankOverwrite,
+        p_dp_rank_overwrite: dpRankOverwrite,
       }),
     });
     if (!userRes.ok) {

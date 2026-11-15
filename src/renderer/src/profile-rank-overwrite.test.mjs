@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import ts from 'typescript';
+import OhsorryNorm from '../../shared/normTitle.js';
 
 function load(path, dependencies = {}, globals = {}) {
   const source = readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -83,4 +84,67 @@ test('세션 변경 중 결과 폐기와 poll 간 ID 레이더 격리', async ()
   await h.next(); assert.equal(h.calls.filter(c => c[0] === 'set').length, before); assert.ok(h.timers.length);
   h.data.onRead = null; await h.next(); h.data.id = 'bad-id'; h.data.radar = goodRadar; let p = await h.read(); assert.equal(p.spRankReadState, 'unread');
   h.data.id = 'A123456789012'; h.data.radar = null; p = await h.read(); assert.equal(p.spRankReadState, 'unread'); assert.equal(p.dpRankReadState, 'unread');
+});
+
+const uploadSource = readFileSync(new URL('./supabaseSync.ts', import.meta.url), 'utf8');
+function syncUpload(fetch) {
+  const shared = load('../../shared/uploadSnapshot.ts');
+  const code = ts.transpileModule(uploadSource, { compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 } }).outputText;
+  const exports = {};
+  vm.runInNewContext(code, { exports, require: name => {
+    if (name === '../../shared/uploadSnapshot') return shared;
+    if (name === '../../shared/match') return { norm: x => OhsorryNorm.norm(x), slotToDiff: x => x };
+    if (name === '../../shared/dataSource') return { DATA_BASE: 'https://fixture.invalid' };
+    if (name === './dbr-history') return { getDbrRecentData: () => ({ complete: true, rows: [] }), getDbrRecentDates: () => ({ complete: true, dates: [] }), validateDbrHistory: () => true };
+    if (name === './diagLog') return { addDiagLine() {} };
+    throw new Error(`Unexpected import ${name}`);
+  }, console: { log() {}, warn() {} }, window: { infohsorry: { serviceStatus: { get: async () => ({ uploadEnabled: true }) } } }, fetch });
+  return exports;
+}
+async function actualUpload(profile, { charts = [{ title: 'fixture', slot: 'DPA', diff: 'ANOTHER', exScore: 100, lamp: 'HC', missCount: 0, noteCount: 1 }], plays } = {}) {
+  const calls = [];
+  const fetch = async (url, options = {}) => {
+    calls.push({ url, options });
+    if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
+    if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => [{ song_id: 100, title: 'fixture', ac: 2, legen: 0 }] };
+    return { ok: true, status: 200, json: async () => null, text: async () => '' };
+  };
+  class FixtureDate extends Date { constructor(...args) { super(...(args.length ? args : ['2026-10-23T01:02:03.123Z'])); } }
+  const api = syncUpload(fetch);
+  const result = await api.uploadProfile({ appVersion: 'fixture', profile: { iidxId: 'C123456789012', ...profile }, starResult: null,
+    charts, plays, allTsvCharts: [], spCharts: [], dpAllCharts: [], gameRecognized: async () => true, Date: FixtureDate });
+  return { calls, result };
+}
+async function capturedProfile(profile) {
+  const out = await actualUpload(profile);
+  const call = out.calls.find(x => x.url.endsWith('/rpc/upsert_user_upload_profile_memory'));
+  assert.ok(call, '새 snapshot RPC 요청');
+  return { url: call.url, body: JSON.parse(call.options.body) };
+}
+test('none: SP none이면 null과 overwrite true', async () => {
+  const { url, body } = await capturedProfile({ spRankReadState: 'none' });
+  assert.ok(url.endsWith('/rpc/upsert_user_upload_profile_memory'));
+  assert.equal(body.p_sp_rank, null); assert.equal(body.p_sp_rank_overwrite, true);
+});
+test('value: SP 정수 10과 overwrite true', async () => {
+  const { body } = await capturedProfile({ spRankReadState: 'value', spRankInt: 10 });
+  assert.equal(body.p_sp_rank, 10); assert.equal(body.p_sp_rank_overwrite, true);
+});
+test('unread: SP overwrite false', async () => {
+  const { body } = await capturedProfile({ spRankReadState: 'unread' });
+  assert.equal(body.p_sp_rank_overwrite, false);
+});
+test('구 pending: 상태 없는 snapshot은 새 RPC에서 두 overwrite false', async () => {
+  const { url, body } = await capturedProfile({});
+  assert.ok(url.endsWith('/rpc/upsert_user_upload_profile_memory'));
+  assert.equal(body.p_sp_rank_overwrite, false); assert.equal(body.p_dp_rank_overwrite, false);
+});
+test('스타일 독립: SP none과 DP value를 독립 전송', async () => {
+  const { body } = await capturedProfile({ spRankReadState: 'none', dpRankReadState: 'value', dpRankInt: 10 });
+  assert.equal(body.p_sp_rank, null); assert.equal(body.p_sp_rank_overwrite, true);
+  assert.equal(body.p_dp_rank, 10); assert.equal(body.p_dp_rank_overwrite, true);
+});
+test('0건: scoreRows 0건이면 users RPC 호출 없음', async () => {
+  const out = await actualUpload({}, { charts: [], plays: [] });
+  assert.equal(out.calls.some(x => x.url.includes('/rpc/upsert_user_upload_profile_memory')), false);
 });

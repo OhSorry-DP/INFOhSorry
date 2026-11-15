@@ -74,7 +74,7 @@ async function runTimedDump({ authHang, storedToken = null, sessionReplies = [],
     });
     if (url.includes('/hist/')) return { ok: true, status: 200, json: async () => [] };
     if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => [{ song_id: 1, title: 'song0', ac: 2, legen: 0 }] };
-    if (url.includes('/rpc/upsert_user_upload_profile') || url.includes('/rpc/upsert_user_radar') || url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
+    if (url.includes('/rpc/upsert_user_upload_profile_memory') || url.includes('/rpc/upsert_user_radar') || url.includes('/rpc/upsert_scores')) return { ok: true, status: 200 };
     const endpoint = ['/auth/issue', '/auth/exchange', '/auth/session'].find(path => url.endsWith(path));
     if (endpoint) {
       if (authLatency) await new Promise(resolve => clock.setTimeout(resolve, authLatency));
@@ -162,7 +162,7 @@ test('계정별 캐시 격리 및 TTL 만료 후 재조회', async () => {
 
 test('업로드 users payload 공식값 제외와 1001행 실패 전파, INF 0 유지', async () => {
   assert.match(source, /p_star:\s*null/);
-  const profileRpc = source.indexOf('/rpc/upsert_user_upload_profile');
+  const profileRpc = source.indexOf('/rpc/upsert_user_upload_profile_memory');
   assert.ok(profileRpc >= 0);
   assert.doesNotMatch(source.slice(source.indexOf('body: JSON.stringify({', profileRpc), source.indexOf('}),\n    });', profileRpc)), /p_(?:sp_cpi|sp_star|r_star):/);
   assert.match(source, /played_version:\s*PLAYED_VERSION_INF/);
@@ -184,7 +184,7 @@ async function testUploadProfileRealCall() {
     const fetch = async (url, opts = {}) => {
       calls.push({ url, opts });
       if (url.includes('/hist/')) return histReply ?? { ok: true, status: 200, json: async () => hist };
-      if (new URL(url).pathname === '/rest/v1/rpc/upsert_user_upload_profile') return { ok: true, status: 200, json: async () => null };
+      if (new URL(url).pathname === '/rest/v1/rpc/upsert_user_upload_profile_memory') return { ok: true, status: 200, json: async () => null };
       if (url.includes('/rpc/upsert_user_radar')) return { ok: true, status: 200, json: async () => null };
       if (url.includes('/rest/v1/songs')) return { ok: true, status: 200, json: async () => songs };
       if (url.includes('/rpc/upsert_scores')) return { ok: scoreStatus === 200, status: scoreStatus, text: async () => 'fail' };
@@ -200,11 +200,11 @@ async function testUploadProfileRealCall() {
   };
   let out = await run({ histReply: { ok: true, status: 200, json: async () => [[100,3,5,2200,0,'2026-10-23T01:02:03.123000Z','2026-10-23',1,null,1500]] } });
   assert.equal(out.calls.filter(c => c.url.includes('/rpc/upsert_scores')).length, 0);
-  const profileCall = out.calls.find(c => new URL(c.url).pathname === '/rest/v1/rpc/upsert_user_upload_profile');
+  const profileCall = out.calls.find(c => new URL(c.url).pathname === '/rest/v1/rpc/upsert_user_upload_profile_memory');
   assert.equal(profileCall, undefined);
   out = await run({ histReply: { ok: true, status: 200, json: async () => [] } });
-  const changedProfileCall = out.calls.find(c => c.url.includes('/rpc/upsert_user_upload_profile'));
-  assert.deepEqual(Object.keys(JSON.parse(changedProfileCall.opts.body)).sort(), ['p_dj_name', 'p_dp_rank', 'p_ereter_star', 'p_iidx_id', 'p_sp_rank', 'p_star'].sort());
+  const changedProfileCall = out.calls.find(c => c.url.includes('/rpc/upsert_user_upload_profile_memory'));
+  assert.deepEqual(Object.keys(JSON.parse(changedProfileCall.opts.body)).sort(), ['p_dj_name', 'p_dp_rank', 'p_dp_rank_overwrite', 'p_ereter_star', 'p_iidx_id', 'p_sp_rank', 'p_sp_rank_overwrite', 'p_star'].sort());
   assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
   out = await run({ histReply: { ok: false, status: 404 } });
   assert.equal(JSON.parse(out.calls.find(c => c.url.includes('/rpc/upsert_scores')).opts.body).p_rows.length, 1);
@@ -306,7 +306,7 @@ test('성공 직후 EX·lamp·채보·SP·DP·계정 변경은 시간 진행 없
 test('프로필과 첫·후속 1001행 청크 실패는 성공 이력을 확정하지 않음', async () => {
   for (const stage of ['profile', 'first', 'second']) {
     let chunks = 0;
-    const f = uploadScenario({ failure: url => stage === 'profile' ? url.includes('upsert_user_upload_profile')
+    const f = uploadScenario({ failure: url => stage === 'profile' ? url.includes('upsert_user_upload_profile_memory')
       : url.includes('upsert_scores') && ++chunks === (stage === 'first' ? 1 : 2) });
     const input = { charts: Array.from({ length: 1001 }, (_, i) => f.chart(i)) };
     assert.equal((await f.run(input)).ok, false);
@@ -334,7 +334,7 @@ test('profile→radar→전체 scores→완료 순서와 best-effort 실패 후 
     const f = uploadScenario({ completion });
     assert.equal((await f.run({ charts: Array.from({ length: 1001 }, (_, i) => f.chart(i)) })).ok, true);
     const endpoints = f.writes().map(c => c.url.split('/').at(-1));
-    assert.deepEqual(endpoints.slice(0, 5), ['upsert_user_upload_profile', 'upsert_user_radar', 'upsert_user_radar', 'upsert_scores', 'upsert_scores']);
+    assert.deepEqual(endpoints.slice(0, 5), ['upsert_user_upload_profile_memory', 'upsert_user_radar', 'upsert_user_radar', 'upsert_scores', 'upsert_scores']);
     assert.equal(endpoints.at(-1).includes('dump-trigger'), true);
     if (completion === 'rejected') assert.ok(f.diagnostics.some(line => line.includes('accepted=false')));
     const before = f.writes().length;

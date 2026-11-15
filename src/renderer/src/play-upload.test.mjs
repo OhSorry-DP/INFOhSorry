@@ -247,12 +247,12 @@ test('수동/pending/종료 업로드는 게임 없이 계속 실행, pending pl
   for (const trigger of ['manual', 'pending', 'final']) {
     calls.length = 0;
     assert.equal((await api.uploadProfile({ ...base, plays: [row(1)], gameRecognized: async () => false })).ok, true, trigger);
-    assert.equal(calls.some(x => x.url.endsWith('/rpc/upsert_user_upload_profile')), false);
+    assert.equal(calls.some(x => x.url.endsWith('/rpc/upsert_user_upload_profile_memory')), false);
   }
   for (const [i, plays] of [undefined, null, [], [row(1)]].entries()) {
     calls.length = 0;
     await api.uploadProfile({ ...base, charts: [{ title: 'new fixture', slot: 'DPA', diff: 'ANOTHER', exScore: 100 + i, lamp: 'HC' }], plays, gameRecognized: async () => true });
-    const sent = calls.find(x => x.url.endsWith('/rpc/upsert_user_upload_profile'));
+    const sent = calls.find(x => x.url.endsWith('/rpc/upsert_user_upload_profile_memory'));
     assert.equal(!!sent, true);
     if (sent) assert.equal('p_plays' in sent.body, false);
   }
@@ -260,7 +260,7 @@ test('수동/pending/종료 업로드는 게임 없이 계속 실행, pending pl
 test('전송 순간 재확인: serviceStatus 대기 중 게임이 종료되어도 기존 업로드는 유지', async () => {
   let recognized = true; let body;
   const api = sync({ window: { infohsorry: { serviceStatus: { get: async () => { recognized = false; return { uploadEnabled: true }; } } } },
-    fetch: async (url, options) => { if (url.endsWith('/rpc/upsert_user_upload_profile')) body = JSON.parse(options.body); return { ok: true, json: async () => [] }; } });
+    fetch: async (url, options) => { if (url.endsWith('/rpc/upsert_user_upload_profile_memory')) body = JSON.parse(options.body); return { ok: true, json: async () => [] }; } });
   assert.equal((await api.uploadProfile({ profile: { iidxId: 'C123456789012' }, charts: [], starResult: null,
     plays: [row(0)], gameRecognized: async () => recognized })).ok, true);
   assert.equal(body, undefined);
