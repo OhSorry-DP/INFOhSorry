@@ -11,6 +11,7 @@
 //   builds[] 는 게임 빌드별 offset 이고, 실행 중인 게임의 datecode 와 version 을 맞춰 고른다.
 //   ※ 최상위를 배열로 바꾸면 구버전 앱이 파일 전체를 거부한다(version 문자열 검사) — 유지할 것.
 import { getGameDatecode, datecodeNum } from './gameBuild';
+import { PROFILE_OFFSETS, PROFILE_NUMERIC_OFFSETS } from '../shared/profileOffsets';
 
 const GIST_OFFSETS_URL =
   'https://gist.githubusercontent.com/OhSorry-DP/b586710a7a6efc3a245da2c85db8d1f2/raw/offsets.json';
@@ -175,7 +176,7 @@ export async function getRemoteOffsets(force = false): Promise<RemoteOffsets | n
 //   2. 게임 datecode 를 읽어 version 이 같은 build 를 찾으면 그것 — matched
 //   3. datecode 는 읽었는데 일치 항목이 없으면 builds[0](최신) — latest (경고 대상)
 //   4. datecode 를 못 읽으면 builds[0] — blind
-export async function resolveBuild(): Promise<ResolvedBuild | null> {
+export async function resolveBuild(gameDatecode?: string | null): Promise<ResolvedBuild | null> {
   const remote = await getRemoteOffsets();
   if (!remote) return null;
 
@@ -188,7 +189,7 @@ export async function resolveBuild(): Promise<ResolvedBuild | null> {
     };
   }
 
-  const datecode = getGameDatecode();
+  const datecode = gameDatecode === undefined ? getGameDatecode() : gameDatecode;
   if (!datecode) return { build: builds[0], confidence: 'blind', gameDatecode: null };
 
   // datecode 비교는 끝 10자리 숫자로 — 접두사 표기가 달라도 같은 빌드면 매칭되게.
@@ -204,16 +205,48 @@ export async function resolveBuild(): Promise<ResolvedBuild | null> {
 
 // renderer(useProfile) 가 IPC 로 받는 프로필 offset — 매칭된 build 의 profile. 없으면 null.
 //   반환에 buildVersion 을 함께 실어, 저장된 스캔 결과가 다른 빌드 것인지 renderer 가 판별한다.
-export async function getRemoteProfileOffsets(): Promise<{
+export interface RemoteProfileSession { pid: number | null; generation: number }
+export async function getRemoteProfileOffsets(
+  session: RemoteProfileSession = { pid: null, generation: 0 },
+  gameDatecode?: string | null,
+): Promise<{
   profile: RemoteProfileMap | null;
   buildVersion: string | null;
   confidence: BuildConfidence | null;
+  profilePolicy: 'normal' | 'constants-only' | 'blocked';
+  session: RemoteProfileSession;
+  gameDatecode: string | null;
 } | null> {
-  const r = await resolveBuild();
+  const r = await resolveBuild(gameDatecode);
   if (!r) return null;
+  let profile: RemoteProfileMap | null = r.build.profile ?? null;
+  let profilePolicy: 'normal' | 'constants-only' | 'blocked' = 'normal';
+  const sessionValid = session !== null && Number.isSafeInteger(session.pid) && (session.pid as number) > 0
+    && Number.isSafeInteger(session.generation) && session.generation > 0;
+  if (r.confidence === 'latest') {
+    const measuredBuild = r.gameDatecode ? datecodeNum(r.gameDatecode) : null;
+    const constantsBuild = datecodeNum(PROFILE_OFFSETS.refluxVersion);
+    if (sessionValid && measuredBuild && constantsBuild && measuredBuild === constantsBuild) {
+      profilePolicy = 'constants-only';
+      profile = {
+        iidxId: PROFILE_OFFSETS.iidxId,
+        djName: PROFILE_OFFSETS.djName,
+        radar: PROFILE_NUMERIC_OFFSETS.radar ?? null,
+        dan: PROFILE_NUMERIC_OFFSETS.dan ?? null,
+        spRank: null,
+        dpRank: null,
+      };
+    } else {
+      profilePolicy = 'blocked';
+      profile = { iidxId: null, djName: null, radar: null, dan: null, spRank: null, dpRank: null };
+    }
+  }
   return {
-    profile: r.build.profile ?? null,
+    profile,
     buildVersion: r.build.version ?? null,
     confidence: r.confidence,
+    profilePolicy,
+    session,
+    gameDatecode: r.gameDatecode,
   };
 }

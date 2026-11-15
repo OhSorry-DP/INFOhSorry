@@ -16,14 +16,16 @@ function load(source, dependencies = {}, globals = {}) {
 }
 const datecodeNum = load(read('./gameBuild.ts'), { './memory': {} }).datecodeNum;
 const source = read('./offsetsRemote.ts');
+const profileConstants = load(read('../shared/profileOffsets.ts'), {});
 const defaults = { log: { markerScanFromJudge:144, markerDelta:24, settingsStateDelta:0x18, p2SettingsDelta:0x48, battleFlagDelta:0x28, gaugeWordP1:77, gaugeWordP2:78, playSpeedFromSettings:0x17a0, laneOrderP1FromSettings:0x37cc, laneOrderP2FromSettings:0x37ec, songStride:0x730, songIdOffset:0x5b0, songNoteOffset:0x370 }, detail: { laneWordsP1:3448385, laneWordsP2:3452299 } };
 
-function harness({ response, fail = false } = {}) {
+function harness({ response, fail = false, datecode = '2026111100', cachedDatecode = '2026111100' } = {}) {
   const urls = [];
   let finish;
   const fetch = url => { urls.push(url); return new Promise((resolve, reject) => { finish = () => fail ? reject(new Error('offline')) : resolve({ ok: true, json: async () => response }); }); };
-  const api = load(source, { './gameBuild': { getGameDatecode: () => '2026111100', datecodeNum }, '../shared/profileOffsets': {} }, { fetch, Date, console: { warn() {} } });
-  return { api, urls, finish: () => finish() };
+  let gameDatecodeCalls = 0;
+  const api = load(source, { './gameBuild': { getGameDatecode: () => { gameDatecodeCalls++; return cachedDatecode; }, datecodeNum }, '../shared/profileOffsets': profileConstants }, { fetch, Date, console: { warn() {} } });
+  return { api, urls, finish: () => finish(), datecode, gameDatecodeCalls: () => gameDatecodeCalls };
 }
 
 test('defaults agree with current play logger constants', () => {
@@ -84,4 +86,50 @@ test('requests only the configured gist URL and preserves existing resolver/prof
   assert.equal(profileResult.profile.djName, null);
   assert.equal(profileResult.buildVersion, 'P2D:J:B:A:2026111100');
   assert.equal(profileResult.confidence, 'matched');
+});
+
+async function profileHarness(response, gameDatecode, session = { pid: 1234, generation: 1 }, cachedDatecode = '2026111100') {
+  const h = harness({ response, gameDatecode, cachedDatecode });
+  h.api.startPlayLoggerOffsetsPreparation(); h.finish(); await h.api.getRemoteOffsets();
+  return { h, result: await h.api.getRemoteProfileOffsets(session, gameDatecode) };
+}
+
+test('latest constants match selects explicit constants-only map', async () => {
+  const { result } = await profileHarness({ version:'x', builds:[{version:'2026101400', profile:{iidxId:null}}] }, 'P2D:J:B:A:2026111100');
+  assert.equal(result.confidence, 'latest'); assert.equal(result.profilePolicy, 'constants-only');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.profile)), JSON.parse(JSON.stringify({ iidxId: profileConstants.PROFILE_OFFSETS.iidxId, djName: profileConstants.PROFILE_OFFSETS.djName, radar: profileConstants.PROFILE_NUMERIC_OFFSETS.radar, dan: profileConstants.PROFILE_NUMERIC_OFFSETS.dan, spRank: null, dpRank: null })));
+  assert.deepEqual(result.session, {pid:1234,generation:1}); assert.equal(result.gameDatecode, 'P2D:J:B:A:2026111100');
+});
+
+test('latest constants mismatch is blocked with six explicit nulls', async () => {
+  const { result } = await profileHarness({ version:'x', builds:[{version:'2026111100', profile:{djName:{offset:'0x1',encoding:'utf8'}}}] }, '2026101400');
+  assert.equal(result.profilePolicy, 'blocked');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.profile)), { iidxId:null, djName:null, radar:null, dan:null, spRank:null, dpRank:null });
+});
+
+test('matched profile keeps normal policy and selected map', async () => {
+  const profile = {djName:{offset:'0x1',encoding:'utf8'}};
+  const { result } = await profileHarness({ version:'x', builds:[{version:'2026111100', profile}] }, '2026111100');
+  assert.equal(result.profilePolicy, 'normal'); assert.deepEqual(result.profile, profile);
+});
+
+test('explicit null datecode is blind and keeps latest selected map', async () => {
+  const profile = {djName:{offset:'0x1',encoding:'utf8'}};
+  const { result } = await profileHarness({ version:'x', builds:[{version:'2026111100', profile}] }, null);
+  assert.equal(result.confidence, 'blind'); assert.equal(result.profilePolicy, 'normal'); assert.deepEqual(result.profile, profile);
+});
+
+test('legacy profile keeps normal policy and top-level map', async () => {
+  const profile = {iidxId:{offset:'0x2',encoding:'utf8'}};
+  const { result } = await profileHarness({ version:'legacy', profile }, '2026111200');
+  assert.equal(result.confidence, 'legacy'); assert.equal(result.profilePolicy, 'normal'); assert.deepEqual(result.profile, profile);
+});
+
+test('explicit null excludes cached datecode while implicit resolver keeps cache behavior', async () => {
+  const h = harness({ response:{version:'x',builds:[{version:'2026111100',profile:{djName:null}}]}, cachedDatecode:'2026111100' });
+  h.api.startPlayLoggerOffsetsPreparation(); h.finish(); await h.api.getRemoteOffsets();
+  const blind = await h.api.resolveBuild(null);
+  assert.equal(blind.confidence, 'blind'); assert.equal(blind.gameDatecode, null);
+  const cached = await h.api.resolveBuild();
+  assert.equal(cached.confidence, 'matched'); assert.equal(cached.gameDatecode, '2026111100');
 });
