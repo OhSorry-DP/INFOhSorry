@@ -18,7 +18,8 @@ function profile({ text = 'A123456789012', readOk = true, pids = [123, 123], pub
         readViaAnchor: async (...args) => { calls.push(['readViaAnchor', ...args]); return { ok: readOk, text, error: 'read failed' }; },
         setPlayAccount: async account => { calls.push(['setPlayAccount', account]); return publish(account); },
       },
-      session: { getState: async () => ({ pid: pids.length ? pids.shift() : 123 }) },
+      session: { getState: async () => ({ pid: pids.length ? pids.shift() : 123, generation: 1 }) },
+      offsets: { getProfile: async () => ({ profilePolicy: 'normal', profile: null }) },
     }, setTimeout: callback => { timers.push(callback); return timers.length; }, clearTimeout() {} },
   };
   const dependencies = {
@@ -39,6 +40,8 @@ test('주기 fresh 성공 pid123와 ID를 기존 setPlayAccount로 전달', asyn
   const { api, calls, timers } = profile();
   api.useProfile({ stage: 'ready' });
   await new Promise(resolve => setImmediate(resolve));
+  if (timers.length) timers.shift()();
+  await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(JSON.parse(JSON.stringify(calls.filter(call => call[0] === 'setPlayAccount'))), [['setPlayAccount', { pid: 123, iidxId: 'A123456789012' }]]);
 });
 
@@ -56,8 +59,8 @@ test('잘못된 ID, read 실패, pid 불일치 또는 없음이면 전달하지 
     { pids: [123, 124] },
     { pids: [undefined] },
   ]) {
-    const { calls } = profile(setup);
-    await new Promise(resolve => setImmediate(resolve));
+    const { api, calls } = profile(setup);
+    await api.readIidxIdFresh();
     assert.equal(calls.some(call => call[0] === 'setPlayAccount'), false);
   }
 });

@@ -1242,6 +1242,7 @@ export default function App() {
     djName: cardMeta?.djName ?? null, iidxId: cardId, iidxIdFormatted: formattedCardId,
     spRank: cardMeta?.spRank ?? null, dpRank: cardMeta?.dpRank ?? null,
     spRankInt: cardMeta?.spRankInt ?? null, dpRankInt: cardMeta?.dpRankInt ?? null,
+    spRankReadState: cardMeta?.spRankReadState ?? 'unread', dpRankReadState: cardMeta?.dpRankReadState ?? 'unread',
     spRadar: cardMeta?.spRadar ?? null, dpRadar: cardMeta?.dpRadar ?? null,
   };
   const cardProfile: ProfileInfo = cardId ? {
@@ -1249,10 +1250,12 @@ export default function App() {
     ...(cardBase ?? {}),
     ...(sameLive ? {
       djName: profile.djName ?? cardBase?.djName ?? emptyCardProfile.djName,
-      spRank: profile.spRank ?? cardBase?.spRank ?? null,
-      dpRank: profile.dpRank ?? cardBase?.dpRank ?? null,
-      spRankInt: profile.spRankInt ?? cardBase?.spRankInt ?? null,
-      dpRankInt: profile.dpRankInt ?? cardBase?.dpRankInt ?? null,
+      spRank: profile.spRankReadState === 'none' ? null : profile.spRank ?? cardBase?.spRank ?? null,
+      dpRank: profile.dpRankReadState === 'none' ? null : profile.dpRank ?? cardBase?.dpRank ?? null,
+      spRankInt: profile.spRankReadState === 'none' ? null : profile.spRankInt ?? cardBase?.spRankInt ?? null,
+      dpRankInt: profile.dpRankReadState === 'none' ? null : profile.dpRankInt ?? cardBase?.dpRankInt ?? null,
+      spRankReadState: profile.spRankReadState,
+      dpRankReadState: profile.dpRankReadState,
       spRadar: profile.spRadar ?? cardBase?.spRadar ?? null,
       dpRadar: profile.dpRadar ?? cardBase?.dpRadar ?? null,
     } : {}),
@@ -1264,8 +1267,8 @@ export default function App() {
     && rowsOwnerId === cardId);
   const legacyPublicFallback = publicFallbackAllowed && !(typeof cardMeta?.profileCapturedAt === 'number' && Number.isFinite(cardMeta.profileCapturedAt));
   const cardRankPublic = legacyPublicFallback ? currentUserPublic : { spRank: null, dpRank: null, dpRadar: null };
-  const cardSpRank = cardProfile.spRankInt ?? cardRankPublic.spRank;
-  const cardDpRank = cardProfile.dpRankInt ?? cardRankPublic.dpRank;
+  const cardSpRank = cardProfile.spRankReadState === 'none' ? null : (cardProfile.spRankInt ?? cardRankPublic.spRank);
+  const cardDpRank = cardProfile.dpRankReadState === 'none' ? null : (cardProfile.dpRankInt ?? cardRankPublic.dpRank);
   const liveCardRadar = sameLive && Boolean(profile.spRadar || profile.dpRadar);
   const snapshotCardRadar = Boolean(cardMeta?.profileCapturedAt != null && (cardMeta.spRadar || cardMeta.dpRadar));
   const legacyPublicRadar = legacyPublicFallback ? currentUserPublic.dpRadar : null;

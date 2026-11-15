@@ -27,10 +27,14 @@ import { addDiagLine } from './diagLog';
 //   구분해서, null 이면 옛 빌드 상수로 fallback 하지 않고 읽기를 건너뛴다.
 //   문자열 필드({offset,encoding,maxBytes})와 숫자 필드({offset,count,scale})가 같은 맵에 섞여 온다.
 type RemoteProfile = RemoteProfileMap | null;
+type ProfilePolicy = 'normal' | 'constants-only' | 'blocked';
+type RankReadState = 'value' | 'none' | 'unread';
 
 // gist profile offsets 모듈 캐시 — hook 이 마운트 시 채우고, hook 밖(업로드 재검증)에서도 참조한다.
 //   아직 안 채워졌으면 null → PROFILE_OFFSETS 코드 상수 fallback (hook 의 초기 동작과 동일).
 let cachedRemoteProfile: RemoteProfile = null;
+let cachedProfilePolicy: ProfilePolicy = 'blocked';
+let cachedProfileSession: { pid: number | null; generation: number } | null = null;
 
 const EXE_NAME = 'bm2dx.exe';
 const POLL_INTERVAL_MS = 5000;
@@ -117,7 +121,8 @@ export function pickNumericDef(
   return undefined;
 }
 
-async function readNumeric(key: NumericKey, remote: RemoteProfile): Promise<number[] | null> {
+async function readNumeric(key: NumericKey, remote: RemoteProfile, policy: ProfilePolicy = 'normal'): Promise<number[] | null> {
+  if (policy === 'blocked') return null;
   const def = pickNumericDef(key, remote);
   if (!def) return null;
   const r = await window.infohsorry.memory.readInts(
@@ -159,8 +164,8 @@ export function parseDanBlock(values: number[] | null): { sp: number | null; dp:
   return { sp: pick(values[0]), dp: pick(values[1]) };
 }
 
-function effective(key: FieldKey, remote: RemoteProfile): SavedSlot | null {
-  const saved = loadSaved(key);
+function effective(key: FieldKey, remote: RemoteProfile, policy: ProfilePolicy = 'normal'): SavedSlot | null {
+  const saved = policy === 'normal' ? loadSaved(key) : null;
   if (saved) return saved;
   const def = pickDef(key, remote);
   if (!def) return null; // 사용자 저장도, gist 도, 코드 상수도 없음
@@ -180,8 +185,9 @@ interface ReadFieldResult {
 
 const lastPlayAccountPublishError = { current: '' };
 
-async function readField(key: FieldKey, remote: RemoteProfile): Promise<ReadFieldResult> {
-  const slot = effective(key, remote);
+async function readField(key: FieldKey, remote: RemoteProfile, policy: ProfilePolicy = 'normal'): Promise<ReadFieldResult> {
+  if (policy === 'blocked') return { value: null, processMissing: false, error: '프로필 판독 차단' };
+  const slot = effective(key, remote, policy);
   if (!slot) return { value: null, processMissing: false, error: '프로필 offset 없음' };
   const maxBytes = pickDef(key, remote)?.maxBytes ?? 64;
   const r =
@@ -237,7 +243,21 @@ export async function readIidxIdFresh(): Promise<{
   //   final 트리거에서 upload.finalDone() 까지 못 가 main 이 6초 타임아웃을 기다리고
   //   마지막 플레이 업로드가 통째로 유실된다. 실패는 ok:false 로만 표현한다.
   try {
-    const result = await readField('iidxId', cachedRemoteProfile);
+    const before = await window.infohsorry.session.getState();
+    if (!before.pid) return { ok: false, iidxId: null, processMissing: false, error: 'session unavailable' };
+    if (!cachedProfileSession || before.pid !== cachedProfileSession.pid || before.generation !== cachedProfileSession.generation || cachedProfilePolicy === 'blocked') {
+      cachedProfileSession = null; cachedProfilePolicy = 'blocked'; cachedRemoteProfile = null;
+      const fetched = await window.infohsorry.offsets.getProfile();
+      if (!fetched) return { ok: false, iidxId: null, processMissing: false, error: 'profile policy unavailable' };
+      const afterFetch = await window.infohsorry.session.getState();
+      if (before.pid !== afterFetch.pid || before.generation !== afterFetch.generation) return { ok: false, iidxId: null, processMissing: false, error: 'session changed' };
+      cachedProfileSession = { pid: afterFetch.pid, generation: afterFetch.generation };
+      cachedProfilePolicy = fetched.profilePolicy;
+      cachedRemoteProfile = fetched.profile ?? null;
+    }
+    const result = await readField('iidxId', cachedRemoteProfile, cachedProfilePolicy);
+    const after = await window.infohsorry.session.getState();
+    if (before.pid !== after.pid || before.generation !== after.generation) return { ok: false, iidxId: null, processMissing: false, error: 'session changed' };
     return {
       ok: result.value != null,
       iidxId: result.value,
@@ -265,6 +285,8 @@ export interface ProfileInfo {
   // supabase users.sp_rank/dp_rank 와 같은 int 스케일 (12=皆伝 … 0=一級 … -8=九級). 미취득/미확인 → null.
   spRankInt: number | null;
   dpRankInt: number | null;
+  spRankReadState: RankReadState;
+  dpRankReadState: RankReadState;
   // 노트레이더 6지표 (실수값, 예: 92.34). 해당 스타일 데이터 없으면 null.
   spRadar: RadarValues | null;
   dpRadar: RadarValues | null;
@@ -277,6 +299,8 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
   //   그 문자열이 우선 (legacy 호환, 아래 legacySpRank/legacyDpRank).
   const [spDan, setSpDan] = useState<number | null>(null);
   const [dpDan, setDpDan] = useState<number | null>(null);
+  const [spRankReadState, setSpRankReadState] = useState<RankReadState>('unread');
+  const [dpRankReadState, setDpRankReadState] = useState<RankReadState>('unread');
   const [legacySpRank, setLegacySpRank] = useState<string | null>(null);
   const [legacyDpRank, setLegacyDpRank] = useState<string | null>(null);
   // 노트레이더 — JSON 문자열로 비교해서 값이 같으면 setState 를 건너뛴다 (매 poll 리렌더 방지).
@@ -288,19 +312,25 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
 
   // gist offsets.json 의 profile offset — 마운트 1회 fetch. ref 라 polling tick 이 항상 최신값 참조.
   const remoteRef = useRef<RemoteProfile>(null);
+  const policyRef = useRef<ProfilePolicy>('blocked');
+  const sessionRef = useRef<{ pid: number | null; generation: number } | null>(null);
+  const policyStatusRef = useRef<'pending' | 'ready' | 'failed'>('pending');
   useEffect(() => {
     let alive = true;
     window.infohsorry?.offsets
       ?.getProfile?.()
       .then((r) => {
         // main 이 게임 datecode 로 고른 build 의 profile — 빌드가 안 맞으면 main 이 이미 경고를 남긴다.
-        if (alive && r) {
+        if (alive && r && !sessionRef.current) {
           remoteRef.current = r.profile ?? null;
           cachedRemoteProfile = r.profile ?? null;
+          policyRef.current = r.profilePolicy;
+          cachedProfilePolicy = r.profilePolicy;
+          policyStatusRef.current = 'ready';
         }
       })
       .catch(() => {
-        /* gist 실패 — 코드 상수 fallback */
+        if (alive && !sessionRef.current) policyStatusRef.current = 'failed';
       });
     return () => {
       alive = false;
@@ -321,6 +351,8 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
       setLegacySpRank(null);
       setLegacyDpRank(null);
       setRadar(null);
+      setSpRankReadState('unread');
+      setDpRankReadState('unread');
       radarJsonRef.current = 'null';
     }
     const tick = async (): Promise<void> => {
@@ -331,18 +363,44 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
         return;
       }
       try {
+        const sessionBefore = await window.infohsorry.session.getState();
+        if (!sessionBefore.pid) { if (alive) timer = window.setTimeout(tick, POLL_INTERVAL_MS); return; }
+        if (!sessionRef.current || sessionRef.current.pid !== sessionBefore.pid || sessionRef.current.generation !== sessionBefore.generation || policyStatusRef.current !== 'ready') {
+          sessionRef.current = { pid: sessionBefore.pid, generation: sessionBefore.generation };
+          policyStatusRef.current = 'pending'; policyRef.current = 'blocked'; remoteRef.current = null;
+          cachedProfilePolicy = 'blocked'; cachedRemoteProfile = null; cachedProfileSession = null;
+          setDjName(null); setIidxId(null); setSpDan(null); setDpDan(null); setLegacySpRank(null); setLegacyDpRank(null); setRadar(null);
+          setSpRankReadState('unread'); setDpRankReadState('unread'); radarJsonRef.current = 'null';
+          try {
+            const prepared = await window.infohsorry.offsets.getProfile();
+            const current = await window.infohsorry.session.getState();
+            if (prepared && current.pid === sessionBefore.pid && current.generation === sessionBefore.generation) {
+              remoteRef.current = prepared.profile ?? null; policyRef.current = prepared.profilePolicy; policyStatusRef.current = 'ready';
+              cachedRemoteProfile = prepared.profile ?? null; cachedProfilePolicy = prepared.profilePolicy; cachedProfileSession = { pid: current.pid, generation: current.generation };
+            }
+          } catch { policyStatusRef.current = 'failed'; }
+          if (alive) timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+          return;
+        }
+        const policy = policyRef.current;
+        if (policy === 'blocked') { if (alive) timer = window.setTimeout(tick, POLL_INTERVAL_MS); return; }
         const remote = remoteRef.current;
         // 단위/레이더는 정수 블록 2번 read 로 끝난다 (문자열 필드처럼 인코딩별 시도 불필요).
         // 문자열 단위 슬롯은 사용자가 MemoryScanner 로 저장했을 때만 읽는다 (기본 offset 은 이제 없음).
         const [djR, idR, radarR, danR, legacySpR, legacyDpR] = await Promise.allSettled([
-          readField('djName', remote),
-          readField('iidxId', remote),
-          readNumeric('radar', remote),
-          readNumeric('dan', remote),
-          loadSaved('spRank') ? readField('spRank', remote) : Promise.resolve({ value: null, processMissing: false }),
-          loadSaved('dpRank') ? readField('dpRank', remote) : Promise.resolve({ value: null, processMissing: false }),
+          readField('djName', remote, policy),
+          readField('iidxId', remote, policy),
+          readNumeric('radar', remote, policy),
+          readNumeric('dan', remote, policy),
+          policy === 'normal' && loadSaved('spRank') ? readField('spRank', remote, policy) : Promise.resolve({ value: null, processMissing: false }),
+          policy === 'normal' && loadSaved('dpRank') ? readField('dpRank', remote, policy) : Promise.resolve({ value: null, processMissing: false }),
         ]);
         if (!alive) return;
+        const sessionAfter = await window.infohsorry.session.getState();
+        if (sessionAfter.pid !== sessionBefore.pid || sessionAfter.generation !== sessionBefore.generation) {
+          if (alive) timer = window.setTimeout(tick, POLL_INTERVAL_MS);
+          return;
+        }
         // stale closure 방지 — 이 effect 는 deps 가 [refluxState.stage] 뿐이라 djName 등 state 를
         //   생성 시점 값으로 캡처한다. 원시값의 동일 setState 는 React 가 bailout 한다.
         if (djR.status === 'fulfilled') {
@@ -367,21 +425,33 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
           setIidxId(idR.value.value);
         }
         else console.warn('[useProfile] iidxId 읽기 실패:', idR.reason);
-        if (danR.status === 'fulfilled') {
+        const liveId = idR.status === 'fulfilled' ? idR.value.value : null;
+        const radarValue = radarR.status === 'fulfilled' ? parseRadarBlock(radarR.value, pickNumericDef('radar', remote)?.scale) : null;
+        const authoritative = Boolean(liveId && /^[A-Z]\d{12}$/.test(liveId) && radarValue !== null && policy === policyRef.current);
+        let spAuthoritative = false, dpAuthoritative = false;
+        if (authoritative && danR.status === 'fulfilled' && danR.value && danR.value.length >= 2) {
           const dan = parseDanBlock(danR.value);
-          setSpDan(dan.sp);
-          setDpDan(dan.dp);
+          const state = (v: number | null): RankReadState => v === -1 ? 'none' : v == null ? 'unread' : 'value';
+          spAuthoritative = dan.sp != null; dpAuthoritative = dan.dp != null;
+          if (spAuthoritative) setSpDan(dan.sp);
+          if (dpAuthoritative) setDpDan(dan.dp);
+          setSpRankReadState(state(dan.sp)); setDpRankReadState(state(dan.dp));
         } else {
+          setSpRankReadState('unread'); setDpRankReadState('unread');
+        }
+        if (danR.status !== 'fulfilled') {
           console.warn('[useProfile] 단위 읽기 실패:', danR.reason);
         }
-        if (legacySpR.status === 'fulfilled') setLegacySpRank(legacySpR.value.value);
+        if (spAuthoritative) setLegacySpRank(null);
+        else if (legacySpR.status === 'fulfilled') setLegacySpRank(legacySpR.value.value);
         else console.warn('[useProfile] SP 단위 읽기 실패:', legacySpR.reason);
-        if (legacyDpR.status === 'fulfilled') setLegacyDpRank(legacyDpR.value.value);
+        if (dpAuthoritative) setLegacyDpRank(null);
+        else if (legacyDpR.status === 'fulfilled') setLegacyDpRank(legacyDpR.value.value);
         else console.warn('[useProfile] DP 단위 읽기 실패:', legacyDpR.reason);
         // 레이더는 객체라 값이 같아도 매번 새 참조 → JSON 시그니처(ref) 로 비교해야 리렌더가 안 샌다.
         //   (이 effect 는 stage 에만 의존해서 state 를 stale 하게 캡처하므로 state 비교로는 안 된다.)
         if (radarR.status === 'fulfilled') {
-          const nextRadar = parseRadarBlock(radarR.value, pickNumericDef('radar', remote)?.scale);
+          const nextRadar = radarValue;
           const nextJson = JSON.stringify(nextRadar);
           if (nextJson !== radarJsonRef.current) {
             radarJsonRef.current = nextJson;
@@ -418,10 +488,11 @@ export function useProfile(refluxState: RefluxState): ProfileInfo {
     djName,
     iidxId,
     iidxIdFormatted,
-    spRank: legacySpRank ?? danName(spDan),
-    dpRank: legacyDpRank ?? danName(dpDan),
-    spRankInt: danIndexToRankInt(spDan),
-    dpRankInt: danIndexToRankInt(dpDan),
+    spRank: spRankReadState === 'none' ? null : spRankReadState === 'value' ? danName(spDan) : legacySpRank ?? danName(spDan),
+    dpRank: dpRankReadState === 'none' ? null : dpRankReadState === 'value' ? danName(dpDan) : legacyDpRank ?? danName(dpDan),
+    spRankInt: spRankReadState === 'value' ? danIndexToRankInt(spDan) : null,
+    dpRankInt: dpRankReadState === 'value' ? danIndexToRankInt(dpDan) : null,
+    spRankReadState, dpRankReadState,
     spRadar: radar?.sp ?? null,
     dpRadar: radar?.dp ?? null,
   };
