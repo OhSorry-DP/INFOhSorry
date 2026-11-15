@@ -73,10 +73,10 @@ export function parseOffsetsText(text: string): Partial<Record<OffsetKey, bigint
 
 // 판정 블록 근처 96바이트에서 마커 주소를 찾는다. 없으면 null.
 // buf 는 judgeData + markerScanFromJudge 부터 읽은 96바이트
-export function findMarkerDelta(buf: Buffer): number | null {
+export function findMarkerDelta(buf: Buffer, markerDelta: number = PLAY_LOG_LAYOUT.markerDelta): number | null {
   const idx: number[] = [];
   for (let i = 0; i + 4 <= buf.length; i += 4) if (buf.readInt32LE(i) > 10000) idx.push(i);
-  if (idx.length >= 3 && idx[1] - idx[0] === 8 && idx[2] - idx[1] === 8) return idx[1] + PLAY_LOG_LAYOUT.markerDelta;
+  if (idx.length >= 3 && idx[1] - idx[0] === 8 && idx[2] - idx[1] === 8) return idx[1] + markerDelta;
   return null;
 }
 
@@ -93,8 +93,8 @@ export function rankOf(rate: number): string {
 }
 
 // 곡 목록 버퍼에서 ID 로 곡명과 난이도별 노트 수를 찾는다
-export function lookupSongInBuffer(buf: Buffer, id: number, diff: number): { title: string; notes: number } | null {
-  const L = PLAY_LOG_LAYOUT;
+export function lookupSongInBuffer(buf: Buffer, id: number, diff: number, layout: { songStride: number; songIdOffset: number; songNoteOffset: number; songTitleBytes?: number; songCount?: number } = PLAY_LOG_LAYOUT): { title: string; notes: number } | null {
+  const L = { ...PLAY_LOG_LAYOUT, ...layout };
   const count = Math.min(L.songCount, Math.floor(buf.length / L.songStride));
   for (let e = 0; e < count; e++) {
     const o = e * L.songStride;
@@ -210,7 +210,7 @@ export interface PlaySnapshot {
 }
 
 // 한 플레이 = CSV 한 줄 (PLAY_LOG_HEADER 와 같은 열 순서)
-export function buildPlayRow(s: PlaySnapshot): string {
+export function buildPlayRow(s: PlaySnapshot, battleFlagDelta: number = PLAY_LOG_LAYOUT.battleFlagDelta): string {
   const rate = s.notes > 0 ? s.exScore / (s.notes * 2) : 0;
   return [
     s.timestamp,
@@ -228,7 +228,7 @@ export function buildPlayRow(s: PlaySnapshot): string {
     csvField(s.judge16.join(' ')),
     csvField(s.p1Settings.join(' ')),
     csvField(s.p2Settings.join(' ')),
-    s.p1Settings[PLAY_LOG_LAYOUT.battleFlagDelta / 4] ?? 0,
+    s.p1Settings[battleFlagDelta / 4] ?? 0,
     s.gauge[0],
     s.gauge[1],
     s.source,

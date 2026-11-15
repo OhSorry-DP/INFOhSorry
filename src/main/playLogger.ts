@@ -7,6 +7,7 @@ import { dirname } from 'path';
 import { accountPlayCsvPath, accountPlayDetailPath } from './accountTsvStore';
 import { LANE_BLOCK_WORDS, PLAY_DETAIL_LAYOUT, PlayDetailTracker, type DetailSample } from './playDetail';
 import { closeHandle, findInfinitas, readBytes, type InfinitasHandle } from './memory';
+import type { PlayLoggerLayout, PlayLoggerSelection } from './offsetsRemote';
 import {
   PLAY_LOG_HEADER,
   PLAY_LOG_HEADER_V2,
@@ -41,6 +42,7 @@ export interface PlayLoggerOptions {
   /** Reflux 가 쓰는 offsets.txt 경로 (songList, judgeData, playSettings, playData 를 여기서 읽는다) */
   offsetsPath: string;
   log: (line: string) => void;
+  selectPlayLoggerLayout?: (gameVersion: string, startedAt: number, now: number) => PlayLoggerSelection;
 }
 
 interface Addresses {
@@ -88,6 +90,10 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
   let attachedAt = 0;
   let detailTracker: PlayDetailTracker | null = null;
   let sampler: NodeJS.Timeout | null = null;
+  let layoutStartedAt: number | null = null;
+  let layout: PlayLoggerLayout | null = null;
+  let layoutSelectionDone = false;
+  let blockedDiagnostic = '';
 
   const account = (game: InfinitasHandle): string | null => {
     try {
@@ -127,13 +133,13 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
     if (sampler) clearTimeout(sampler);
     sampler = null;
   };
-  const readDetailSample = (): DetailSample => {
+  const readDetailSample = (activeLayout: PlayLoggerLayout | null = layout): DetailSample => {
     const a = addr!;
     const h = handle!.handle;
     return {
       judge: ints(h, a.judge, 16),
-      p1Lanes: ints(h, a.judge + BigInt(PLAY_DETAIL_LAYOUT.laneWordsP1 * 4), LANE_BLOCK_WORDS),
-      p2Lanes: ints(h, a.judge + BigInt(PLAY_DETAIL_LAYOUT.laneWordsP2 * 4), LANE_BLOCK_WORDS),
+      p1Lanes: ints(h, a.judge + BigInt((activeLayout?.detail.laneWordsP1 ?? PLAY_DETAIL_LAYOUT.laneWordsP1) * 4), LANE_BLOCK_WORDS),
+      p2Lanes: ints(h, a.judge + BigInt((activeLayout?.detail.laneWordsP2 ?? PLAY_DETAIL_LAYOUT.laneWordsP2) * 4), LANE_BLOCK_WORDS),
       at: performance.now(),
     };
   };
@@ -169,6 +175,9 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
     prev = null;
     fingerprint = null;
     attachedAt = 0;
+    layout = null;
+    layoutSelectionDone = false;
+    layoutStartedAt = null;
   };
 
   // 게임에 붙는다. offsets.txt 가 없거나 게임이 떠 있지 않으면 false
@@ -176,12 +185,17 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
     if (handle) return true;
     const found = findInfinitas(GAME_EXE);
     if (!found) {
+      layoutStartedAt = null;
       pid = null;
       observed.clear();
       return false;
     }
     try {
       if (pid !== found.pid) {
+        layoutStartedAt = performance.now();
+        layout = null;
+        layoutSelectionDone = false;
+        blockedDiagnostic = '';
         pid = found.pid;
         observed.clear();
         versions = { appVersion: opts.appVersion ?? '', gameVersion: '' };
@@ -201,13 +215,37 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
         return false;
       }
       if (!sameFile(before, after)) return false;
+      if (layoutStartedAt === null) layoutStartedAt = performance.now();
+      const selection = opts.selectPlayLoggerLayout && !layoutSelectionDone
+        ? opts.selectPlayLoggerLayout(versions.gameVersion, layoutStartedAt, performance.now()) : undefined;
+      if (selection?.state === 'waiting' || selection?.state === 'blocked') {
+        if (selection.state === 'blocked') {
+          const issues = selection.issues.join(',') || '-';
+          const key = `${found.pid}/${issues}`;
+          if (blockedDiagnostic !== key) {
+            blockedDiagnostic = key;
+            opts.log(`[playlog] layout blocked pid=${found.pid} version=${versions.gameVersion || '?'} build=${selection.build ?? '?'} issues=${issues} unknown=${selection.unknownKeys.join(',') || '-'}`);
+          }
+        }
+        return false;
+      }
+      const readySelection = selection?.state === 'ready' ? selection : undefined;
       if (!offs.judgeData || !offs.playSettings || !offs.playData || !offs.songList) {
         diagnose(-7, account(found));
         return false;
       }
+      // ready layout 은 위 -7 검사를 통과해 attach 가 성공할 때만 고정한다(layout 진단 로그도 그때 한 번).
+      if (!opts.selectPlayLoggerLayout) layoutSelectionDone = true;
       // offsets.txt 의 절대주소(선호 베이스 기준) -> 지금 프로세스의 실제 주소
       const live = (abs: bigint) => found.modBaseAddr + (abs - PREFERRED_BASE);
       handle = found;
+      if (readySelection) {
+        layout = readySelection.layout;
+        layoutSelectionDone = true;
+        if (readySelection.timedOut) opts.log(`[playlog] layout timeout pid=${found.pid} after=1000ms`);
+        const defaults = readySelection.defaults.map(d => `${d.key}:${d.reason}`);
+        opts.log(`[playlog] layout pid=${found.pid} version=${versions.gameVersion || '?'} build=${readySelection.build ?? '?'} applied=${readySelection.applied.join(',') || '-'} defaults=${defaults.join(',') || '-'} unknown=${readySelection.unknownKeys.join(',') || '-'}`);
+      }
       addr = {
         judge: live(offs.judgeData),
         playSettings: live(offs.playSettings),
@@ -229,8 +267,9 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
     const a = addr!;
     const h = handle!.handle;
     if (a.marker === null) {
-      const scanAt = a.judge + BigInt(L.markerScanFromJudge);
-      const d = findMarkerDelta(readBytes(h, scanAt, 96));
+      const activeLayout = layout?.log ?? L;
+      const scanAt = a.judge + BigInt(activeLayout.markerScanFromJudge);
+      const d = findMarkerDelta(readBytes(h, scanAt, 96), activeLayout.markerDelta);
       if (d === null) {
         if (performance.now() - attachedAt >= 30000) diagnose(-5, account(handle!));
         return 'select';
@@ -238,7 +277,8 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       a.marker = scanAt + BigInt(d);
     }
     const marker = readBytes(h, a.marker, 4).readInt32LE(0);
-    const ps18 = readBytes(h, a.playSettings - BigInt(L.settingsStateDelta), 4).readInt32LE(0);
+    const activeLayout = layout?.log ?? L;
+    const ps18 = readBytes(h, a.playSettings - BigInt(activeLayout.settingsStateDelta), 4).readInt32LE(0);
     return decideState(marker, ps18);
   };
 
@@ -246,6 +286,7 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
   const buildSnapshotRow = (): { row: string; songId: number; source: string; timestamp: string } | null => {
     const a = addr!;
     const h = handle!.handle;
+    const activeLayout = layout?.log ?? L;
     const judge16 = ints(h, a.judge, 16);
     const p1Settings = ints(h, a.playSettings, L.settingsWords);
     const readLaneOrder = (offset: number): string => {
@@ -255,12 +296,12 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
           ? order.join('') : '';
       } catch { return ''; }
     };
-    const laneOrderP1 = readLaneOrder(L.laneOrderP1FromSettings);
-    const laneOrderP2 = readLaneOrder(L.laneOrderP2FromSettings);
-    const battle = p1Settings[L.battleFlagDelta / 4] === 1;
-    const playSpeed = playSpeedFromSettingValue(readBytes(h, a.playSettings + BigInt(L.playSpeedFromSettings), 4).readInt32LE(0));
+    const laneOrderP1 = readLaneOrder(activeLayout.laneOrderP1FromSettings);
+    const laneOrderP2 = readLaneOrder(activeLayout.laneOrderP2FromSettings);
+    const battle = p1Settings[activeLayout.battleFlagDelta / 4] === 1;
+    const playSpeed = playSpeedFromSettingValue(readBytes(h, a.playSettings + BigInt(activeLayout.playSpeedFromSettings), 4).readInt32LE(0));
     const currentSong = a.currentSong ? ints(h, a.currentSong, L.currentSongWords) : new Array<number>(L.currentSongWords).fill(0);
-    const songBuf = readBytes(h, a.songList, L.songCount * L.songStride);
+    const songBuf = readBytes(h, a.songList, L.songCount * activeLayout.songStride);
     const speedChanged = playSpeed !== null && playSpeed !== 1;
     const play = resolvePlay({
       playData: ints(h, a.playData, L.playDataWords),
@@ -269,13 +310,13 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       battle,
       speedChanged,
       chartNotes: speedChanged ? {
-        sp: lookupSongInBuffer(songBuf, currentSong[0], currentSong[1])?.notes ?? 0,
-        dp: lookupSongInBuffer(songBuf, currentSong[0], currentSong[1] + 5)?.notes ?? 0,
+        sp: lookupSongInBuffer(songBuf, currentSong[0], currentSong[1], activeLayout)?.notes ?? 0,
+        dp: lookupSongInBuffer(songBuf, currentSong[0], currentSong[1] + 5, activeLayout)?.notes ?? 0,
       } : undefined,
     });
     if (!play) return null;
-    const song = lookupSongInBuffer(songBuf, play.songId, play.diff) ?? { title: '', notes: 0 };
-    const gauge = ints(h, a.judge + BigInt(L.gaugeWordP1 * 4), 2);
+    const song = lookupSongInBuffer(songBuf, play.songId, play.diff, activeLayout) ?? { title: '', notes: 0 };
+    const gauge = ints(h, a.judge + BigInt(activeLayout.gaugeWordP1 * 4), 2);
     const timestamp = new Date().toISOString();
     const row = buildPlayRow({
       timestamp,
@@ -290,14 +331,14 @@ export function startPlayLogger(opts: PlayLoggerOptions): () => void {
       lamp: play.lamp,
       judge16,
       p1Settings,
-      p2Settings: ints(h, a.playSettings + BigInt(L.p2SettingsDelta), L.settingsWords),
+      p2Settings: ints(h, a.playSettings + BigInt(activeLayout.p2SettingsDelta), L.settingsWords),
       gauge: [gauge[0], gauge[1]],
       source: play.source,
       ...versions,
       playSpeed,
       laneOrderP1,
       laneOrderP2,
-    });
+    }, activeLayout.battleFlagDelta);
     return { row, songId: play.songId, source: play.source, timestamp };
   };
 

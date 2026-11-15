@@ -22,7 +22,7 @@ function fixture() {
   const timers = new Map();
   const s = { pid: 1, id: 'A123456789012', marker: true, playing: true, song: 1,
     mtimeMs: 1, size: 10, missing: false, invalid: false, racing: false, fail: '', memoryFail: false,
-    rows: [], details: [], logs: [], closed: [], appends: 0, scans: 0, stats: 0, versions: 0, addresses: [], laneFailP1: false, laneFailP2: false, laneP1: [0,1,2,3,4,5,6], laneP2: [6,5,4,3,2,1,0], header: '', headerWritten: false };
+    rows: [], details: [], logs: [], closed: [], appends: 0, scans: 0, stats: 0, versions: 0, addresses: [], laneFailP1: false, laneFailP2: false, laneP1: [0,1,2,3,4,5,6], laneP2: [6,5,4,3,2,1,0], header: '', headerWritten: false, selectLayout: null, selectionCalls: 0, songEntries: [] };
   const fs = {
     statSync() { s.stats++; if (s.missing) throw Error('missing'); return { mtimeMs: s.mtimeMs, size: s.size }; },
     readFileSync(file) { if (String(file).endsWith('plays.csv')) return s.header; if (s.racing) s.mtimeMs++; return s.invalid ? '' : ['judgeData','playSettings','playData','songList'].map((k,i) => `${k}=0x${(0x140001000n + BigInt(i * 4096)).toString(16)}`).join('\n'); },
@@ -35,17 +35,25 @@ function fixture() {
     findInfinitas: () => s.pid ? { pid: s.pid, handle: s.pid, modBaseAddr: 0x140000000n } : null,
     closeHandle: h => s.closed.push(h),
     readBytes(h, address, size) {
-      if (size !== 192) s.addresses.push(address); // 192B = 플레이 상세 레인 블록 (playDetail.test 와 아래 상세 테스트에서 따로 본다)
+      if (size !== 192) s.addresses.push({ address, size }); // 상세 레인 블록 이외의 요청 기록
       const b = Buffer.alloc(size);
-      if (address === 0x1400057ccn) { if (s.laneFailP1) throw Error('p1 lane read'); s.laneP1.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
-      if (address === 0x1400057ecn) { if (s.laneFailP2) throw Error('p2 lane read'); s.laneP2.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
-      if (size === 96) {
+      if (address === 0x1400057ccn + BigInt(s.laneOffsetP1 ?? 0)) { if (s.laneFailP1) throw Error('p1 lane read'); s.laneP1.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
+      if (address === 0x1400057ecn + BigInt(s.laneOffsetP2 ?? 0)) { if (s.laneFailP2) throw Error('p2 lane read'); s.laneP2.forEach((v,i) => b.writeInt32LE(v,i*4)); return b; }
+      if (address === 0x140004000n && size > 0x1000) {
+        for (const entry of s.songEntries) {
+          const o = entry.index * entry.stride;
+          if (o + entry.stride > size) continue;
+          b.writeInt32LE(entry.id, o + entry.idOffset);
+          b.writeInt32LE(entry.notes ?? 100, o + entry.noteOffset);
+          b.write(entry.title ?? 'Tune', o, 'utf16le');
+        }
+      } else if (size === 96) {
         s.scans++;
         if (s.marker) for (const i of [0,8,16]) b.writeInt32LE(20000,i);
-      } else if (address === 0x1400010b0n) b.writeInt32LE(s.playing ? 1 : 0);
+      } else if (address === 0x1400010b0n + BigInt(s.markerOffset ?? 0)) b.writeInt32LE(s.playing ? 1 : 0);
       else if (address === 0x140001fe8n) b.writeInt32LE(0);
       else if (address === 0x140003000n) b.writeInt32LE(s.song);
-      else if (address === 0x1400037a0n) b.writeInt32LE(10); // playSettings + 0x17a0 = 속도 단계 10 (1.00)
+      else if (address === 0x1400037a0n + BigInt(s.speedOffset ?? 0)) b.writeInt32LE(10); // 속도 단계 10 (1.00)
       if (s.memoryFail && size === 64) throw Error('memory');
       if (s.detailFail && size === 192) throw Error('detail');
       return b;
@@ -61,7 +69,8 @@ function fixture() {
   });
   const stop = api.startPlayLogger({ offsetsPath: '/offsets', appVersion: 'app',
     getGameVersion: () => { s.versions++; return 'real-game'; }, getAccount: () => s.id,
-    onAppend: () => s.appends++, log: line => s.logs.push(line) });
+    onAppend: () => s.appends++, log: line => s.logs.push(line),
+    selectPlayLoggerLayout: (...args) => { if (!s.selectLayout) return { state: 'ready', build: null, layout: baseLayout(), applied: [], defaults: [], unknownKeys: [], timedOut: false }; s.selectionCalls++; return s.selectLayout(...args); } });
   function advance(to) {
     for (;;) {
       const next = [...timers].filter(([,t]) => t.at <= to).sort((a,b) => a[1].at-b[1].at || a[0]-b[0])[0];
@@ -92,6 +101,73 @@ test('lane order is read independently and invalid sides become empty', () => {
     else assert.equal(lane[1], '');
     f.stop();
   }
+});
+
+const baseLayout = () => ({ log: { ...play.PLAY_LOG_LAYOUT }, detail: { ...detail.PLAY_DETAIL_LAYOUT } });
+const ready = (layout = baseLayout(), applied = [], timedOut = false) => ({ state: 'ready', build: 'test', layout, applied, defaults: [], unknownKeys: [], timedOut });
+
+test('가변 바이트 오프셋이 실제 readBytes 주소에 반영되고 곡 목록 크기는 stride를 따른다', () => {
+  const f = fixture(); const L = baseLayout();
+  L.log.laneOrderP1FromSettings += 4; L.log.playSpeedFromSettings += 8;
+  L.log.p2SettingsDelta += 8; L.log.settingsStateDelta += 12;
+  L.log.markerScanFromJudge += 12; L.log.markerDelta += 12;
+  L.log.songStride += 16; L.log.songIdOffset += 4; L.log.songNoteOffset += 8;
+  f.s.laneOffsetP1 = 4;
+  f.s.speedOffset = 8;
+  f.s.markerOffset = 24;
+  f.s.selectLayout = () => ready(L, ['log.laneOrderP1FromSettings=15312']);
+  f.s.songEntries = [{ index: 0, stride: L.log.songStride, idOffset: L.log.songIdOffset, noteOffset: L.log.songNoteOffset, id: 1, title: 'Found' }];
+  f.advance(2000); f.result();
+  assert.ok(f.s.addresses.some(x => x.size === 28 && x.address === 0x1400057ccn + 4n));
+  assert.ok(f.s.addresses.some(x => x.size === 4 && x.address === 0x1400037a0n + 8n));
+  assert.ok(f.s.addresses.some(x => x.size === 44 && x.address === 0x140002048n + 8n));
+  assert.ok(f.s.addresses.some(x => x.size === 4 && x.address === 0x140001fe8n - 12n));
+  assert.ok(f.s.addresses.some(x => x.size === 96 && x.address === 0x140001090n + 12n));
+  assert.ok(f.s.addresses.some(x => x.size === 4 && x.address === 0x1400010b0n + 24n));
+  assert.ok(f.s.addresses.some(x => x.address === 0x140004000n && x.size === 2600 * L.log.songStride));
+  assert.equal(f.s.rows.length, 1); assert.equal(fields(f.s.rows[0])[2], 'Found');
+  assert.ok(f.s.logs.some(x => x.includes('applied=log.laneOrderP1FromSettings=15312')));
+  f.stop();
+});
+
+test('gauge 두 워드 연속 읽기와 CSV 열, battleFlagDelta 분기와 CSV가 같은 layout을 쓴다', () => {
+  const f = fixture(); const L = baseLayout(); L.log.gaugeWordP1 += 2; L.log.battleFlagDelta += 4;
+  f.s.selectLayout = () => ready(L);
+  f.advance(2000); f.result();
+  const gauge = f.s.addresses.find(x => x.address === 0x140001000n + BigInt(L.log.gaugeWordP1 * 4));
+  assert.equal(gauge.size, 8);
+  const row = fields(f.s.rows[0]);
+  assert.equal(row[15], '0'); assert.equal(row[16], '0'); assert.equal(row[17], '0');
+  f.stop();
+});
+
+test('waiting과 blocked는 attach 데이터를 읽지 않고 핸들을 닫으며 issues별 차단 로그를 한 번 남긴다', () => {
+  const w = fixture(); w.s.selectLayout = () => ({ state: 'waiting' }); w.advance(4000);
+  assert.equal(w.s.scans, 0); assert.equal(w.s.closed.length, 2); assert.equal(w.s.rows.length, 0); w.stop();
+  const b = fixture(); b.s.selectLayout = () => ({ state: 'blocked', build: 'x', issues: ['k:bad'], unknownKeys: [] }); b.advance(6000);
+  assert.equal(b.s.scans, 0); assert.equal(b.s.rows.length, 0); assert.equal(b.s.closed.length, 3);
+  assert.equal(b.s.logs.filter(x => x.includes('layout blocked')).length, 1); b.stop();
+});
+
+test('ready 선택은 -7 재시도 후 attach 성공에서만 고정하고 실패 시 재선택한다', () => {
+  const f = fixture(); const a = baseLayout(); const b = baseLayout(); b.log.markerDelta += 4;
+  f.s.invalid = true; f.s.selectLayout = () => f.s.selectionCalls === 1 ? ready(a) : ready(b);
+  f.advance(2000); assert.equal(f.s.closed.length, 1); assert.equal(f.s.selectionCalls, 1);
+  assert.equal(f.s.logs.filter(x => x.includes('[playlog] layout pid')).length, 0);
+  f.s.invalid = false; f.s.markerOffset = 4; f.advance(4000);
+  assert.equal(f.s.selectionCalls, 2); assert.equal(f.s.logs.filter(x => x.includes('[playlog] layout pid')).length, 1);
+  f.s.playing = false; f.advance(4500); f.advance(6000); assert.equal(f.s.rows.length, 2);
+  assert.equal(f.s.addresses.some(x => x.address === 0x1400010b4n), true); f.stop();
+});
+
+test('상수 attach는 연결 중 유지하고 detach 뒤 새 선택값을 적용하며 미지정은 상수 주소를 쓴다', () => {
+  const f = fixture(); f.advance(2000); const initialScans = f.s.scans;
+  const L = baseLayout(); L.log.markerScanFromJudge += 8;
+  f.s.selectLayout = () => ready(L); f.s.mtimeMs++; f.advance(2500);
+  assert.equal(f.s.addresses.some(x => x.address === 0x140001090n), true);
+  f.advance(3000); assert.equal(f.s.addresses.some(x => x.address === 0x140001098n), true);
+  assert.ok(initialScans > 0); f.stop();
+  const g = fixture(); g.advance(2000); assert.ok(g.s.addresses.some(x => x.address === 0x140001090n)); g.stop();
 });
 
 test('only recognized 19, 21, and 22 column headers are upgraded while old data is preserved', () => {
