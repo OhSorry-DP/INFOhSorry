@@ -218,7 +218,36 @@ export async function getRemoteProfileOffsets(
   gameDatecode: string | null;
 } | null> {
   const r = await resolveBuild(gameDatecode);
-  if (!r) return null;
+  if (!r) {
+    // 인자 없는 기존 호출은 getGameDatecode() 기반 동작과 동일하게 null을 유지한다.
+    if (gameDatecode === undefined) return null;
+    const sessionValid = session !== null && Number.isSafeInteger(session.pid) && (session.pid as number) > 0
+      && Number.isSafeInteger(session.generation) && session.generation > 0;
+    let profile: RemoteProfileMap | null = null;
+    let profilePolicy: 'normal' | 'constants-only' | 'blocked' = 'normal';
+    if (!sessionValid) {
+      profilePolicy = 'blocked';
+      profile = { iidxId: null, djName: null, radar: null, dan: null, spRank: null, dpRank: null };
+    } else if (gameDatecode !== null) {
+      const measuredBuild = datecodeNum(gameDatecode);
+      const constantsBuild = datecodeNum(PROFILE_OFFSETS.refluxVersion);
+      if (measuredBuild !== 0 && constantsBuild !== 0 && measuredBuild === constantsBuild) {
+        profilePolicy = 'constants-only';
+        profile = {
+          iidxId: PROFILE_OFFSETS.iidxId,
+          djName: PROFILE_OFFSETS.djName,
+          radar: PROFILE_NUMERIC_OFFSETS.radar ?? null,
+          dan: PROFILE_NUMERIC_OFFSETS.dan ?? null,
+          spRank: null,
+          dpRank: null,
+        };
+      } else {
+        profilePolicy = 'blocked';
+        profile = { iidxId: null, djName: null, radar: null, dan: null, spRank: null, dpRank: null };
+      }
+    }
+    return { profile, buildVersion: null, confidence: null, profilePolicy, session, gameDatecode };
+  }
   let profile: RemoteProfileMap | null = r.build.profile ?? null;
   let profilePolicy: 'normal' | 'constants-only' | 'blocked' = 'normal';
   const sessionValid = session !== null && Number.isSafeInteger(session.pid) && (session.pid as number) > 0

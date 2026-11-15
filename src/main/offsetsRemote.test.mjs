@@ -19,10 +19,10 @@ const source = read('./offsetsRemote.ts');
 const profileConstants = load(read('../shared/profileOffsets.ts'), {});
 const defaults = { log: { markerScanFromJudge:144, markerDelta:24, settingsStateDelta:0x18, p2SettingsDelta:0x48, battleFlagDelta:0x28, gaugeWordP1:77, gaugeWordP2:78, playSpeedFromSettings:0x17a0, laneOrderP1FromSettings:0x37cc, laneOrderP2FromSettings:0x37ec, songStride:0x730, songIdOffset:0x5b0, songNoteOffset:0x370 }, detail: { laneWordsP1:3448385, laneWordsP2:3452299 } };
 
-function harness({ response, fail = false, datecode = '2026111100', cachedDatecode = '2026111100' } = {}) {
+function harness({ response, fail = false, failImmediate = false, datecode = '2026111100', cachedDatecode = '2026111100' } = {}) {
   const urls = [];
   let finish;
-  const fetch = url => { urls.push(url); return new Promise((resolve, reject) => { finish = () => fail ? reject(new Error('offline')) : resolve({ ok: true, json: async () => response }); }); };
+  const fetch = url => { urls.push(url); if (failImmediate) return Promise.reject(new Error('offline')); return new Promise((resolve, reject) => { finish = () => fail ? reject(new Error('offline')) : resolve({ ok: true, json: async () => response }); }); };
   let gameDatecodeCalls = 0;
   const api = load(source, { './gameBuild': { getGameDatecode: () => { gameDatecodeCalls++; return cachedDatecode; }, datecodeNum }, '../shared/profileOffsets': profileConstants }, { fetch, Date, console: { warn() {} } });
   return { api, urls, finish: () => finish(), datecode, gameDatecodeCalls: () => gameDatecodeCalls };
@@ -93,6 +93,51 @@ async function profileHarness(response, gameDatecode, session = { pid: 1234, gen
   h.api.startPlayLoggerOffsetsPreparation(); h.finish(); await h.api.getRemoteOffsets();
   return { h, result: await h.api.getRemoteProfileOffsets(session, gameDatecode) };
 }
+
+async function unavailableProfileHarness(gameDatecode, session = { pid: 1234, generation: 1 }, cachedDatecode = '2026111100', constants = profileConstants) {
+  const h = harness({ fail: true, failImmediate: true, gameDatecode, cachedDatecode });
+  if (constants === profileConstants) return { h, result: await h.api.getRemoteProfileOffsets(session, gameDatecode) };
+  const api = load(source, { './gameBuild': { getGameDatecode: () => cachedDatecode, datecodeNum }, '../shared/profileOffsets': constants }, { fetch: async () => { throw new Error('offline'); }, Date, console: { warn() {} } });
+  return { h, result: await api.getRemoteProfileOffsets(session, gameDatecode) };
+}
+
+test('gist unavailable with matching constants build returns explicit constants-only map', async () => {
+  const { result } = await unavailableProfileHarness('P2D:J:B:A:2026111100');
+  assert.equal(result.profilePolicy, 'constants-only');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.profile)), JSON.parse(JSON.stringify({ iidxId: profileConstants.PROFILE_OFFSETS.iidxId, djName: profileConstants.PROFILE_OFFSETS.djName, radar: profileConstants.PROFILE_NUMERIC_OFFSETS.radar ?? null, dan: profileConstants.PROFILE_NUMERIC_OFFSETS.dan ?? null, spRank: null, dpRank: null })));
+  assert.equal(result.confidence, null); assert.equal(result.buildVersion, null);
+  assert.deepEqual(result.session, { pid:1234, generation:1 }); assert.equal(result.gameDatecode, 'P2D:J:B:A:2026111100');
+});
+
+test('gist unavailable with explicit null datecode preserves normal null profile and blocks invalid session', async () => {
+  const { h, result } = await unavailableProfileHarness(null);
+  assert.equal(result.profilePolicy, 'normal'); assert.equal(result.profile, null);
+  assert.equal(result.confidence, null); assert.equal(result.buildVersion, null);
+  assert.deepEqual(result.session, { pid:1234, generation:1 }); assert.equal(result.gameDatecode, null);
+  assert.equal(h.gameDatecodeCalls(), 0);
+  const invalid = await h.api.getRemoteProfileOffsets({ pid:null, generation:0 }, null);
+  assert.equal(invalid.profilePolicy, 'blocked');
+  assert.deepEqual(JSON.parse(JSON.stringify(invalid.profile)), { iidxId:null, djName:null, radar:null, dan:null, spRank:null, dpRank:null });
+  assert.equal(invalid.confidence, null); assert.equal(invalid.buildVersion, null);
+  assert.deepEqual(invalid.session, { pid:null, generation:0 }); assert.equal(invalid.gameDatecode, null);
+});
+
+test('gist unavailable with a different valid measured build blocks all profile keys', async () => {
+  const { result } = await unavailableProfileHarness('2026101400');
+  assert.equal(result.profilePolicy, 'blocked');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.profile)), { iidxId:null, djName:null, radar:null, dan:null, spRank:null, dpRank:null });
+  assert.equal(result.confidence, null); assert.equal(result.buildVersion, null);
+  assert.deepEqual(result.session, { pid:1234, generation:1 }); assert.equal(result.gameDatecode, '2026101400');
+});
+
+test('gist unavailable treats matching parse failures as blocked', async () => {
+  const invalidConstants = { ...profileConstants, PROFILE_OFFSETS: { ...profileConstants.PROFILE_OFFSETS, refluxVersion: 'invalid' } };
+  const { result } = await unavailableProfileHarness('invalid', { pid:1234, generation:1 }, '2026111100', invalidConstants);
+  assert.equal(result.profilePolicy, 'blocked');
+  assert.deepEqual(JSON.parse(JSON.stringify(result.profile)), { iidxId:null, djName:null, radar:null, dan:null, spRank:null, dpRank:null });
+  assert.equal(result.confidence, null); assert.equal(result.buildVersion, null);
+  assert.deepEqual(result.session, { pid:1234, generation:1 }); assert.equal(result.gameDatecode, 'invalid');
+});
 
 test('latest constants match selects explicit constants-only map', async () => {
   const { result } = await profileHarness({ version:'x', builds:[{version:'2026101400', profile:{iidxId:null}}] }, 'P2D:J:B:A:2026111100');
